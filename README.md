@@ -86,12 +86,41 @@ python run.py
 
 ---
 
+## 编译 · Build
+
+将工具箱打包为独立文件夹，无需安装 Python 即可运行。
+
+```bash
+# 安装 PyInstaller（一次性）
+pip install pyinstaller
+
+# 编译
+python build.py
+
+# 清理编译产物
+python build.py clean
+```
+
+编译完成后，`dist/Toolbox/` 文件夹可复制到任意 Windows 电脑直接运行：
+
+```
+dist/Toolbox/
+├── Toolbox.exe        ← 双击启动
+└── _internal/         ← 运行时依赖（勿手动修改）
+```
+
+> 目录打包（`--onedir`）比单文件（`--onefile`）更可靠，启动更快，也是 PyInstaller 推荐的分发方式。
+
+---
+
 ## 项目结构 · Project Structure
 
 ```
 VibeCoding/
-├── run.py                         # 启动入口 · Entry point
-├── requirements.txt               # 依赖清单 · Dependencies
+├── run.py                         # 开发入口 · Dev entry point
+├── launcher.py                    # 打包入口 · Build entry point
+├── build.py                       # 编译脚本 · Build script
+├── requirements.txt               # 依赖 · Dependencies
 ├── README.md                      # 本文件 · This file
 ├── data/                          # 运行时数据 (自动创建 · auto‑created)
 │   ├── tabs.json                  # 标签页 & 图标状态
@@ -150,6 +179,38 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
   ]
 }
 ```
+
+---
+
+## 更新日志 · Changelog
+
+### v1.00.2 (2026-07-17)
+
+**修复**
+- 修复图标网格对齐 — 不同标签高度的图标现在顶部对齐
+- 修复文字被裁切（如 "Bandon" 显示为 "andon"）— 加宽组件并减少内边距
+- 修复长英文单词生硬截断 — 添加连字符（hyphenation）支持
+- 修复 QScrollArea 拖放事件被容器拦截 — 使用自定义 DropContainer
+- 修复 FlowLayout 未将 Widget 纳入父容器 — 图标数据保存但不可见
+
+**新增**
+- 中英文双语切换（`文件 → 语言`），偏好自动保存
+- 图标文字自动换行，超过三行省略为 "…"
+- 完整 Win11 Fluent Design 风格重做
+- 关于对话框：版本号、作者 dboycht、项目地址
+- 图标文字白色 + 半透明暗色圆角底
+- 图标悬停高亮效果
+
+### v1.00 (2026-07-16)
+
+- 初始版本
+- 多标签页 + 手机网格布局
+- 拖入文件/文件夹/.lnk 创建图标
+- 自定义 URL / 命令图标
+- 图标拖动排序、跨标签页移动
+- 标签页拖动排序、右键重命名
+- 图标双击改名、右键菜单
+- JSON 自动持久化
 
 ---
 

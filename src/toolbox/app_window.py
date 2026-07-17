@@ -14,7 +14,14 @@ from .i18n import tr, current_lang, set_language, on_language_changed
 
 
 def get_data_dir() -> Path:
-    return Path(__file__).resolve().parent.parent.parent / "data"
+    """获取数据目录。开发时放在项目根目录；打包后放在 .exe 旁边。"""
+    import sys
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包后：data/ 在 .exe 同级目录
+        return Path(sys.executable).resolve().parent / "data"
+    else:
+        # 开发环境：data/ 在项目根目录
+        return Path(__file__).resolve().parent.parent.parent / "data"
 
 
 class AppWindow(QMainWindow):
