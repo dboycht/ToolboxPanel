@@ -76,7 +76,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "app.menu.about":              {"zh": "关于(&A)",                       "en": "&About"},
     "app.about.title":             {"zh": "关于 工具箱",                    "en": "About Toolbox"},
     "app.about.text":              {"zh":
-        "工具箱 v1.00 — 手机桌面风格的启动器\n"
+        "工具箱 v1.00.2 — 手机桌面风格的启动器\n"
         "作者: dboycht\n"
         "项目地址: https://github.com/dboycht/ToolboxPanel\n\n"
         "• 从资源管理器拖入文件/文件夹/快捷方式即可创建图标\n"
@@ -85,7 +85,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "• 图标和标签页均可拖动排序\n"
         "• 数据自动保存到 data/ 文件夹",
                                     "en":
-        "Toolbox v1.00 — Phone‑home‑screen style launcher\n"
+        "Toolbox v1.00.2 — Phone‑home‑screen style launcher\n"
         "Author: dboycht\n"
         "Project: https://github.com/dboycht/ToolboxPanel\n\n"
         "• Drag files / folders / shortcuts from Explorer to create icons\n"

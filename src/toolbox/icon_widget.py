@@ -33,11 +33,12 @@ class IconWidget(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMouseTracking(True)
 
-        # Layout
+        # Layout — AlignTop ensures all icons start at the same position
+        # regardless of label height, keeping the grid perfectly aligned
         layout = QVBoxLayout(self)
         layout.setContentsMargins(3, 4, 3, 2)
         layout.setSpacing(2)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # Icon image
         self.icon_label = QLabel(self)
@@ -49,6 +50,9 @@ class IconWidget(QWidget):
         # Editable name
         self.name_label = IconLabel(icon_model.display_name, self)
         layout.addWidget(self.name_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+        # Bottom stretch absorbs extra space so all icons align at the top
+        layout.addStretch()
 
         # Load the icon pixmap
         self._load_icon()
