@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "tabs": [
+    {
+      "id": "c041b4c4-821c-4006-bda9-d3da0c7caa48",
+      "name": "新建标签页",
+      "order": 0,
+      "icons": [
+        {
+          "id": "55644b1b-10b6-498e-8e7e-0866cfef6550",
+          "type": "shortcut",
+          "display_name": "Pr Files",
+          "source_path": "C:\\Users\\micak\\Desktop\\Pr Files.lnk",
+          "target_path": "C:\\Users\\micak\\Documents\\Adobe\\Premiere Pro\\14.0",
+          "arguments": "",
+          "working_dir": "",
+          "icon_cache_file": "f77461cd-e916-4ee9-8ebc-eba597ea0a6b.png",
+          "sort_order": 6
+        }
+      ]
+    }
+  ]
+}
