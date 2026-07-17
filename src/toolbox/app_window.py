@@ -173,10 +173,36 @@ class AppWindow(QMainWindow):
         self.status_bar.showMessage(tr("app.status.loaded", n=len(tabs)))
 
     def _on_new_tab(self):
-        tab_name = tr("tab.default_name")
+        default_name = tr("tab.default_name")
+        tab_name = self._prompt_text(tr("tab.rename.title"), tr("tab.rename.prompt"), default_name)
+        if tab_name is None:
+            return  # 用户取消
         tab = self.data_store.add_tab(tab_name)
         self.tab_widget.add_tab_page(tab)
         self.status_bar.showMessage(tr("app.status.created_tab", name=tab.name))
+
+    @staticmethod
+    def _prompt_text(title: str, label: str, default: str = "") -> str | None:
+        """弹出输入对话框，确定返回文本，取消返回 None。按钮文字跟随语言。"""
+        from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel,
+                                      QLineEdit, QDialogButtonBox)
+        dlg = QDialog()
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(320)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(label))
+        edit = QLineEdit(default)
+        edit.selectAll()
+        layout.addWidget(edit)
+        btns = QDialogButtonBox()
+        btn_ok = btns.addButton(tr("btn.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
+        btn_cancel = btns.addButton(tr("btn.cancel"), QDialogButtonBox.ButtonRole.RejectRole)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            return edit.text().strip() or default
+        return None
 
     def _on_about(self):
         QMessageBox.about(self, tr("app.about.title"), tr("app.about.text"))

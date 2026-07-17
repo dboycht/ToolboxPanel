@@ -5,9 +5,9 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import (QTabWidget, QWidget, QVBoxLayout, QMenu,
                               QInputDialog, QMessageBox, QPushButton, QHBoxLayout,
-                              QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-                              QFileDialog)
-from PyQt6.QtCore import pyqtSignal, Qt
+                              QDialog, QFormLayout, QLabel, QLineEdit,
+                              QDialogButtonBox, QFileDialog)
+from PyQt6.QtCore import pyqtSignal, Qt, QEvent
 
 from .models.data_store import DataStore
 from .models.tab_model import TabModel
@@ -41,6 +41,9 @@ class TabWidget(QTabWidget):
 
         # 标签页拖拽排序
         tab_bar.tabMoved.connect(self._on_tab_moved)
+
+        # 双击标签页名称 → 重命名
+        tab_bar.installEventFilter(self)
 
         # tab_id -> IconGrid 映射
         self._icon_grids: dict[str, IconGrid] = {}
@@ -209,17 +212,38 @@ class TabWidget(QTabWidget):
             self._delete_tab(tab_idx)
 
     def _rename_tab(self, tab_index: int):
-        """重命名标签页。"""
+        """重命名标签页（使用本地化按钮的对话框）。"""
         current_name = self.tabText(tab_index)
-        new_name, ok = QInputDialog.getText(
-            self, tr("tab.rename.title"), tr("tab.rename.prompt"), text=current_name
+        new_name = self._prompt_text(
+            tr("tab.rename.title"), tr("tab.rename.prompt"), current_name
         )
-        if ok and new_name.strip():
-            self.setTabText(tab_index, new_name.strip())
+        if new_name is not None and new_name != current_name:
+            self.setTabText(tab_index, new_name)
             grid = self.widget(tab_index)
             if isinstance(grid, IconGrid):
-                self.data_store.rename_tab(grid.tab.id, new_name.strip())
-                self.status_message.emit(tr("tab.renamed", name=new_name.strip()))
+                self.data_store.rename_tab(grid.tab.id, new_name)
+                self.status_message.emit(tr("tab.renamed", name=new_name))
+
+    @staticmethod
+    def _prompt_text(title: str, label: str, default: str = "") -> str | None:
+        """弹出输入对话框。确定 → 返回文本；取消 → 返回 None。"""
+        dlg = QDialog()
+        dlg.setWindowTitle(title)
+        dlg.setMinimumWidth(320)
+        layout = QVBoxLayout(dlg)
+        layout.addWidget(QLabel(label))
+        edit = QLineEdit(default)
+        edit.selectAll()
+        layout.addWidget(edit)
+        btns = QDialogButtonBox()
+        btns.addButton(tr("btn.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
+        btns.addButton(tr("btn.cancel"), QDialogButtonBox.ButtonRole.RejectRole)
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            return edit.text().strip() or default
+        return None
 
     def _delete_tab(self, tab_index: int):
         """删除标签页。"""
@@ -248,6 +272,43 @@ class TabWidget(QTabWidget):
 
     def _on_current_changed(self, index: int):
         pass
+
+    # ---- 键盘 & 鼠标快捷操作 ----
+
+    def eventFilter(self, obj, event):
+        """双击标签页名称 → 弹出重命名对话框。"""
+        if obj is self.tabBar() and event.type() == QEvent.Type.MouseButtonDblClick:
+            idx = self.tabBar().tabAt(event.position().toPoint())
+            if idx >= 0:
+                self._rename_tab(idx)
+                return True
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event):
+        """F2 = 重命名当前标签页 | ← → = 切换标签页。"""
+        key = event.key()
+        if key == Qt.Key.Key_F2:
+            idx = self.currentIndex()
+            if idx >= 0:
+                self._rename_tab(idx)
+            return
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
+            # 仅在焦点不在文本编辑框时切换标签页
+            from PyQt6.QtWidgets import QLineEdit, QAbstractSpinBox
+            focus = self.window().focusWidget()
+            if isinstance(focus, (QLineEdit, QAbstractSpinBox)):
+                super().keyPressEvent(event)
+                return
+            count = self.count()
+            if count > 1:
+                cur = self.currentIndex()
+                if key == Qt.Key.Key_Left:
+                    nxt = cur - 1 if cur > 0 else count - 1
+                else:
+                    nxt = cur + 1 if cur < count - 1 else 0
+                self.setCurrentIndex(nxt)
+            return
+        super().keyPressEvent(event)
 
     # ---- 空白区域右键菜单 ----
 
