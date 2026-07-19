@@ -3,9 +3,8 @@ import json
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QStatusBar, QMenu, QMessageBox,
+    QMainWindow, QStatusBar, QMessageBox,
 )
-from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QActionGroup
 
 from .models.data_store import DataStore
@@ -153,6 +152,20 @@ class AppWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        # ── 批量管理 ──
+        self._batch_action = QAction(tr("app.menu.batch"), self)
+        self._batch_action.setCheckable(True)
+        self._batch_action.setChecked(False)
+        self._batch_action.triggered.connect(self._toggle_batch_mode)
+        file_menu.addAction(self._batch_action)
+
+        self._batch_delete_action = QAction(tr("app.menu.batch_delete"), self)
+        self._batch_delete_action.triggered.connect(self._batch_delete)
+        self._batch_delete_action.setEnabled(False)
+        file_menu.addAction(self._batch_delete_action)
+
+        file_menu.addSeparator()
+
         exit_action = QAction(tr("app.menu.exit"), self)
         exit_action.setShortcut("Alt+F4")
         exit_action.triggered.connect(self.close)
@@ -203,6 +216,25 @@ class AppWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             return edit.text().strip() or default
         return None
+
+    def _toggle_batch_mode(self, checked: bool):
+        """切换批量管理模式。"""
+        self._batch_delete_action.setEnabled(checked)
+        for i in range(self.tab_widget.count()):
+            grid = self.tab_widget.widget(i)
+            from .icon_grid import IconGrid
+            if isinstance(grid, IconGrid):
+                grid.set_batch_mode(checked)
+        if checked:
+            self.status_bar.showMessage("批量管理模式：勾选图标后点击「批量删除勾选图标」")
+        else:
+            self.status_bar.showMessage(tr("app.status.ready"))
+
+    def _batch_delete(self):
+        """执行批量删除（当前标签页）。"""
+        grid = self.tab_widget._get_current_grid()
+        if grid:
+            grid.batch_delete()
 
     def _on_about(self):
         QMessageBox.about(self, tr("app.about.title"), tr("app.about.text"))

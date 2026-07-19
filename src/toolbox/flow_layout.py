@@ -19,6 +19,7 @@ class FlowLayout(QLayout):
         self.v_spacing = v_spacing
         self.margin = margin
         self._items: list[QWidgetItem] = []
+        self._variable_width = (cell_width <= 0)  # 自适应宽度模式
 
     def addItem(self, item):
         self._items.append(item)
@@ -96,26 +97,35 @@ class FlowLayout(QLayout):
         """Calculate (and optionally apply) widget geometry.
 
         Returns the total height needed."""
-        cols = self.columns_for_width(rect.width())
-        if cols == 0:
-            cols = 1
+        container_width = rect.width()
+        if container_width <= 0:
+            return 0
 
         x = self.margin
         y = self.margin
+        row_h = self.cell_height
 
-        for i, item in enumerate(self._items):
+        for item in self._items:
             wid = item.widget()
             if not wid:
                 continue
 
-            if i > 0 and i % cols == 0:
+            if self._variable_width:
+                w = max(10, wid.sizeHint().width())
+            else:
+                w = self.cell_width
+
+            # 换行判断
+            if x + w > container_width - self.margin and x > self.margin:
                 x = self.margin
-                y += self.cell_height + self.v_spacing
+                y += row_h + self.v_spacing
 
             if apply_geometry and not wid.isHidden():
-                wid.setGeometry(QRect(x, y, self.cell_width, self.cell_height))
+                gw = w
+                gh = self.cell_height
+                wid.setGeometry(QRect(x, y, gw, gh))
 
-            x += self.cell_width + self.h_spacing
+            x += w + self.h_spacing
 
         total_height = y + self.cell_height + self.margin
         return total_height

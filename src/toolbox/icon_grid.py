@@ -4,16 +4,15 @@ import os
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtWidgets import (QScrollArea, QWidget, QMenu, QMessageBox,
-                              QVBoxLayout, QApplication)
-from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QTimer
+from PyQt6.QtWidgets import (QScrollArea, QWidget, QMenu, QMessageBox)
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 
 from .flow_layout import FlowLayout
 from .icon_widget import IconWidget
 from .models.data_store import DataStore
 from .models.tab_model import TabModel
-from .models.icon_model import IconModel, IconType
+from .models.icon_model import IconModel
 from .i18n import tr
 
 
@@ -21,7 +20,7 @@ class _DropContainer(QWidget):
     """内部容器 — 处理拖放事件并转发给 IconGrid。"""
 
     external_dropped = pyqtSignal(list)
-    internal_dropped = pyqtSignal(dict, int, int)  # info dict, x, y
+    internal_dropped = pyqtSignal(dict, int, int)
     status_message = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -53,7 +52,6 @@ class _DropContainer(QWidget):
 
     def dropEvent(self, event: QDropEvent):
         self.setStyleSheet("_DropContainer { background-color: #ffffff; }")
-
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             paths = [QUrl(url).toLocalFile() for url in urls if QUrl(url).isLocalFile()]
@@ -79,7 +77,6 @@ class _DropContainer(QWidget):
 class IconGrid(QScrollArea):
     """单个标签页的可滚动图标网格。"""
 
-    icon_added = pyqtSignal(str, IconModel)
     icon_removed = pyqtSignal(str)
     icon_moved = pyqtSignal(str, str, int)
     icon_double_clicked = pyqtSignal(str)
@@ -99,31 +96,58 @@ class IconGrid(QScrollArea):
         self.setFrameShape(QScrollArea.Shape.NoFrame)
         self.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
-        # 使用自定义 DropContainer 代替普通 QWidget
         self._container = _DropContainer()
         self._layout = FlowLayout()
         self._container.setLayout(self._layout)
         self.setWidget(self._container)
 
-        # 连接 DropContainer 的信号
         self._container.external_dropped.connect(self.files_dropped.emit)
         self._container.internal_dropped.connect(self._on_internal_drop)
         self._container.status_message.connect(self.status_message.emit)
 
         self._icon_widgets: dict[str, IconWidget] = {}
+        self._batch_mode = False
 
-    # ---- 公开 API ----
+    # ── 批量管理 ──
+
+    def set_batch_mode(self, on: bool):
+        """切换批量管理模式：显示/隐藏所有图标的复选框。"""
+        self._batch_mode = on
+        for w in self._icon_widgets.values():
+            w.set_batch_mode(on)
+
+    def batch_delete(self):
+        """删除所有已勾选的图标。"""
+        checked = [id_ for id_, w in self._icon_widgets.items() if w.is_checked()]
+        count = len(checked)
+        if count == 0:
+            self.status_message.emit("未选中任何图标")
+            return
+        confirm = QMessageBox.question(
+            self,
+            tr("bulk_delete.title"),
+            tr("bulk_delete.confirm", count=count),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            for icon_id in checked:
+                self.remove_icon(icon_id)
+                self.data_store.remove_icon(icon_id)
+                self.icon_removed.emit(icon_id)
+            self.status_message.emit(tr("bulk_delete.done", count=count))
+
+    # ── 图标管理 ──
 
     def add_icon(self, icon: IconModel) -> IconWidget:
-        """创建并添加一个图标组件。"""
         widget = IconWidget(icon, self.icon_cache_dir)
         widget.icon_double_clicked.connect(self.icon_double_clicked.emit)
         widget.rename_requested.connect(self._on_rename_requested)
+        if self._batch_mode:
+            widget.set_batch_mode(True)
 
         self._layout.insert_widget_at(icon.sort_order, widget)
         self._icon_widgets[icon.id] = widget
 
-        # 图标右键菜单
         widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         widget.customContextMenuRequested.connect(
             lambda pos, w=widget: self._show_icon_context_menu(pos, w)
@@ -131,29 +155,16 @@ class IconGrid(QScrollArea):
         return widget
 
     def remove_icon(self, icon_id: str):
-        """从网格中移除图标组件。"""
         widget = self._icon_widgets.pop(icon_id, None)
         if widget:
             self._layout.remove_widget(widget)
             widget.deleteLater()
 
-    def refresh_all(self):
-        """从模型完全重建网格。"""
-        for wid in list(self._icon_widgets.values()):
-            self._layout.remove_widget(wid)
-            wid.deleteLater()
-        self._icon_widgets.clear()
-
-        for icon in sorted(self.tab.icons, key=lambda i: i.sort_order):
-            self.add_icon(icon)
-
     def rebuild_from_model(self):
-        """根据 sort_order 同步组件位置。"""
         tab_icons = {i.id: i for i in self.tab.icons}
         for icon_id in list(self._icon_widgets.keys()):
             if icon_id not in tab_icons:
                 self.remove_icon(icon_id)
-
         items = list(self._layout._items)
         self._layout._items.clear()
         sorted_widgets = sorted(
@@ -167,16 +178,13 @@ class IconGrid(QScrollArea):
         self._layout.invalidate()
         self._container.updateGeometry()
 
-    # ---- 内部拖放处理 ----
+    # ── 拖放 ──
 
     def _on_internal_drop(self, info: dict, x: int, y: int):
-        """处理内部图标拖放。"""
         icon_id = info.get("icon_id", "")
         if not icon_id:
             return
-
         drop_index = self._layout.cell_index_at_pos(x, y, self._container.width())
-
         if icon_id in self._icon_widgets:
             source_widget = self._icon_widgets[icon_id]
             source_index = self._layout.index_of(source_widget)
@@ -190,21 +198,16 @@ class IconGrid(QScrollArea):
         else:
             self.icon_moved.emit(icon_id, self.tab.id, drop_index)
 
-    # ---- 右键菜单 ----
+    # ── 右键菜单 ──
 
     def _show_icon_context_menu(self, pos, widget: IconWidget):
-        """图标右键菜单。"""
         menu = QMenu(self)
 
         open_action = menu.addAction(tr("icon.menu.open"))
-        open_action.triggered.connect(
-            lambda: self.icon_double_clicked.emit(widget.icon_model.id)
-        )
+        open_action.triggered.connect(lambda: self.icon_double_clicked.emit(widget.icon_model.id))
 
         open_loc_action = menu.addAction(tr("icon.menu.open_location"))
-        open_loc_action.triggered.connect(
-            lambda: self._open_file_location(widget.icon_model)
-        )
+        open_loc_action.triggered.connect(lambda: self._open_file_location(widget.icon_model))
 
         menu.addSeparator()
 
@@ -212,22 +215,17 @@ class IconGrid(QScrollArea):
         rename_action.triggered.connect(lambda: widget.name_label._start_edit())
 
         remove_action = menu.addAction(tr("icon.menu.remove"))
-        remove_action.triggered.connect(
-            lambda: self._remove_icon(widget.icon_model.id)
-        )
+        remove_action.triggered.connect(lambda: self._remove_icon(widget.icon_model.id))
 
         menu.exec(widget.mapToGlobal(pos))
 
     def _on_rename_requested(self, icon_id: str, new_name: str):
-        """图标被重命名。"""
         self.data_store.rename_icon(icon_id, new_name)
         self.status_message.emit(tr("status.renamed", name=new_name))
 
     def _remove_icon(self, icon_id: str):
-        """删除图标（带确认）。"""
         widget = self._icon_widgets.get(icon_id)
         name = widget.icon_model.display_name if widget else "此图标"
-
         confirm = QMessageBox.question(
             self, tr("icon.remove.title"),
             tr("icon.remove.confirm", name=name),
@@ -240,7 +238,6 @@ class IconGrid(QScrollArea):
             self.status_message.emit(tr("status.removed", name=name))
 
     def _open_file_location(self, icon: IconModel):
-        """在资源管理器中定位文件。"""
         path = icon.target_path or icon.source_path
         if not path:
             return

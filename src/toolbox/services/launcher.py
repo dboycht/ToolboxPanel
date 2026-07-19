@@ -19,9 +19,13 @@ class Launcher:
         elif icon.type == IconType.FOLDER:
             self._open_file(icon.target_path or icon.source_path)
         elif icon.type == IconType.SHORTCUT:
-            self._launch_process(
-                icon.target_path, icon.arguments, icon.working_dir
-            )
+            # .lnk 文件交给 Windows Shell 处理（兼容 UWP / 系统工具等）
+            if icon.source_path and os.path.exists(icon.source_path):
+                os.startfile(icon.source_path)
+            elif icon.target_path and os.path.exists(icon.target_path):
+                self._open_file(icon.target_path)
+            else:
+                raise FileNotFoundError(f"快捷方式目标不存在: {icon.source_path}")
         elif icon.type == IconType.COMMAND:
             self._launch_process(
                 icon.target_path, icon.arguments, icon.working_dir

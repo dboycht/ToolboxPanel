@@ -76,7 +76,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "app.menu.about":              {"zh": "关于(&A)",                       "en": "&About"},
     "app.about.title":             {"zh": "关于 工具箱",                    "en": "About Toolbox"},
     "app.about.text":              {"zh":
-        "工具箱 v1.10.1 — 手机桌面风格的启动器\n"
+        "工具箱 v1.10.2 — 手机桌面风格的启动器\n"
         "作者: dboycht\n"
         "项目地址: https://github.com/dboycht/ToolboxPanel\n\n"
         "• 从资源管理器拖入文件/文件夹/快捷方式即可创建图标\n"
@@ -85,7 +85,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "• 图标和标签页均可拖动排序\n"
         "• 数据自动保存到 data/ 文件夹",
                                     "en":
-        "Toolbox v1.10.1 — Phone‑home‑screen style launcher\n"
+        "Toolbox v1.10.2 — Phone‑home‑screen style launcher\n"
         "Author: dboycht\n"
         "Project: https://github.com/dboycht/ToolboxPanel\n\n"
         "• Drag files / folders / shortcuts from Explorer to create icons\n"
@@ -165,5 +165,13 @@ TEXTS: dict[str, dict[str, str]] = {
     "btn.ok":                      {"zh": "确定",                           "en": "OK"},
     "btn.cancel":                  {"zh": "取消",                           "en": "Cancel"},
     "data.default_tab":            {"zh": "主页",                           "en": "Home"},
+    # bulk delete
+    "app.menu.batch":              {"zh": "批量管理",                       "en": "Batch Manage"},
+    "app.menu.batch_delete":       {"zh": "批量删除勾选图标",                "en": "Delete Checked Icons"},
+    "batch.none_checked":          {"zh": "未选中任何图标",                  "en": "No icons checked"},
+    "bulk_delete.title":           {"zh": "批量删除图标",                    "en": "Bulk Delete Icons"},
+    "bulk_delete.confirm":         {"zh": "确定要删除选中的 {count} 个图标吗？",
+                                                                           "en": "Delete {count} selected icon(s)?"},
+    "bulk_delete.done":            {"zh": "已删除 {count} 个图标",          "en": "Deleted {count} icon(s)"},
 }
 # fmt: on

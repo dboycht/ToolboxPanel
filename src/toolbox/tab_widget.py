@@ -1,10 +1,9 @@
-"""标签页组件 — 管理标签页和图标网格。"""
-import os
+"""标签页组件 — 管理标签页和图标网格。使用可换行的 WrapTabBar。"""
 import uuid
 from pathlib import Path
 
-from PyQt6.QtWidgets import (QTabWidget, QWidget, QVBoxLayout, QMenu,
-                              QInputDialog, QMessageBox, QPushButton, QHBoxLayout,
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QStackedWidget, QMenu,
+                              QMessageBox, QPushButton, QHBoxLayout,
                               QDialog, QFormLayout, QLabel, QLineEdit,
                               QDialogButtonBox, QFileDialog)
 from PyQt6.QtCore import pyqtSignal, Qt, QEvent
@@ -13,13 +12,18 @@ from .models.data_store import DataStore
 from .models.tab_model import TabModel
 from .models.icon_model import IconModel, IconType
 from .icon_grid import IconGrid
+from .wrap_tab_bar import WrapTabBar
 from .services.icon_resolver import IconResolver
 from .services.launcher import Launcher
 from .i18n import tr
 
 
-class TabWidget(QTabWidget):
-    """管理多个标签页，每个标签页包含一个图标网格。"""
+class TabWidget(QWidget):
+    """管理多个标签页，每个标签页包含一个图标网格。
+
+    用 QStackedWidget + WrapTabBar 替代 QTabWidget，
+    使标签栏在窗口缩小时自动多行换行。
+    """
 
     new_tab_requested = pyqtSignal()
     status_message = pyqtSignal(str)
@@ -30,48 +34,81 @@ class TabWidget(QTabWidget):
         self.icon_resolver = IconResolver(data_store.icons_dir)
         self.launcher = Launcher()
 
-        self.setDocumentMode(True)
-        self.setTabsClosable(False)
-        self.setMovable(True)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        # 标签页右键菜单
-        tab_bar = self.tabBar()
-        tab_bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        tab_bar.customContextMenuRequested.connect(self._show_tab_context_menu)
+        # 多行标签栏
+        self._tab_bar = WrapTabBar()
+        self._tab_bar.current_changed.connect(self._on_tab_switched)
+        self._tab_bar.tab_moved.connect(self._on_tab_moved)
+        self._tab_bar.rename_requested.connect(self._rename_tab)
+        self._tab_bar.context_menu_requested.connect(self._show_tab_context_menu)
 
-        # 标签页拖拽排序
-        tab_bar.tabMoved.connect(self._on_tab_moved)
+        # 标签页内容区域
+        self._stack = QStackedWidget()
 
-        # 双击标签页名称 → 重命名
-        tab_bar.installEventFilter(self)
+        layout.addWidget(self._tab_bar)
+        layout.addWidget(self._stack)
 
-        # tab_id -> IconGrid 映射
+        # tab_id → (page_index, IconGrid)
         self._icon_grids: dict[str, IconGrid] = {}
+        self._tab_records: list[dict] = []  # [{id, name, order}, ...]
 
-        self.currentChanged.connect(self._on_current_changed)
+    # ── 公开 API (兼容旧 QTabWidget 接口) ──
+
+    def count(self) -> int:
+        return self._stack.count()
+
+    def currentIndex(self) -> int:
+        return self._stack.currentIndex()
+
+    def setCurrentIndex(self, index: int):
+        self._tab_bar.set_current(index)
+
+    def currentWidget(self):
+        return self._stack.currentWidget()
+
+    def widget(self, index: int):
+        return self._stack.widget(index)
+
+    def tabText(self, index: int) -> str:
+        return self._tab_bar.tab_text(index)
+
+    def setTabText(self, index: int, text: str):
+        self._tab_bar.set_tab_text(index, text)
+
+    def tabBar(self):
+        return self._tab_bar  # 兼容 eventFilter（双击标签重命名）
+
+    # ── 标签页管理 ──
 
     def restore_tabs(self, tabs: list[TabModel]):
         """从已保存状态重建标签页。"""
-        self.blockSignals(True)
-        while self.count() > 0:
-            self.removeTab(0)
+        while self._stack.count() > 0:
+            self._stack.removeWidget(self._stack.widget(0))
         self._icon_grids.clear()
+        self._tab_records.clear()
 
-        for tab in tabs:
+        for i in range(self._tab_bar.count()):
+            self._tab_bar.remove_tab(0)
+
+        for tab in sorted(tabs, key=lambda t: t.order):
             self.add_tab_page(tab)
-        self.blockSignals(False)
 
     def add_tab_page(self, tab: TabModel):
         """添加一个带图标网格的标签页。"""
+        idx = self._tab_bar.add_tab(tab.name)
+        self._tab_records.insert(idx, {"id": tab.id, "name": tab.name, "order": idx})
+
         grid = IconGrid(tab, self.data_store, self.data_store.icons_dir)
-        grid.icon_added.connect(lambda tab_id, icon: self.data_store.add_icon(tab_id, icon))
         grid.icon_removed.connect(self._on_icon_removed)
         grid.icon_moved.connect(self._on_icon_moved_between_tabs)
         grid.icon_double_clicked.connect(self._on_icon_open)
         grid.files_dropped.connect(lambda paths: self._add_dropped_paths(paths, grid))
         grid.status_message.connect(self.status_message.emit)
 
-        # 空白区域右键菜单 — 连接在容器上（而非 QScrollArea）
+        # 空白区域右键菜单
         grid._container.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         grid._container.customContextMenuRequested.connect(
             lambda pos: self._show_grid_context_menu(pos, grid)
@@ -82,87 +119,63 @@ class TabWidget(QTabWidget):
             grid.add_icon(icon)
 
         self._icon_grids[tab.id] = grid
-        index = self.addTab(grid, tab.name)
-        return index
+        self._stack.insertWidget(idx, grid)
+        if self._stack.count() == 1:
+            self._stack.setCurrentIndex(0)
+        return idx
 
     def _get_current_grid(self) -> IconGrid | None:
-        current = self.currentWidget()
-        if isinstance(current, IconGrid):
-            return current
+        w = self._stack.currentWidget()
+        if isinstance(w, IconGrid):
+            return w
         return None
 
     def _get_grid_for_tab(self, tab_id: str) -> IconGrid | None:
         return self._icon_grids.get(tab_id)
 
-    # ---- 外部拖放处理 ----
+    # ── 外部拖放 ──
 
     def _add_dropped_paths(self, paths: list[str], target_grid: IconGrid):
-        """处理从资源管理器拖入的文件/文件夹。"""
         for path_str in paths:
             path = Path(path_str)
             if not path.exists():
                 self.status_message.emit(tr("status.path_not_found", path=path_str))
                 continue
-
-            # 检查当前标签页是否已有相同路径
             source_path = str(path.resolve())
-            existing = any(
-                i.source_path == source_path for i in target_grid.tab.icons
-            )
+            existing = any(i.source_path == source_path for i in target_grid.tab.icons)
             if existing:
                 self.status_message.emit(tr("status.already_exists", name=path.name))
                 continue
-
-            # 判断类型
             if path_str.lower().endswith(".lnk"):
                 icon_type = IconType.SHORTCUT
-                target_info = self.icon_resolver.resolve_shortcut(str(path))
-                target_path = target_info.get("target_path", str(path))
-                arguments = target_info.get("arguments", "")
-                working_dir = target_info.get("working_dir", "")
-                icon_cache_file = self.icon_resolver.extract_and_cache(str(path))
+                ti = self.icon_resolver.resolve_shortcut(str(path))
+                tp = ti.get("target_path", str(path))
+                args = ti.get("arguments", "")
+                wd = ti.get("working_dir", "")
+                cache = self.icon_resolver.extract_and_cache(str(path))
             elif path.is_dir():
                 icon_type = IconType.FOLDER
-                target_path = source_path
-                arguments = ""
-                working_dir = ""
-                icon_cache_file = self.icon_resolver.extract_and_cache(str(path))
+                tp, args, wd = source_path, "", ""
+                cache = self.icon_resolver.extract_and_cache(str(path))
             else:
                 icon_type = IconType.FILE
-                target_path = source_path
-                arguments = ""
-                working_dir = ""
-                icon_cache_file = self.icon_resolver.extract_and_cache(str(path))
-
-            display_name = path.stem if icon_type != IconType.FOLDER else path.name
-
-            icon = IconModel(
-                type=icon_type,
-                display_name=display_name,
-                source_path=source_path,
-                target_path=target_path,
-                arguments=arguments,
-                working_dir=working_dir,
-                icon_cache_file=icon_cache_file or "",
-            )
-
+                tp, args, wd = source_path, "", ""
+                cache = self.icon_resolver.extract_and_cache(str(path))
+            name = path.stem if icon_type != IconType.FOLDER else path.name
+            icon = IconModel(type=icon_type, display_name=name, source_path=source_path,
+                             target_path=tp, arguments=args, working_dir=wd, icon_cache_file=cache or "")
             self.data_store.add_icon(target_grid.tab.id, icon)
             target_grid.add_icon(icon)
-            self.status_message.emit(tr("status.added", name=display_name))
+            self.status_message.emit(tr("status.added", name=name))
 
-    # ---- 图标移动 ----
+    # ── 图标移动 ──
 
     def _on_icon_moved_between_tabs(self, icon_id: str, target_tab_id: str, new_position: int):
-        """处理跨标签页的图标拖动。"""
         self.data_store.move_icon(icon_id, target_tab_id, new_position)
-
-        # 从源网格移除
         for grid in self._icon_grids.values():
             if icon_id in grid._icon_widgets:
                 grid.remove_icon(icon_id)
                 break
-
-        # 添加到目标网格
         target_grid = self._get_grid_for_tab(target_tab_id)
         if target_grid:
             result = self.data_store.find_icon(icon_id)
@@ -170,14 +183,12 @@ class TabWidget(QTabWidget):
                 _, icon = result
                 target_grid.add_icon(icon)
                 target_grid.rebuild_from_model()
-
         self.status_message.emit(tr("status.moved_tab"))
 
     def _on_icon_removed(self, icon_id: str):
         self.data_store.remove_icon(icon_id)
 
     def _on_icon_open(self, icon_id: str):
-        """打开/执行图标。"""
         result = self.data_store.find_icon(icon_id)
         if result:
             _, icon = result
@@ -187,23 +198,27 @@ class TabWidget(QTabWidget):
             except Exception as e:
                 self.status_message.emit(tr("status.open_failed", err=str(e)))
 
-    # ---- 标签页右键菜单 ----
+    # ── 标签页切换 ──
 
-    def _show_tab_context_menu(self, pos):
-        """标签页右键菜单。"""
-        tab_idx = self.tabBar().tabAt(pos)
-        if tab_idx < 0:
-            return
+    def _on_tab_switched(self, index: int):
+        self._stack.setCurrentIndex(index)
 
+    def _on_tab_moved(self, from_idx: int, to_idx: int):
+        self.data_store.reorder_tabs(from_idx, to_idx)
+        # 同步 stack 中的 widget 顺序
+        w = self._stack.widget(from_idx)
+        self._stack.removeWidget(w)
+        self._stack.insertWidget(to_idx, w)
+
+    # ── 标签页右键菜单 ──
+
+    def _show_tab_context_menu(self, tab_idx: int):
         menu = QMenu(self)
-
         new_tab_action = menu.addAction(tr("tab.menu.new"))
         rename_action = menu.addAction(tr("tab.menu.rename"))
         menu.addSeparator()
         delete_action = menu.addAction(tr("tab.menu.delete"))
-
-        chosen = menu.exec(self.tabBar().mapToGlobal(pos))
-
+        chosen = menu.exec(self._tab_bar.mapToGlobal(self._tab_bar.pos()))
         if chosen == new_tab_action:
             self.new_tab_requested.emit()
         elif chosen == rename_action:
@@ -212,50 +227,26 @@ class TabWidget(QTabWidget):
             self._delete_tab(tab_idx)
 
     def _rename_tab(self, tab_index: int):
-        """重命名标签页（使用本地化按钮的对话框）。"""
-        current_name = self.tabText(tab_index)
-        new_name = self._prompt_text(
-            tr("tab.rename.title"), tr("tab.rename.prompt"), current_name
-        )
+        current_name = self._tab_bar.tab_text(tab_index)
+        new_name = self._prompt_text(tr("tab.rename.title"), tr("tab.rename.prompt"), current_name)
         if new_name is not None and new_name != current_name:
-            self.setTabText(tab_index, new_name)
-            grid = self.widget(tab_index)
-            if isinstance(grid, IconGrid):
-                self.data_store.rename_tab(grid.tab.id, new_name)
-                self.status_message.emit(tr("tab.renamed", name=new_name))
-
-    @staticmethod
-    def _prompt_text(title: str, label: str, default: str = "") -> str | None:
-        """弹出输入对话框。确定 → 返回文本；取消 → 返回 None。"""
-        dlg = QDialog()
-        dlg.setWindowTitle(title)
-        dlg.setMinimumWidth(320)
-        layout = QVBoxLayout(dlg)
-        layout.addWidget(QLabel(label))
-        edit = QLineEdit(default)
-        edit.selectAll()
-        layout.addWidget(edit)
-        btns = QDialogButtonBox()
-        btns.addButton(tr("btn.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
-        btns.addButton(tr("btn.cancel"), QDialogButtonBox.ButtonRole.RejectRole)
-        btns.accepted.connect(dlg.accept)
-        btns.rejected.connect(dlg.reject)
-        layout.addWidget(btns)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            return edit.text().strip() or default
-        return None
+            self._tab_bar.set_tab_text(tab_index, new_name)
+            # 找到对应 grid 更新模型
+            for grid in self._icon_grids.values():
+                if self._stack.indexOf(grid) == tab_index:
+                    self.data_store.rename_tab(grid.tab.id, new_name)
+                    grid.tab.name = new_name
+                    break
+            self.status_message.emit(tr("tab.renamed", name=new_name))
 
     def _delete_tab(self, tab_index: int):
-        """删除标签页。"""
-        if self.count() <= 1:
+        if self._stack.count() <= 1:
             QMessageBox.warning(self, tr("tab.delete.blocked_title"), tr("tab.delete.blocked"))
             return
-
-        grid = self.widget(tab_index)
+        grid = self._stack.widget(tab_index)
         if not isinstance(grid, IconGrid):
             return
-
-        name = self.tabText(tab_index)
+        name = self._tab_bar.tab_text(tab_index)
         confirm = QMessageBox.question(
             self, tr("tab.delete.title"),
             tr("tab.delete.confirm", name=name),
@@ -264,215 +255,147 @@ class TabWidget(QTabWidget):
         if confirm == QMessageBox.StandardButton.Yes:
             self.data_store.remove_tab(grid.tab.id)
             self._icon_grids.pop(grid.tab.id, None)
-            self.removeTab(tab_index)
+            self._stack.removeWidget(grid)
+            self._tab_bar.remove_tab(tab_index)
+            grid.deleteLater()
             self.status_message.emit(tr("tab.deleted", name=name))
 
-    def _on_tab_moved(self, from_index: int, to_index: int):
-        self.data_store.reorder_tabs(from_index, to_index)
-
-    def _on_current_changed(self, index: int):
-        pass
-
-    # ---- 键盘 & 鼠标快捷操作 ----
+    # ── 键盘快捷操作 ──
 
     def eventFilter(self, obj, event):
-        """双击标签页名称 → 弹出重命名对话框。"""
-        if obj is self.tabBar() and event.type() == QEvent.Type.MouseButtonDblClick:
-            idx = self.tabBar().tabAt(event.position().toPoint())
-            if idx >= 0:
-                self._rename_tab(idx)
+        if obj is self._tab_bar and event.type() == QEvent.Type.MouseButtonDblClick:
+            # 从 tab_bar 自身找到被双击的按钮索引
+            pos = event.position().toPoint()
+            child = self._tab_bar.childAt(pos)
+            if child and hasattr(child, '_index'):
+                self._rename_tab(child._index)
                 return True
         return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
-        """F2 = 重命名当前标签页 | ← → = 切换标签页。"""
         key = event.key()
         if key == Qt.Key.Key_F2:
-            idx = self.currentIndex()
+            idx = self._stack.currentIndex()
             if idx >= 0:
                 self._rename_tab(idx)
             return
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-            # 仅在焦点不在文本编辑框时切换标签页
             from PyQt6.QtWidgets import QLineEdit, QAbstractSpinBox
             focus = self.window().focusWidget()
             if isinstance(focus, (QLineEdit, QAbstractSpinBox)):
                 super().keyPressEvent(event)
                 return
-            count = self.count()
-            if count > 1:
-                cur = self.currentIndex()
-                if key == Qt.Key.Key_Left:
-                    nxt = cur - 1 if cur > 0 else count - 1
-                else:
-                    nxt = cur + 1 if cur < count - 1 else 0
-                self.setCurrentIndex(nxt)
+            cnt = self._stack.count()
+            if cnt > 1:
+                cur = self._stack.currentIndex()
+                nxt = cur - 1 if key == Qt.Key.Key_Left and cur > 0 else \
+                      cur + 1 if key == Qt.Key.Key_Right and cur < cnt - 1 else \
+                      cnt - 1 if key == Qt.Key.Key_Left else 0
+                self._tab_bar.set_current(nxt)
             return
         super().keyPressEvent(event)
 
-    # ---- 空白区域右键菜单 ----
+    # ── 空白区域右键菜单 ──
 
     def _show_grid_context_menu(self, pos, grid: IconGrid):
-        """网格空白区域右键菜单。"""
         menu = QMenu(self)
-
-        new_file_action = menu.addAction(tr("grid.menu.file"))
-        new_folder_action = menu.addAction(tr("grid.menu.folder"))
+        a1 = menu.addAction(tr("grid.menu.file"))
+        a2 = menu.addAction(tr("grid.menu.folder"))
         menu.addSeparator()
-        new_url_action = menu.addAction(tr("grid.menu.url"))
-        new_cmd_action = menu.addAction(tr("grid.menu.command"))
-
+        a3 = menu.addAction(tr("grid.menu.url"))
+        a4 = menu.addAction(tr("grid.menu.command"))
         chosen = menu.exec(grid._container.mapToGlobal(pos))
-
-        if chosen == new_file_action:
-            self._create_file_icon(grid)
-        elif chosen == new_folder_action:
-            self._create_folder_icon(grid)
-        elif chosen == new_url_action:
-            self._create_url_icon(grid)
-        elif chosen == new_cmd_action:
-            self._create_command_icon(grid)
+        if chosen == a1: self._create_file_icon(grid)
+        elif chosen == a2: self._create_folder_icon(grid)
+        elif chosen == a3: self._create_url_icon(grid)
+        elif chosen == a4: self._create_command_icon(grid)
 
     def _create_file_icon(self, grid: IconGrid):
-        file_path, _ = QFileDialog.getOpenFileName(self, tr("grid.dialog.select_file"))
-        if file_path:
-            self._add_dropped_paths([file_path], grid)
+        p, _ = QFileDialog.getOpenFileName(self, tr("grid.dialog.select_file"))
+        if p: self._add_dropped_paths([p], grid)
 
     def _create_folder_icon(self, grid: IconGrid):
-        folder_path = QFileDialog.getExistingDirectory(self, tr("grid.dialog.select_folder"))
-        if folder_path:
-            self._add_dropped_paths([folder_path], grid)
+        p = QFileDialog.getExistingDirectory(self, tr("grid.dialog.select_folder"))
+        if p: self._add_dropped_paths([p], grid)
 
     def _create_url_icon(self, grid: IconGrid):
-        """新建网址图标对话框。"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle(tr("url.dialog.title"))
-        dialog.setMinimumWidth(420)
-
-        layout = QVBoxLayout(dialog)
-
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("url.dialog.title"))
+        dlg.setMinimumWidth(420)
+        lo = QVBoxLayout(dlg)
         form = QFormLayout()
-        name_edit = QLineEdit()
-        name_edit.setPlaceholderText(tr("url.placeholder.name"))
-        url_edit = QLineEdit()
-        url_edit.setPlaceholderText(tr("url.placeholder.url"))
-
-        form.addRow(tr("url.label.name"), name_edit)
-        form.addRow(tr("url.label.url"), url_edit)
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn.ok"))
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn.cancel"))
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            name = name_edit.text().strip()
-            url = url_edit.text().strip()
+        ne = QLineEdit(); ne.setPlaceholderText(tr("url.placeholder.name"))
+        ue = QLineEdit(); ue.setPlaceholderText(tr("url.placeholder.url"))
+        form.addRow(tr("url.label.name"), ne)
+        form.addRow(tr("url.label.url"), ue)
+        lo.addLayout(form)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn.ok"))
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn.cancel"))
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        lo.addWidget(btns)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            name = ne.text().strip(); url = ue.text().strip()
             if name and url:
-                if not url.startswith(("http://", "https://", "ftp://")):
-                    url = "https://" + url
-                cache_file = f"{uuid.uuid4()}.png"
-                pixmap = self.icon_resolver._get_fallback(IconType.URL)
-                cache_path = self.data_store.icons_dir / cache_file
-                pixmap.save(str(cache_path), "PNG")
-
-                icon = IconModel(
-                    type=IconType.URL,
-                    display_name=name,
-                    source_path=url,
-                    target_path=url,
-                    icon_cache_file=cache_file,
-                )
-                self.data_store.add_icon(grid.tab.id, icon)
-                grid.add_icon(icon)
+                if not url.startswith(("http://", "https://", "ftp://")): url = "https://" + url
+                c = f"{uuid.uuid4()}.png"
+                self.icon_resolver._get_fallback(IconType.URL).save(str(self.data_store.icons_dir / c), "PNG")
+                icon = IconModel(type=IconType.URL, display_name=name, source_path=url, target_path=url, icon_cache_file=c)
+                self.data_store.add_icon(grid.tab.id, icon); grid.add_icon(icon)
                 self.status_message.emit(tr("url.created", name=name))
 
     def _create_command_icon(self, grid: IconGrid):
-        """新建命令图标对话框。"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle(tr("cmd.dialog.title"))
-        dialog.setMinimumWidth(480)
-
-        layout = QVBoxLayout(dialog)
-
+        dlg = QDialog(self)
+        dlg.setWindowTitle(tr("cmd.dialog.title"))
+        dlg.setMinimumWidth(480)
+        lo = QVBoxLayout(dlg)
         form = QFormLayout()
-        name_edit = QLineEdit()
-        name_edit.setPlaceholderText(tr("cmd.placeholder.name"))
-
-        # 命令 + 浏览按钮
-        cmd_widget = QWidget()
-        cmd_layout = QHBoxLayout(cmd_widget)
-        cmd_layout.setContentsMargins(0, 0, 0, 0)
-        cmd_edit = QLineEdit()
-        cmd_edit.setPlaceholderText(tr("cmd.placeholder.command"))
-        browse_btn = QPushButton("…")
-        browse_btn.setFixedWidth(36)
-        browse_btn.clicked.connect(
-            lambda: cmd_edit.setText(
-                QFileDialog.getOpenFileName(dialog, tr("cmd.dialog.select_exe"))[0] or cmd_edit.text()
-            )
-        )
-        cmd_layout.addWidget(cmd_edit)
-        cmd_layout.addWidget(browse_btn)
-
-        args_edit = QLineEdit()
-        args_edit.setPlaceholderText(tr("cmd.placeholder.args"))
-
-        wd_widget = QWidget()
-        wd_layout = QHBoxLayout(wd_widget)
-        wd_layout.setContentsMargins(0, 0, 0, 0)
-        wd_edit = QLineEdit()
-        wd_edit.setPlaceholderText(tr("cmd.placeholder.wd"))
-        wd_browse_btn = QPushButton("…")
-        wd_browse_btn.setFixedWidth(36)
-        wd_browse_btn.clicked.connect(
-            lambda: wd_edit.setText(
-                QFileDialog.getExistingDirectory(dialog, tr("cmd.dialog.select_wd")) or wd_edit.text()
-            )
-        )
-        wd_layout.addWidget(wd_edit)
-        wd_layout.addWidget(wd_browse_btn)
-
-        form.addRow(tr("cmd.label.name"), name_edit)
-        form.addRow(tr("cmd.label.command"), cmd_widget)
-        form.addRow(tr("cmd.label.args"), args_edit)
-        form.addRow(tr("cmd.label.wd"), wd_widget)
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn.ok"))
-        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn.cancel"))
-        buttons.accepted.connect(dialog.accept)
-        buttons.rejected.connect(dialog.reject)
-        layout.addWidget(buttons)
-
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            name = name_edit.text().strip()
-            command = cmd_edit.text().strip()
-            args = args_edit.text().strip()
-            wd = wd_edit.text().strip()
-            if name and command:
-                cache_file = f"{uuid.uuid4()}.png"
-                pixmap = self.icon_resolver._get_fallback(IconType.COMMAND)
-                cache_path = self.data_store.icons_dir / cache_file
-                pixmap.save(str(cache_path), "PNG")
-
-                icon = IconModel(
-                    type=IconType.COMMAND,
-                    display_name=name,
-                    source_path=f"{command} {args}".strip(),
-                    target_path=command,
-                    arguments=args,
-                    working_dir=wd,
-                    icon_cache_file=cache_file,
-                )
-                self.data_store.add_icon(grid.tab.id, icon)
-                grid.add_icon(icon)
+        ne = QLineEdit(); ne.setPlaceholderText(tr("cmd.placeholder.name"))
+        cw = QWidget(); cl = QHBoxLayout(cw); cl.setContentsMargins(0,0,0,0)
+        ce = QLineEdit(); ce.setPlaceholderText(tr("cmd.placeholder.command"))
+        bb = QPushButton("…"); bb.setFixedWidth(36)
+        bb.clicked.connect(lambda: ce.setText(QFileDialog.getOpenFileName(dlg, tr("cmd.dialog.select_exe"))[0] or ce.text()))
+        cl.addWidget(ce); cl.addWidget(bb)
+        ae = QLineEdit(); ae.setPlaceholderText(tr("cmd.placeholder.args"))
+        ww = QWidget(); wl = QHBoxLayout(ww); wl.setContentsMargins(0,0,0,0)
+        we = QLineEdit(); we.setPlaceholderText(tr("cmd.placeholder.wd"))
+        wb = QPushButton("…"); wb.setFixedWidth(36)
+        wb.clicked.connect(lambda: we.setText(QFileDialog.getExistingDirectory(dlg, tr("cmd.dialog.select_wd")) or we.text()))
+        wl.addWidget(we); wl.addWidget(wb)
+        form.addRow(tr("cmd.label.name"), ne)
+        form.addRow(tr("cmd.label.command"), cw)
+        form.addRow(tr("cmd.label.args"), ae)
+        form.addRow(tr("cmd.label.wd"), ww)
+        lo.addLayout(form)
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn.ok"))
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn.cancel"))
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        lo.addWidget(btns)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            name = ne.text().strip(); cmd = ce.text().strip()
+            args = ae.text().strip(); wd = we.text().strip()
+            if name and cmd:
+                c = f"{uuid.uuid4()}.png"
+                self.icon_resolver._get_fallback(IconType.COMMAND).save(str(self.data_store.icons_dir / c), "PNG")
+                icon = IconModel(type=IconType.COMMAND, display_name=name,
+                                 source_path=f"{cmd} {args}".strip(), target_path=cmd,
+                                 arguments=args, working_dir=wd, icon_cache_file=c)
+                self.data_store.add_icon(grid.tab.id, icon); grid.add_icon(icon)
                 self.status_message.emit(tr("cmd.created", name=name))
+
+    @staticmethod
+    def _prompt_text(title: str, label: str, default: str = "") -> str | None:
+        dlg = QDialog()
+        dlg.setWindowTitle(title); dlg.setMinimumWidth(320)
+        lo = QVBoxLayout(dlg)
+        lo.addWidget(QLabel(label))
+        edit = QLineEdit(default); edit.selectAll(); lo.addWidget(edit)
+        btns = QDialogButtonBox()
+        btns.addButton(tr("btn.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
+        btns.addButton(tr("btn.cancel"), QDialogButtonBox.ButtonRole.RejectRole)
+        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
+        lo.addWidget(btns)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            return edit.text().strip() or default
+        return None

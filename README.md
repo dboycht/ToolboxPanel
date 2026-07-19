@@ -11,20 +11,20 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 ## 预览 · Preview
 
 ```
-┌──────────────────────────────────────────────────┐
-│  文件  帮助                                       │  ← 菜单栏
-├──────────────────────────────────────────────────┤
-│  [主页]  [工作]  [工具]                    [+]  │  ← 可拖动排序的标签页
-├──────────────────────────────────────────────────┤
-│                                                  │
-│   ┌──────┐   ┌──────┐   ┌──────┐               │
-│   │  📁  │   │  📄  │   │  🌐  │               │  ← 48×48 图标网格
-│   │ 项目  │   │ 报表  │   │ GitHub│               │
-│   └──────┘   └──────┘   └──────┘               │
-│                                                  │
-├──────────────────────────────────────────────────┤
-│  已加载 1 个标签页                                │  ← 状态栏
-└──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  文件  帮助                                   │  ← 菜单栏
+├──────────────────────────────────────────────┤
+│  [主页]  [工作]  [工具]                      │  ← 多行标签栏（缩小时自动换行）
+│                                              │
+├──────────────────────────────────────────────┤
+│   ┌──────┐   ┌──────┐   ┌──────┐           │
+│   │  📁  │   │  📄  │   │  🌐  │           │  ← 48×48 图标网格
+│   │ 项目  │   │ 报表  │   │ GitHub│           │
+│   └──────┘   └──────┘   └──────┘           │
+│                                              │
+├──────────────────────────────────────────────┤
+│  就绪 — 拖入文件或右键空白区域创建图标       │  ← 状态栏
+└──────────────────────────────────────────────┘
 ```
 
 ---
@@ -35,11 +35,12 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 |---|---|
 | 🖱️ **拖放添加** | 从资源管理器拖入文件/文件夹/.lnk 快捷方式即可创建图标 |
 | 🔗 **自定义图标** | 右键空白区域 → 新建网址/命令图标 |
+| ✅ **批量管理** | 文件 → 批量管理，勾选图标后批量删除 |
 | 📱 **手机网格布局** | 图标自动排列，窗口缩放时自动调整列数 |
 | ↔️ **拖动排序** | 图标可在标签页内拖动排序，也可跨标签页移动 |
-| 🏷️ **标签页管理** | 拖动标签页排序、右键重命名/新建/删除 |
+| 🏷️ **多行标签栏** | 窗口缩小时标签页自动换行，双击/F2 重命名，←→ 切换 |
 | ✏️ **图标改名** | 双击图标文字即可编辑名称 |
-| 🖱️ **右键菜单** | 打开、打开文件位置、重命名、删除 |
+| 🌐 **中英双语** | 文件 → 语言 切换，偏好自动保存 |
 | 💾 **自动保存** | 所有操作即时写入 `data/tabs.json`，支持启动恢复 |
 | 🎨 **Win11 风格** | 圆角、浅色主题、Fluent Design 风格 |
 
@@ -47,11 +48,12 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 |---|---|
 | 🖱️ **Drag & drop** | Drop files, folders, or .lnk shortcuts from Explorer to create icons |
 | 🔗 **Custom icons** | Right-click empty area → New URL / Command icon |
+| ✅ **Batch manage** | File → Batch Manage, check icons to bulk delete |
 | 📱 **Phone‑grid layout** | Auto‑flow grid, columns adjust on window resize |
 | ↔️ **Drag to reorder** | Rearrange icons within a tab; drag to another tab to move |
-| 🏷️ **Tab management** | Drag tabs to reorder; right‑click to rename / add / delete |
+| 🏷️ **Multi-row tabs** | Tabs wrap on narrow windows; double-click/F2 to rename; arrows to switch |
 | ✏️ **Rename icons** | Double‑click the label to edit |
-| 🖱️ **Context menu** | Open, open file location, rename, remove |
+| 🌐 **Bilingual** | File → Language, preference auto‑saved |
 | 💾 **Auto‑save** | Instant persistence to `data/tabs.json`; survives restart |
 | 🎨 **Win11 themed** | Rounded corners, light theme, Fluent Design aesthetic |
 
@@ -124,26 +126,27 @@ VibeCoding/
 ├── README.md                      # 本文件 · This file
 ├── data/                          # 运行时数据 (自动创建 · auto‑created)
 │   ├── tabs.json                  # 标签页 & 图标状态
+│   ├── config.json                # 用户配置（语言偏好等）
 │   └── icons/                     # 图标 PNG 缓存
 └── src/toolbox/
     ├── main.py                    # QApplication + Win11 样式
     ├── app_window.py              # QMainWindow 主窗口
-    ├── tab_widget.py              # QTabWidget — 标签页管理
-    ├── icon_grid.py               # QScrollArea — 图标网格 & 拖放处理
-    ├── icon_widget.py             # 单个图标组件 (图标 + 标签)
-    ├── icon_label.py              # 可编辑标签 (双击改名)
-    ├── flow_layout.py             # 自定义 QLayout — 手机网格布局
-    ├── context_menu.py            # 右键菜单工厂
+    ├── tab_widget.py              # QStackedWidget + WrapTabBar — 标签页管理
+    ├── wrap_tab_bar.py            # 自定义多行标签栏
+    ├── i18n.py                    # 中英双语翻译模块
+    ├── icon_grid.py               # QScrollArea + DropContainer — 图标网格
+    ├── icon_widget.py             # 单个图标组件 (图标 + 标签 + 复选框)
+    ├── icon_label.py              # 可编辑标签 (双击改名/连字符/省略号)
+    ├── flow_layout.py             # 自定义 QLayout — 手机网格 + 可变宽度
     ├── models/
     │   ├── data_store.py          # JSON 持久化
     │   ├── tab_model.py           # 标签页数据模型
     │   └── icon_model.py          # 图标数据模型 + IconType 枚举
     ├── services/
-    │   ├── icon_resolver.py       # 系统图标提取 & 缓存
-    │   ├── launcher.py            # 打开文件/URL/运行命令
-    │   └── drag_data.py           # MIME 数据解析
+    │   ├── icon_resolver.py       # 系统图标提取 & 缓存 & .lnk 解析
+    │   └── launcher.py            # 打开文件/URL/运行命令/快捷方式
     └── utils/
-        └── windows_shortcut.py    # pywin32 .lnk 解析
+        └── windows_shortcut.py    # pywin32 WScript.Shell .lnk 解析
 ```
 
 ---
@@ -184,33 +187,52 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
-### v1.00.2 (2026-07-17)
-
-**修复**
-- 修复图标网格对齐 — 不同标签高度的图标现在顶部对齐
-- 修复文字被裁切（如 "Bandon" 显示为 "andon"）— 加宽组件并减少内边距
-- 修复长英文单词生硬截断 — 添加连字符（hyphenation）支持
-- 修复 QScrollArea 拖放事件被容器拦截 — 使用自定义 DropContainer
-- 修复 FlowLayout 未将 Widget 纳入父容器 — 图标数据保存但不可见
+### v1.10.2 (2026-07-19)
 
 **新增**
-- 中英文双语切换（`文件 → 语言`），偏好自动保存
-- 图标文字自动换行，超过三行省略为 "…"
-- 完整 Win11 Fluent Design 风格重做
-- 关于对话框：版本号、作者 dboycht、项目地址
+- 批量管理模式：文件 -> 批量管理，图标右上角复选框，勾选后批量删除
+- 多行标签栏：窗口缩小时标签页自动换行，不再隐藏
+- 标签页按钮宽度根据名称自适应
+- 双击标签页名称弹出重命名对话框
+- F2 快捷键重命名当前标签页
+- 左右方向键切换标签页
+- 新建标签页时弹出名称输入对话框
+- 编译脚本 build.py + launcher.py 打包入口
+
+**修复**
+- 修复快捷方式打开报错 WinError 5 — 改用 os.startfile(.lnk)
+- 修复 QInputDialog.getText 按钮中英文不一致
+- 修复新建标签页对话框取消后仍创建
+- 删除冗余文件 context_menu.py, drag_data.py
+- 清理未使用的信号和导入
+
+### v1.10.1 (2026-07-18)
+
+**新增**
+- 左键单击图标选中（蓝色边框）
+- Ctrl+单击多选
+- F2 重命名选中图标
+- Delete 批量删除选中图标
+- 中英文双语切换，偏好保存到 data/config.json
+- 关于对话框显示版本号、作者、项目地址
+
+**修复**
+- 图标网格对齐 — AlignTop + stretch
+- 文字裁切 — 加宽组件 + 减少内边距
+- 长英文单词断词 — 连字符 hyphenation
+- QScrollArea 拖放事件拦截 — 自定义 DropContainer
+- FlowLayout 未纳入父容器 — 使用 addWidget
+- 菜单栏颜色对比度 — 深色底 + 白色文字
+
+**变更**
+- 图标文字自动换行，超过三行省略
+- Win11 Fluent Design 风格
 - 图标文字白色 + 半透明暗色圆角底
 - 图标悬停高亮效果
 
 ### v1.00 (2026-07-16)
 
-- 初始版本
-- 多标签页 + 手机网格布局
-- 拖入文件/文件夹/.lnk 创建图标
-- 自定义 URL / 命令图标
-- 图标拖动排序、跨标签页移动
-- 标签页拖动排序、右键重命名
-- 图标双击改名、右键菜单
-- JSON 自动持久化
+- 初始版本，核心功能完整
 
 ---
 
