@@ -153,16 +153,31 @@ class AppWindow(QMainWindow):
         file_menu.addSeparator()
 
         # ── 批量管理 ──
-        self._batch_action = QAction(tr("app.menu.batch"), self)
+        self._batch_action = QAction(tr("app.menu.batch") + "\tCtrl+B", self)
         self._batch_action.setCheckable(True)
         self._batch_action.setChecked(False)
         self._batch_action.triggered.connect(self._toggle_batch_mode)
         file_menu.addAction(self._batch_action)
 
-        self._batch_delete_action = QAction(tr("app.menu.batch_delete"), self)
+        self._batch_delete_action = QAction(tr("app.menu.batch_delete") + "\tShift+Del", self)
         self._batch_delete_action.triggered.connect(self._batch_delete)
         self._batch_delete_action.setEnabled(False)
         file_menu.addAction(self._batch_delete_action)
+
+        file_menu.addSeparator()
+
+        # 数据管理
+        reset_action = QAction(tr("app.menu.reset") + "\tCtrl+Shift+R", self)
+        reset_action.triggered.connect(self._reset_data)
+        file_menu.addAction(reset_action)
+
+        export_action = QAction(tr("app.menu.export") + "\tCtrl+Shift+E", self)
+        export_action.triggered.connect(self._export_data)
+        file_menu.addAction(export_action)
+
+        import_action = QAction(tr("app.menu.import") + "\tCtrl+Shift+I", self)
+        import_action.triggered.connect(self._import_data)
+        file_menu.addAction(import_action)
 
         file_menu.addSeparator()
 
@@ -173,9 +188,60 @@ class AppWindow(QMainWindow):
 
         # ── 帮助菜单 · Help ──
         help_menu = menu_bar.addMenu(tr("app.menu.help"))
+        shortcuts_action = QAction(tr("app.menu.shortcuts"), self)
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+        help_menu.addSeparator()
         about_action = QAction(tr("app.menu.about"), self)
         about_action.triggered.connect(self._on_about)
         help_menu.addAction(about_action)
+
+    # ── 全局快捷键 ──
+
+    def keyPressEvent(self, event):
+        """拦截全局快捷键。"""
+        from PyQt6.QtCore import Qt as QtCore
+        modifiers = event.modifiers()
+        key = event.key()
+        ctrl = bool(modifiers & QtCore.KeyboardModifier.ControlModifier)
+        shift = bool(modifiers & QtCore.KeyboardModifier.ShiftModifier)
+
+        if ctrl and shift:
+            grid = self.tab_widget._get_current_grid()
+            if key == QtCore.Key.Key_F and grid:
+                self.tab_widget._create_file_icon(grid)
+                return
+            if key == QtCore.Key.Key_O and grid:
+                self.tab_widget._create_folder_icon(grid)
+                return
+            if key == QtCore.Key.Key_U and grid:
+                self.tab_widget._create_url_icon(grid)
+                return
+            if key == QtCore.Key.Key_P and grid:
+                self.tab_widget._create_command_icon(grid)
+                return
+        if ctrl and key == QtCore.Key.Key_B:
+            self._batch_action.setChecked(not self._batch_action.isChecked())
+            self._toggle_batch_mode(self._batch_action.isChecked())
+            return
+        if shift and key == QtCore.Key.Key_Delete and self._batch_action.isChecked():
+            self._batch_delete()
+            return
+        if ctrl and shift and key == QtCore.Key.Key_R:
+            self._reset_data()
+            return
+        if ctrl and shift and key == QtCore.Key.Key_E:
+            self._export_data()
+            return
+        if ctrl and shift and key == QtCore.Key.Key_I:
+            self._import_data()
+            return
+
+        super().keyPressEvent(event)
+
+    def _show_shortcuts(self):
+        from .shortcut_dialog import show_shortcut_dialog
+        show_shortcut_dialog(self)
 
     # ── 状态恢复 · State restore ──
 
@@ -235,6 +301,94 @@ class AppWindow(QMainWindow):
         grid = self.tab_widget._get_current_grid()
         if grid:
             grid.batch_delete()
+
+    def _reset_data(self):
+        """重置所有数据。"""
+        confirm = QMessageBox.warning(
+            self, tr("reset.title"),
+            tr("reset.confirm"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        # 清空所有标签页
+        tw = self.tab_widget
+        while tw._stack.count() > 0:
+            w = tw._stack.widget(0)
+            tw._stack.removeWidget(w)
+            if hasattr(w, 'deleteLater'):
+                w.deleteLater()
+        tw._icon_grids.clear()
+        tw._tab_records.clear()
+        while tw._tab_bar.count() > 0:
+            tw._tab_bar.remove_tab(0)
+        # 清除数据文件
+        import shutil
+        icons_dir = self.data_store.icons_dir
+        if icons_dir.exists():
+            shutil.rmtree(icons_dir)
+            icons_dir.mkdir()
+        self.data_store.tabs = []
+        self.data_store.save()
+        # 重建默认标签页
+        default_name = tr("tab.default_name")
+        tab = self.data_store.add_tab(default_name)
+        tw.add_tab_page(tab)
+        self.status_bar.showMessage(tr("reset.done"))
+
+    def _export_data(self):
+        """导出数据为 ZIP 压缩包（带进度条）。"""
+        from PyQt6.QtWidgets import QFileDialog
+        from .services.backup_manager import BackupWorker, unique_filename
+        from .progress_dialog import ProgressDialog
+
+        folder = QFileDialog.getExistingDirectory(self, tr("export.select_folder"))
+        if not folder:
+            return
+        zip_path = str(Path(folder) / unique_filename())
+
+        dlg = ProgressDialog(tr("export.title"), self)
+        worker = BackupWorker("export", self.data_store.data_dir, zip_path)
+
+        worker.log.connect(dlg.append_log)
+        worker.progress.connect(dlg.set_progress)
+        worker.finished.connect(lambda ok, msg: dlg.mark_done(ok, msg))
+
+        # 线程结束后清理
+        worker.finished.connect(lambda ok, msg: worker.deleteLater())
+        worker.start()
+        dlg.exec()
+
+    def _import_data(self):
+        """从 ZIP 压缩包导入数据（带进度条 + 重载）。"""
+        from PyQt6.QtWidgets import QFileDialog
+        from .services.backup_manager import BackupWorker, unique_filename
+        from .progress_dialog import ProgressDialog
+
+        zip_path, _ = QFileDialog.getOpenFileName(
+            self, tr("import.select_file"), "", "ZIP (*.zip)"
+        )
+        if not zip_path:
+            return
+
+        dlg = ProgressDialog(tr("import.title"), self)
+        worker = BackupWorker("import", self.data_store.data_dir, zip_path)
+
+        worker.log.connect(dlg.append_log)
+        worker.progress.connect(dlg.set_progress)
+        # 导入完成后重新加载
+        worker.finished.connect(lambda ok, msg: self._on_import_done(ok, msg, dlg))
+        worker.finished.connect(lambda ok, msg: worker.deleteLater())
+        worker.start()
+        dlg.exec()
+
+    def _on_import_done(self, ok: bool, msg: str, dlg):
+        """导入完成后刷新 UI。"""
+        dlg.mark_done(ok, msg)
+        if ok:
+            self.data_store.load()
+            self.tab_widget.restore_tabs(self.data_store.tabs)
+            self.status_bar.showMessage(tr("import.done"))
 
     def _on_about(self):
         QMessageBox.about(self, tr("app.about.title"), tr("app.about.text"))

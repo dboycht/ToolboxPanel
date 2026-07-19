@@ -274,11 +274,28 @@ class TabWidget(QWidget):
 
     def keyPressEvent(self, event):
         key = event.key()
+        ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
+        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+
+        # Ctrl+W — 关闭当前标签页
+        if ctrl and key == Qt.Key.Key_W:
+            idx = self._stack.currentIndex()
+            if idx >= 0:
+                self._delete_tab(idx)
+            return
+        # Ctrl+R — 重命名当前标签页
+        if ctrl and key == Qt.Key.Key_R:
+            idx = self._stack.currentIndex()
+            if idx >= 0:
+                self._rename_tab(idx)
+            return
+        # F2 — 重命名当前标签页
         if key == Qt.Key.Key_F2:
             idx = self._stack.currentIndex()
             if idx >= 0:
                 self._rename_tab(idx)
             return
+        # Left/Right — 切换标签页
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
             from PyQt6.QtWidgets import QLineEdit, QAbstractSpinBox
             focus = self.window().focusWidget()

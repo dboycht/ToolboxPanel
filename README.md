@@ -41,6 +41,8 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | 🏷️ **多行标签栏** | 窗口缩小时标签页自动换行，双击/F2 重命名，←→ 切换 |
 | ✏️ **图标改名** | 双击图标文字即可编辑名称 |
 | 🌐 **中英双语** | 文件 → 语言 切换，偏好自动保存 |
+| 📦 **导入导出** | ZIP 压缩包备份/恢复，含版本信息和进度条 |
+| ⌨️ **快捷键** | 15+ 快捷键覆盖所有功能，Ctrl+B/Shift+Del/←→ 等 |
 | 💾 **自动保存** | 所有操作即时写入 `data/tabs.json`，支持启动恢复 |
 | 🎨 **Win11 风格** | 圆角、浅色主题、Fluent Design 风格 |
 
@@ -54,6 +56,8 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | 🏷️ **Multi-row tabs** | Tabs wrap on narrow windows; double-click/F2 to rename; arrows to switch |
 | ✏️ **Rename icons** | Double‑click the label to edit |
 | 🌐 **Bilingual** | File → Language, preference auto‑saved |
+| 📦 **Backup** | ZIP export/import with metadata and progress bar |
+| ⌨️ **Shortcuts** | 15+ keyboard shortcuts: Ctrl+B, Shift+Del, arrows, and more |
 | 💾 **Auto‑save** | Instant persistence to `data/tabs.json`; survives restart |
 | 🎨 **Win11 themed** | Rounded corners, light theme, Fluent Design aesthetic |
 
@@ -134,6 +138,8 @@ VibeCoding/
     ├── tab_widget.py              # QStackedWidget + WrapTabBar — 标签页管理
     ├── wrap_tab_bar.py            # 自定义多行标签栏
     ├── i18n.py                    # 中英双语翻译模块
+    ├── shortcut_dialog.py         # 快捷键参考对话框
+    ├── progress_dialog.py         # 进度条 + 日志对话框
     ├── icon_grid.py               # QScrollArea + DropContainer — 图标网格
     ├── icon_widget.py             # 单个图标组件 (图标 + 标签 + 复选框)
     ├── icon_label.py              # 可编辑标签 (双击改名/连字符/省略号)
@@ -143,6 +149,7 @@ VibeCoding/
     │   ├── tab_model.py           # 标签页数据模型
     │   └── icon_model.py          # 图标数据模型 + IconType 枚举
     ├── services/
+    │   ├── backup_manager.py      # ZIP 导入/导出 + 后台线程 + 元数据
     │   ├── icon_resolver.py       # 系统图标提取 & 缓存 & .lnk 解析
     │   └── launcher.py            # 打开文件/URL/运行命令/快捷方式
     └── utils/
@@ -186,6 +193,21 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 ---
 
 ## 更新日志 · Changelog
+
+### v1.10.3 (2026-07-19)
+
+**新增**
+- 全局快捷键系统：Ctrl+B 批量管理、Ctrl+W/R 标签操作、Ctrl+Shift+* 创建图标
+- 快捷键参考对话框（帮助 -> 快捷键参考），中英双语表格
+- ZIP 压缩包导入/导出：含 metadata（版本/时间/统计）+ 进度条 + 实时日志
+- 导出文件名含时间戳 + 随机码，永不覆盖
+- 重置数据功能（Ctrl+Shift+R）
+- 所有菜单项标注快捷键
+
+**修复**
+- 清理冗余代码，删除 context_menu.py、drag_data.py 等未使用文件
+- 清理 10+ 处未使用导入和死信号
+- README 全面更新
 
 ### v1.10.2 (2026-07-19)
 

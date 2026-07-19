@@ -76,7 +76,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "app.menu.about":              {"zh": "关于(&A)",                       "en": "&About"},
     "app.about.title":             {"zh": "关于 工具箱",                    "en": "About Toolbox"},
     "app.about.text":              {"zh":
-        "工具箱 v1.10.2 — 手机桌面风格的启动器\n"
+        "工具箱 v1.10.3 — 手机桌面风格的启动器\n"
         "作者: dboycht\n"
         "项目地址: https://github.com/dboycht/ToolboxPanel\n\n"
         "• 从资源管理器拖入文件/文件夹/快捷方式即可创建图标\n"
@@ -85,7 +85,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "• 图标和标签页均可拖动排序\n"
         "• 数据自动保存到 data/ 文件夹",
                                     "en":
-        "Toolbox v1.10.2 — Phone‑home‑screen style launcher\n"
+        "Toolbox v1.10.3 — Phone‑home‑screen style launcher\n"
         "Author: dboycht\n"
         "Project: https://github.com/dboycht/ToolboxPanel\n\n"
         "• Drag files / folders / shortcuts from Explorer to create icons\n"
@@ -164,6 +164,48 @@ TEXTS: dict[str, dict[str, str]] = {
     # ── General ──
     "btn.ok":                      {"zh": "确定",                           "en": "OK"},
     "btn.cancel":                  {"zh": "取消",                           "en": "Cancel"},
+    # shortcut dialog
+    "shortcut.dialog.title":       {"zh": "快捷键参考",                      "en": "Shortcut Reference"},
+    "shortcut.col.action":         {"zh": "功能",                            "en": "Action"},
+    "shortcut.col.key":            {"zh": "快捷键",                          "en": "Shortcut"},
+    "shortcut.new_tab":           {"zh": "新建标签页",                       "en": "New Tab"},
+    "shortcut.close_tab":         {"zh": "关闭当前标签页",                   "en": "Close Current Tab"},
+    "shortcut.rename_tab":        {"zh": "重命名标签页",                     "en": "Rename Tab"},
+    "shortcut.prev_tab":          {"zh": "上一个标签页",                     "en": "Previous Tab"},
+    "shortcut.next_tab":          {"zh": "下一个标签页",                     "en": "Next Tab"},
+    "shortcut.batch_mode":        {"zh": "批量管理模式",                     "en": "Batch Manage Mode"},
+    "shortcut.batch_delete":      {"zh": "批量删除图标",                     "en": "Batch Delete Icons"},
+    "shortcut.new_file":          {"zh": "新建文件图标",                     "en": "New File Icon"},
+    "shortcut.new_folder":        {"zh": "新建文件夹图标",                   "en": "New Folder Icon"},
+    "shortcut.new_url":           {"zh": "新建网址图标",                     "en": "New URL Icon"},
+    "shortcut.new_command":       {"zh": "新建命令图标",                     "en": "New Command Icon"},
+    "shortcut.open_icon":         {"zh": "打开图标",                         "en": "Open Icon"},
+    "shortcut.rename_icon":       {"zh": "重命名图标",                       "en": "Rename Icon"},
+    "shortcut.delete_icon":       {"zh": "删除图标",                         "en": "Delete Icon"},
+    "shortcut.exit_app":          {"zh": "退出程序",                         "en": "Exit"},
+    "app.menu.shortcuts":         {"zh": "快捷键参考(&K)",                   "en": "&Shortcut Reference"},
+    "app.menu.reset":             {"zh": "重置数据",                         "en": "Reset Data"},
+    "app.menu.export":            {"zh": "导出数据",                         "en": "Export Data"},
+    "reset.title":                {"zh": "重置数据",                         "en": "Reset Data"},
+    "reset.confirm":              {"zh": "确定要删除所有标签页和图标吗？\n此操作不可撤销！",
+                                                                           "en": "Delete all tabs and icons?\nThis cannot be undone!"},
+    "reset.done":                 {"zh": "数据已重置",                       "en": "Data reset complete"},
+    "export.select_folder":       {"zh": "选择导出目录",                     "en": "Select Export Folder"},
+    "export.done":                {"zh": "数据已导出到 {path}",              "en": "Data exported to {path}"},
+    "export.title":               {"zh": "导出数据",                         "en": "Export Data"},
+    "export.failed_title":        {"zh": "导出失败",                         "en": "Export Failed"},
+    "export.failed":              {"zh": "导出失败: {err}",                  "en": "Export failed: {err}"},
+    "app.menu.import":            {"zh": "导入数据",                         "en": "Import Data"},
+    "import.title":               {"zh": "导入数据",                         "en": "Import Data"},
+    "import.select_file":         {"zh": "选择备份文件",                     "en": "Select Backup File"},
+    "import.done":                {"zh": "数据已导入，界面已刷新",           "en": "Data imported, UI refreshed"},
+    "progress.preparing":         {"zh": "准备中...",                         "en": "Preparing..."},
+    "progress.done":              {"zh": "操作完成",                          "en": "Operation Complete"},
+    "progress.failed":            {"zh": "操作失败: {err}",                   "en": "Failed: {err}"},
+    "shortcut.import_data":       {"zh": "导入数据",                         "en": "Import Data"},
+    "shortcut.reset_data":        {"zh": "重置数据",                         "en": "Reset Data"},
+    "shortcut.export_data":       {"zh": "导出数据",                         "en": "Export Data"},
+
     "data.default_tab":            {"zh": "主页",                           "en": "Home"},
     # bulk delete
     "app.menu.batch":              {"zh": "批量管理",                       "en": "Batch Manage"},
