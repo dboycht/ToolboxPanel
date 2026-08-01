@@ -1,13 +1,20 @@
 """A single icon widget: icon image + editable label, with drag support."""
 from pathlib import Path
 
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QApplication,
-                              QStyle, QCheckBox)
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+                              QApplication, QStyle, QCheckBox)
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QMimeData
 from PyQt6.QtGui import QPixmap, QDrag, QPainter, QMouseEvent
 
 from .models.icon_model import IconModel, IconType
 from .icon_label import IconLabel
+
+# Icon size presets — used by View > Icon Size menu
+SIZE_PRESETS = {
+    "small":  {"icon": 32, "widget_w": 52, "widget_h": 82},
+    "medium": {"icon": 48, "widget_w": 68, "widget_h": 104},
+    "large":  {"icon": 64, "widget_w": 84, "widget_h": 126},
+}
 
 
 class IconWidget(QWidget):
@@ -31,10 +38,34 @@ class IconWidget(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setMouseTracking(True)
 
+        # Main vertical layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(3, 4, 3, 2)
+        layout.setContentsMargins(3, 1, 3, 2)
         layout.setSpacing(2)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # Top row: spacer + checkbox (for batch mode, normally hidden)
+        self._check = QCheckBox(self)
+        self._check.setFixedSize(18, 18)
+        self._check.setStyleSheet("""
+            QCheckBox {
+                background-color: #ffffff;
+                border: 2px solid #0067c0;
+                border-radius: 3px;
+                spacing: 0px;
+            }
+            QCheckBox:checked {
+                background-color: #0067c0;
+            }
+        """)
+        self._check.hide()
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(0)
+        top_row.addStretch()
+        top_row.addWidget(self._check)
+        layout.addLayout(top_row)
 
         # Icon image
         self.icon_label = QLabel(self)
@@ -49,11 +80,6 @@ class IconWidget(QWidget):
 
         # Bottom stretch
         layout.addStretch()
-
-        # 批量管理复选框（默认隐藏）
-        self._check = QCheckBox(self)
-        self._check.move(self.WIDGET_WIDTH - 22, 2)
-        self._check.hide()
 
         self._load_icon()
 
@@ -124,18 +150,22 @@ class IconWidget(QWidget):
             p = QPixmap(self.ICON_SIZE, self.ICON_SIZE)
             p.fill(Qt.GlobalColor.transparent)
             return p
-        mapping = {
-            IconType.FILE: QStyle.StandardPixmap.SP_FileIcon,
-            IconType.FOLDER: QStyle.StandardPixmap.SP_DirIcon,
-            IconType.SHORTCUT: QStyle.StandardPixmap.SP_FileLinkIcon,
-            IconType.URL: QStyle.StandardPixmap.SP_ComputerIcon,
-            IconType.COMMAND: QStyle.StandardPixmap.SP_CommandLink,
-        }
-        std = mapping.get(self.icon_model.type, QStyle.StandardPixmap.SP_FileIcon)
+        from .services.icon_resolver import FALLBACK_ICON_MAP
+        std = FALLBACK_ICON_MAP.get(self.icon_model.type, QStyle.StandardPixmap.SP_FileIcon)
         return style.standardIcon(std).pixmap(self.ICON_SIZE, self.ICON_SIZE)
 
     def refresh_icon(self):
+        """Reload icon pixmap (e.g., after path change or size change)."""
+        self.icon_label.setFixedSize(self.ICON_SIZE, self.ICON_SIZE)
         self._load_icon()
+
+    @classmethod
+    def apply_size_preset(cls, preset_name: str):
+        """Apply a size preset to the entire class (affects future widgets)."""
+        preset = SIZE_PRESETS.get(preset_name, SIZE_PRESETS["medium"])
+        cls.ICON_SIZE = preset["icon"]
+        cls.WIDGET_WIDTH = preset["widget_w"]
+        cls.WIDGET_HEIGHT = preset["widget_h"]
 
     # ── 拖拽 ──
 

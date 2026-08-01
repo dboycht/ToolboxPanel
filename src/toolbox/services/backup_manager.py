@@ -30,7 +30,7 @@ def build_metadata(data_dir: Path) -> dict:
         except Exception:
             pass
     return {
-        "version": "1.10.3",
+        "version": "1.10.4",
         "exported_at": datetime.now().isoformat(),
         "tab_count": tab_count,
         "icon_count": icon_count,
@@ -89,7 +89,7 @@ class BackupWorker(QThread):
     def _do_import(self):
         zip_path = Path(self.target_path)
         if not zip_path.exists():
-            self.finished.emit(False, "文件不存在")
+            self.finished.emit(False, "File not found")
             return
 
         self.log.emit(f"打开压缩包: {zip_path.name}")
@@ -99,7 +99,7 @@ class BackupWorker(QThread):
                 total = len(namelist)
                 # 验证 metadata
                 if "metadata.json" not in namelist:
-                    self.finished.emit(False, "无效的备份文件：缺少 metadata.json")
+                    self.finished.emit(False, "Invalid backup: missing metadata.json")
                     return
 
                 self.log.emit("读取元数据...")
@@ -116,10 +116,16 @@ class BackupWorker(QThread):
                 config_file = data_dir / "config.json"
                 if icons_dir.exists():
                     for f in icons_dir.iterdir():
-                        f.unlink()
+                        try:
+                            f.unlink()
+                        except (OSError, PermissionError):
+                            pass
                 for f in (tabs_file, config_file):
                     if f.exists():
-                        f.unlink()
+                        try:
+                            f.unlink()
+                        except (OSError, PermissionError):
+                            pass
 
                 # 解压（跳过 metadata.json）
                 for i, name in enumerate(namelist):

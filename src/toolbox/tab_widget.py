@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QStackedWidget, QMenu,
                               QMessageBox, QPushButton, QHBoxLayout,
                               QDialog, QFormLayout, QLabel, QLineEdit,
                               QDialogButtonBox, QFileDialog)
-from PyQt6.QtCore import pyqtSignal, Qt, QEvent
+from PyQt6.QtCore import pyqtSignal, Qt
 
 from .models.data_store import DataStore
 from .models.tab_model import TabModel
@@ -27,6 +27,7 @@ class TabWidget(QWidget):
 
     new_tab_requested = pyqtSignal()
     status_message = pyqtSignal(str)
+    search_closed = pyqtSignal()
 
     def __init__(self, data_store: DataStore, parent=None):
         super().__init__(parent)
@@ -83,10 +84,23 @@ class TabWidget(QWidget):
 
     # ── 标签页管理 ──
 
+    def clear_all(self):
+        """Remove all tabs, grids, and widgets. Used for data reset."""
+        while self._stack.count() > 0:
+            w = self._stack.widget(0)
+            self._stack.removeWidget(w)
+            w.deleteLater()
+        self._icon_grids.clear()
+        self._tab_records.clear()
+        while self._tab_bar.count() > 0:
+            self._tab_bar.remove_tab(0)
+
     def restore_tabs(self, tabs: list[TabModel]):
         """从已保存状态重建标签页。"""
         while self._stack.count() > 0:
-            self._stack.removeWidget(self._stack.widget(0))
+            w = self._stack.widget(0)
+            self._stack.removeWidget(w)
+            w.deleteLater()
         self._icon_grids.clear()
         self._tab_records.clear()
 
@@ -107,6 +121,7 @@ class TabWidget(QWidget):
         grid.icon_double_clicked.connect(self._on_icon_open)
         grid.files_dropped.connect(lambda paths: self._add_dropped_paths(paths, grid))
         grid.status_message.connect(self.status_message.emit)
+        grid.search_closed.connect(self.search_closed.emit)
 
         # 空白区域右键菜单
         grid._container.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -149,7 +164,7 @@ class TabWidget(QWidget):
             if path_str.lower().endswith(".lnk"):
                 icon_type = IconType.SHORTCUT
                 ti = self.icon_resolver.resolve_shortcut(str(path))
-                tp = ti.get("target_path", str(path))
+                tp = ti.get("target_path") or str(path)
                 args = ti.get("arguments", "")
                 wd = ti.get("working_dir", "")
                 cache = self.icon_resolver.extract_and_cache(str(path))
@@ -262,15 +277,13 @@ class TabWidget(QWidget):
 
     # ── 键盘快捷操作 ──
 
-    def eventFilter(self, obj, event):
-        if obj is self._tab_bar and event.type() == QEvent.Type.MouseButtonDblClick:
-            # 从 tab_bar 自身找到被双击的按钮索引
-            pos = event.position().toPoint()
-            child = self._tab_bar.childAt(pos)
-            if child and hasattr(child, '_index'):
-                self._rename_tab(child._index)
-                return True
-        return super().eventFilter(obj, event)
+    def set_icon_size(self, preset_name: str):
+        """Apply an icon size preset to all grids and their widgets."""
+        from .icon_widget import IconWidget, SIZE_PRESETS
+        preset = SIZE_PRESETS.get(preset_name, SIZE_PRESETS["medium"])
+        IconWidget.apply_size_preset(preset_name)
+        for grid in self._icon_grids.values():
+            grid.update_cell_size(preset["widget_w"], preset["widget_h"])
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -297,9 +310,10 @@ class TabWidget(QWidget):
             return
         # Left/Right — 切换标签页
         if key in (Qt.Key.Key_Left, Qt.Key.Key_Right):
-            from PyQt6.QtWidgets import QLineEdit, QAbstractSpinBox
+            from PyQt6.QtWidgets import (QLineEdit, QAbstractSpinBox,
+                                          QTextEdit, QPlainTextEdit)
             focus = self.window().focusWidget()
-            if isinstance(focus, (QLineEdit, QAbstractSpinBox)):
+            if isinstance(focus, (QLineEdit, QAbstractSpinBox, QTextEdit, QPlainTextEdit)):
                 super().keyPressEvent(event)
                 return
             cnt = self._stack.count()
@@ -318,88 +332,149 @@ class TabWidget(QWidget):
         menu = QMenu(self)
         a1 = menu.addAction(tr("grid.menu.file"))
         a2 = menu.addAction(tr("grid.menu.folder"))
+        a5 = menu.addAction(tr("grid.menu.shortcut"))
         menu.addSeparator()
         a3 = menu.addAction(tr("grid.menu.url"))
         a4 = menu.addAction(tr("grid.menu.command"))
         chosen = menu.exec(grid._container.mapToGlobal(pos))
         if chosen == a1: self._create_file_icon(grid)
         elif chosen == a2: self._create_folder_icon(grid)
+        elif chosen == a5: self._create_shortcut_icon(grid)
         elif chosen == a3: self._create_url_icon(grid)
         elif chosen == a4: self._create_command_icon(grid)
 
     def _create_file_icon(self, grid: IconGrid):
+        from .icon_edit_dialog import IconEditDialog
         p, _ = QFileDialog.getOpenFileName(self, tr("grid.dialog.select_file"))
-        if p: self._add_dropped_paths([p], grid)
+        if not p:
+            return
+        path = Path(p)
+        dlg = IconEditDialog.create_for_type(
+            IconType.FILE,
+            parent=self,
+            display_name=path.stem,
+            source_path=str(path.resolve()),
+            target_path=str(path.resolve()),
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        ok, err_key = dlg.apply()
+        if not ok:
+            self.status_message.emit(tr(err_key or "validate.name_required"))
+            return
+        icon = dlg.get_created_icon()
+        cache = self.icon_resolver.extract_and_cache(icon.source_path)
+        icon.icon_cache_file = cache or ""
+        self.data_store.add_icon(grid.tab.id, icon)
+        grid.add_icon(icon)
+        self.status_message.emit(tr("status.added", name=icon.display_name))
 
     def _create_folder_icon(self, grid: IconGrid):
+        from .icon_edit_dialog import IconEditDialog
         p = QFileDialog.getExistingDirectory(self, tr("grid.dialog.select_folder"))
-        if p: self._add_dropped_paths([p], grid)
+        if not p:
+            return
+        path = Path(p)
+        dlg = IconEditDialog.create_for_type(
+            IconType.FOLDER,
+            parent=self,
+            display_name=path.name,
+            source_path=str(path.resolve()),
+            target_path=str(path.resolve()),
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        ok, err_key = dlg.apply()
+        if not ok:
+            self.status_message.emit(tr(err_key or "validate.name_required"))
+            return
+        icon = dlg.get_created_icon()
+        cache = self.icon_resolver.extract_and_cache(icon.source_path)
+        icon.icon_cache_file = cache or ""
+        self.data_store.add_icon(grid.tab.id, icon)
+        grid.add_icon(icon)
+        self.status_message.emit(tr("status.added", name=icon.display_name))
+
+    def _create_shortcut_icon(self, grid: IconGrid):
+        from .icon_edit_dialog import IconEditDialog
+        p, _ = QFileDialog.getOpenFileName(
+            self, tr("grid.dialog.select_shortcut"), "",
+            "Shortcuts (*.lnk);;All Files (*)"
+        )
+        if not p:
+            return
+        path = Path(p)
+        ti = self.icon_resolver.resolve_shortcut(str(path))
+        tp = ti.get("target_path") or str(path)
+        args = ti.get("arguments", "")
+        wd = ti.get("working_dir", "")
+        dlg = IconEditDialog.create_for_type(
+            IconType.SHORTCUT,
+            parent=self,
+            display_name=path.stem,
+            source_path=str(path.resolve()),
+            target_path=tp,
+            arguments=args,
+            working_dir=wd,
+        )
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        ok, err_key = dlg.apply()
+        if not ok:
+            self.status_message.emit(tr(err_key or "validate.name_required"))
+            return
+        icon = dlg.get_created_icon()
+        # 自定义图标优先，否则使用 .lnk 的默认图标
+        cache = ""
+        spec = dlg.get_custom_icon_spec()
+        if spec:
+            pixmap = self.icon_resolver.extract_icon_from_file(spec[0], spec[1])
+            if pixmap and not pixmap.isNull():
+                cache_name = f"{uuid.uuid4()}.png"
+                pixmap.save(str(self.data_store.icons_dir / cache_name), "PNG")
+                cache = cache_name
+        if not cache:
+            cache = self.icon_resolver.extract_and_cache(icon.source_path) or ""
+        icon.icon_cache_file = cache
+        self.data_store.add_icon(grid.tab.id, icon)
+        grid.add_icon(icon)
+        self.status_message.emit(tr("status.added", name=icon.display_name))
 
     def _create_url_icon(self, grid: IconGrid):
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("url.dialog.title"))
-        dlg.setMinimumWidth(420)
-        lo = QVBoxLayout(dlg)
-        form = QFormLayout()
-        ne = QLineEdit(); ne.setPlaceholderText(tr("url.placeholder.name"))
-        ue = QLineEdit(); ue.setPlaceholderText(tr("url.placeholder.url"))
-        form.addRow(tr("url.label.name"), ne)
-        form.addRow(tr("url.label.url"), ue)
-        lo.addLayout(form)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn.ok"))
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn.cancel"))
-        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
-        lo.addWidget(btns)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            name = ne.text().strip(); url = ue.text().strip()
-            if name and url:
-                if not url.startswith(("http://", "https://", "ftp://")): url = "https://" + url
-                c = f"{uuid.uuid4()}.png"
-                self.icon_resolver._get_fallback(IconType.URL).save(str(self.data_store.icons_dir / c), "PNG")
-                icon = IconModel(type=IconType.URL, display_name=name, source_path=url, target_path=url, icon_cache_file=c)
-                self.data_store.add_icon(grid.tab.id, icon); grid.add_icon(icon)
-                self.status_message.emit(tr("url.created", name=name))
+        from .icon_edit_dialog import IconEditDialog
+        dlg = IconEditDialog.create_for_type(IconType.URL, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        ok, err_key = dlg.apply()
+        if not ok:
+            self.status_message.emit(tr(err_key or "validate.name_required"))
+            return
+        icon = dlg.get_created_icon()
+        cache_name = f"{uuid.uuid4()}.png"
+        self.icon_resolver.get_fallback(IconType.URL).save(
+            str(self.data_store.icons_dir / cache_name), "PNG")
+        icon.icon_cache_file = cache_name
+        self.data_store.add_icon(grid.tab.id, icon)
+        grid.add_icon(icon)
+        self.status_message.emit(tr("url.created", name=icon.display_name))
 
     def _create_command_icon(self, grid: IconGrid):
-        dlg = QDialog(self)
-        dlg.setWindowTitle(tr("cmd.dialog.title"))
-        dlg.setMinimumWidth(480)
-        lo = QVBoxLayout(dlg)
-        form = QFormLayout()
-        ne = QLineEdit(); ne.setPlaceholderText(tr("cmd.placeholder.name"))
-        cw = QWidget(); cl = QHBoxLayout(cw); cl.setContentsMargins(0,0,0,0)
-        ce = QLineEdit(); ce.setPlaceholderText(tr("cmd.placeholder.command"))
-        bb = QPushButton("…"); bb.setFixedWidth(36)
-        bb.clicked.connect(lambda: ce.setText(QFileDialog.getOpenFileName(dlg, tr("cmd.dialog.select_exe"))[0] or ce.text()))
-        cl.addWidget(ce); cl.addWidget(bb)
-        ae = QLineEdit(); ae.setPlaceholderText(tr("cmd.placeholder.args"))
-        ww = QWidget(); wl = QHBoxLayout(ww); wl.setContentsMargins(0,0,0,0)
-        we = QLineEdit(); we.setPlaceholderText(tr("cmd.placeholder.wd"))
-        wb = QPushButton("…"); wb.setFixedWidth(36)
-        wb.clicked.connect(lambda: we.setText(QFileDialog.getExistingDirectory(dlg, tr("cmd.dialog.select_wd")) or we.text()))
-        wl.addWidget(we); wl.addWidget(wb)
-        form.addRow(tr("cmd.label.name"), ne)
-        form.addRow(tr("cmd.label.command"), cw)
-        form.addRow(tr("cmd.label.args"), ae)
-        form.addRow(tr("cmd.label.wd"), ww)
-        lo.addLayout(form)
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText(tr("btn.ok"))
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText(tr("btn.cancel"))
-        btns.accepted.connect(dlg.accept); btns.rejected.connect(dlg.reject)
-        lo.addWidget(btns)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            name = ne.text().strip(); cmd = ce.text().strip()
-            args = ae.text().strip(); wd = we.text().strip()
-            if name and cmd:
-                c = f"{uuid.uuid4()}.png"
-                self.icon_resolver._get_fallback(IconType.COMMAND).save(str(self.data_store.icons_dir / c), "PNG")
-                icon = IconModel(type=IconType.COMMAND, display_name=name,
-                                 source_path=f"{cmd} {args}".strip(), target_path=cmd,
-                                 arguments=args, working_dir=wd, icon_cache_file=c)
-                self.data_store.add_icon(grid.tab.id, icon); grid.add_icon(icon)
-                self.status_message.emit(tr("cmd.created", name=name))
+        from .icon_edit_dialog import IconEditDialog
+        dlg = IconEditDialog.create_for_type(IconType.COMMAND, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        ok, err_key = dlg.apply()
+        if not ok:
+            self.status_message.emit(tr(err_key or "validate.name_required"))
+            return
+        icon = dlg.get_created_icon()
+        cache_name = f"{uuid.uuid4()}.png"
+        self.icon_resolver.get_fallback(IconType.COMMAND).save(
+            str(self.data_store.icons_dir / cache_name), "PNG")
+        icon.icon_cache_file = cache_name
+        self.data_store.add_icon(grid.tab.id, icon)
+        grid.add_icon(icon)
+        self.status_message.emit(tr("cmd.created", name=icon.display_name))
 
     @staticmethod
     def _prompt_text(title: str, label: str, default: str = "") -> str | None:

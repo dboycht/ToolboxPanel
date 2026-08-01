@@ -47,12 +47,18 @@ class AppWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage(tr("app.status.ready"))
 
+        # 图标大小偏好（菜单构建前读取，供勾选状态同步）
+        self._icon_size = self._load_icon_size()
+
         # 菜单栏
         self._setup_menus()
 
         # 连接信号
         self.tab_widget.new_tab_requested.connect(self._on_new_tab)
         self.tab_widget.status_message.connect(self.status_bar.showMessage)
+        # 搜索栏被 Esc 关闭时，取消菜单勾选
+        self.tab_widget.search_closed.connect(
+            lambda: self._find_action.setChecked(False))
 
         # 注册语言切换回调（必须在 _restore_state 之前，否则首次加载不触发）
         on_language_changed(self._refresh_ui)
@@ -76,6 +82,19 @@ class AppWindow(QMainWindow):
         return "zh"
 
     @staticmethod
+    def _load_icon_size() -> str:
+        config_file = get_data_dir() / "config.json"
+        try:
+            if config_file.exists():
+                cfg = json.loads(config_file.read_text(encoding="utf-8"))
+                size = cfg.get("icon_size", "medium")
+                if size in ("small", "medium", "large"):
+                    return size
+        except Exception:
+            pass
+        return "medium"
+
+    @staticmethod
     def _save_language(lang: str):
         config_file = get_data_dir() / "config.json"
         try:
@@ -96,10 +115,21 @@ class AppWindow(QMainWindow):
 
     def _refresh_ui(self):
         """Called whenever the language changes — update all visible strings."""
+        # 记录重建前的状态（菜单重建会重置勾选）
+        batch_was_checked = getattr(self, "_batch_action", None) and self._batch_action.isChecked()
+        find_was_checked = getattr(self, "_find_action", None) and self._find_action.isChecked()
+
         self.setWindowTitle(tr("app.title"))
         self.status_bar.showMessage(tr("app.status.ready"))
         # Rebuild menus
         self._setup_menus()
+        # 恢复批量管理/搜索的勾选状态
+        self._batch_action.setChecked(batch_was_checked)
+        self._batch_delete_action.setEnabled(batch_was_checked)
+        self._find_action.setChecked(find_was_checked)
+        # 同步图标大小勾选（_setup_menus 已按 self._icon_size 初始化）
+        for name, action in self._size_actions.items():
+            action.setChecked(name == self._icon_size)
         # Refresh tab texts
         for i in range(self.tab_widget.count()):
             grid = self.tab_widget.widget(i)
@@ -186,6 +216,36 @@ class AppWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
+        # ── 视图菜单 · View ──
+        view_menu = menu_bar.addMenu(tr("app.menu.view"))
+
+        # Find / Search — 可勾选：Ctrl+F 切换开关，再次点击可取消
+        self._find_action = QAction(tr("app.menu.find") + "\tCtrl+F", self)
+        self._find_action.setCheckable(True)
+        self._find_action.setChecked(False)
+        self._find_action.triggered.connect(self._toggle_search)
+        view_menu.addAction(self._find_action)
+
+        view_menu.addSeparator()
+
+        # Icon size submenu — 单选组，勾选状态与当前大小同步
+        size_menu = view_menu.addMenu(tr("app.menu.icon_size"))
+        size_group = QActionGroup(self)
+        size_group.setExclusive(True)
+
+        self._size_actions: dict[str, QAction] = {}
+        for preset_name, key in [("small", "app.menu.size_small"),
+                                  ("medium", "app.menu.size_medium"),
+                                  ("large", "app.menu.size_large")]:
+            action = QAction(tr(key), self)
+            action.setCheckable(True)
+            action.setChecked(preset_name == self._icon_size)
+            action.triggered.connect(
+                lambda checked, n=preset_name: self._change_icon_size(n))
+            size_group.addAction(action)
+            size_menu.addAction(action)
+            self._size_actions[preset_name] = action
+
         # ── 帮助菜单 · Help ──
         help_menu = menu_bar.addMenu(tr("app.menu.help"))
         shortcuts_action = QAction(tr("app.menu.shortcuts"), self)
@@ -220,6 +280,12 @@ class AppWindow(QMainWindow):
             if key == QtCore.Key.Key_P and grid:
                 self.tab_widget._create_command_icon(grid)
                 return
+            if key == QtCore.Key.Key_L and grid:
+                self.tab_widget._create_shortcut_icon(grid)
+                return
+        if ctrl and key == QtCore.Key.Key_F and not shift:
+            self._toggle_search()
+            return
         if ctrl and key == QtCore.Key.Key_B:
             self._batch_action.setChecked(not self._batch_action.isChecked())
             self._toggle_batch_mode(self._batch_action.isChecked())
@@ -249,6 +315,8 @@ class AppWindow(QMainWindow):
         set_language(self._lang)
         tabs = self.data_store.load()
         self.tab_widget.restore_tabs(tabs)
+        # Restore icon size preference
+        self.tab_widget.set_icon_size(self._load_icon_size())
         self.status_bar.showMessage(tr("app.status.loaded", n=len(tabs)))
 
     def _on_new_tab(self):
@@ -283,6 +351,40 @@ class AppWindow(QMainWindow):
             return edit.text().strip() or default
         return None
 
+    def _toggle_search(self, checked: bool | None = None):
+        """切换搜索栏显示/隐藏。Ctrl+F 或菜单点击交替开关。"""
+        grid = self.tab_widget._get_current_grid()
+        if not grid:
+            return
+        # checked=None 表示来自 Ctrl+F 快捷键（交替）；否则跟随菜单勾选状态
+        visible = (not grid.is_search_visible()) if checked is None else checked
+        grid.set_search_visible(visible)
+        self._find_action.setChecked(visible)
+
+    def _change_icon_size(self, preset_name: str):
+        """Change icon size, update menu checks, and persist preference."""
+        self._icon_size = preset_name
+        # 同步菜单勾选状态
+        for name, action in self._size_actions.items():
+            action.setChecked(name == preset_name)
+        self.tab_widget.set_icon_size(preset_name)
+        self._save_icon_size(preset_name)
+
+    @staticmethod
+    def _save_icon_size(preset_name: str):
+        """Persist icon size preference to config.json."""
+        import json
+        config_file = get_data_dir() / "config.json"
+        try:
+            cfg = {}
+            if config_file.exists():
+                cfg = json.loads(config_file.read_text(encoding="utf-8"))
+            cfg["icon_size"] = preset_name
+            config_file.write_text(json.dumps(cfg, indent=2, ensure_ascii=False),
+                                   encoding="utf-8")
+        except Exception:
+            pass
+
     def _toggle_batch_mode(self, checked: bool):
         """切换批量管理模式。"""
         self._batch_delete_action.setEnabled(checked)
@@ -292,7 +394,7 @@ class AppWindow(QMainWindow):
             if isinstance(grid, IconGrid):
                 grid.set_batch_mode(checked)
         if checked:
-            self.status_bar.showMessage("批量管理模式：勾选图标后点击「批量删除勾选图标」")
+            self.status_bar.showMessage(tr("status.batch_mode_on"))
         else:
             self.status_bar.showMessage(tr("app.status.ready"))
 
@@ -312,22 +414,16 @@ class AppWindow(QMainWindow):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         # 清空所有标签页
-        tw = self.tab_widget
-        while tw._stack.count() > 0:
-            w = tw._stack.widget(0)
-            tw._stack.removeWidget(w)
-            if hasattr(w, 'deleteLater'):
-                w.deleteLater()
-        tw._icon_grids.clear()
-        tw._tab_records.clear()
-        while tw._tab_bar.count() > 0:
-            tw._tab_bar.remove_tab(0)
+        self.tab_widget.clear_all()
         # 清除数据文件
         import shutil
         icons_dir = self.data_store.icons_dir
         if icons_dir.exists():
-            shutil.rmtree(icons_dir)
-            icons_dir.mkdir()
+            try:
+                shutil.rmtree(icons_dir)
+            except (OSError, PermissionError):
+                pass
+        icons_dir.mkdir(parents=True, exist_ok=True)
         self.data_store.tabs = []
         self.data_store.save()
         # 重建默认标签页

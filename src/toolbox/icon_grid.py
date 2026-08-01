@@ -4,15 +4,16 @@ import os
 import subprocess
 from pathlib import Path
 
-from PyQt6.QtWidgets import (QScrollArea, QWidget, QMenu, QMessageBox)
-from PyQt6.QtCore import Qt, pyqtSignal, QUrl
+from PyQt6.QtWidgets import (QScrollArea, QWidget, QMenu, QMessageBox,
+                              QVBoxLayout, QLineEdit)
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QEvent
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 
 from .flow_layout import FlowLayout
-from .icon_widget import IconWidget
+from .icon_widget import IconWidget, SIZE_PRESETS
 from .models.data_store import DataStore
 from .models.tab_model import TabModel
-from .models.icon_model import IconModel
+from .models.icon_model import IconModel, IconType
 from .i18n import tr
 
 
@@ -82,6 +83,7 @@ class IconGrid(QScrollArea):
     icon_double_clicked = pyqtSignal(str)
     files_dropped = pyqtSignal(list)
     status_message = pyqtSignal(str)
+    search_closed = pyqtSignal()
 
     def __init__(self, tab: TabModel, data_store: DataStore,
                  icon_cache_dir: Path, parent=None):
@@ -94,12 +96,28 @@ class IconGrid(QScrollArea):
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
         self._container = _DropContainer()
         self._layout = FlowLayout()
         self._container.setLayout(self._layout)
-        self.setWidget(self._container)
+
+        # Outer widget: search bar + container
+        self._outer = QWidget()
+        outer_layout = QVBoxLayout(self._outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(4)
+
+        # Search bar (hidden by default) — Esc 可关闭
+        self._search_bar = QLineEdit()
+        self._search_bar.setPlaceholderText(tr("search.placeholder"))
+        self._search_bar.setClearButtonEnabled(True)
+        self._search_bar.hide()
+        self._search_bar.textChanged.connect(self._apply_filter)
+        self._search_bar.installEventFilter(self)
+        outer_layout.addWidget(self._search_bar)
+        outer_layout.addWidget(self._container)
+
+        self.setWidget(self._outer)
 
         self._container.external_dropped.connect(self.files_dropped.emit)
         self._container.internal_dropped.connect(self._on_internal_drop)
@@ -107,6 +125,11 @@ class IconGrid(QScrollArea):
 
         self._icon_widgets: dict[str, IconWidget] = {}
         self._batch_mode = False
+
+        # 样式表必须放在 __init__ 末尾设置：
+        # 在子部件构建前调用 setStyleSheet 会触发 Qt 原生崩溃
+        # （Qt 6.x 在 QScrollArea 上 polish 时访问未初始化结构）
+        self.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
 
     # ── 批量管理 ──
 
@@ -121,7 +144,7 @@ class IconGrid(QScrollArea):
         checked = [id_ for id_, w in self._icon_widgets.items() if w.is_checked()]
         count = len(checked)
         if count == 0:
-            self.status_message.emit("未选中任何图标")
+            self.status_message.emit(tr("batch.none_checked"))
             return
         confirm = QMessageBox.question(
             self,
@@ -166,7 +189,6 @@ class IconGrid(QScrollArea):
             if icon_id not in tab_icons:
                 self.remove_icon(icon_id)
         items = list(self._layout._items)
-        self._layout._items.clear()
         sorted_widgets = sorted(
             items,
             key=lambda item: tab_icons.get(
@@ -174,7 +196,58 @@ class IconGrid(QScrollArea):
                 IconModel()
             ).sort_order
         )
-        self._layout._items = sorted_widgets
+        self._layout.set_items(sorted_widgets)
+        self._container.updateGeometry()
+
+    # ── 搜索 ──
+
+    def set_search_visible(self, visible: bool):
+        """Show or hide the icon search/filter bar."""
+        if visible and not self._search_bar.isHidden():
+            return  # 已在显示状态，无需重复处理
+        self._search_bar.setVisible(visible)
+        if visible:
+            self._search_bar.setFocus()
+        else:
+            self._search_bar.clear()
+            self.search_closed.emit()
+
+    def is_search_visible(self) -> bool:
+        """Whether the search/filter bar is currently shown.
+
+        Uses isHidden() (explicit state) rather than isVisible(),
+        which would require the whole ancestor chain to be shown.
+        """
+        return not self._search_bar.isHidden()
+
+    def eventFilter(self, obj, event):
+        """Esc 键关闭搜索栏（事件过滤器安装在搜索框上）。"""
+        if obj is self._search_bar and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Escape:
+                self.set_search_visible(False)
+                return True
+        return super().eventFilter(obj, event)
+
+    def _apply_filter(self, text: str):
+        """Filter visible icons by display name (case-insensitive substring)."""
+        query = text.strip().lower()
+        for icon_id, widget in self._icon_widgets.items():
+            name = widget.icon_model.display_name.lower()
+            widget.setVisible(query == "" or query in name)
+        self._layout.invalidate()
+        self._container.updateGeometry()
+
+    # ── 图标大小 ──
+
+    def update_cell_size(self, cell_w: int, cell_h: int):
+        """Update FlowLayout cell dimensions and refresh all widgets."""
+        self._layout.cell_width = cell_w
+        self._layout.cell_height = cell_h
+        for widget in self._icon_widgets.values():
+            widget.setFixedSize(cell_w, cell_h)
+            widget.refresh_icon()
+            # Recalculate name label layout
+            widget.name_label.set_text(widget.icon_model.display_name)
         self._layout.invalidate()
         self._container.updateGeometry()
 
@@ -201,15 +274,37 @@ class IconGrid(QScrollArea):
     # ── 右键菜单 ──
 
     def _show_icon_context_menu(self, pos, widget: IconWidget):
+        """图标右键菜单。
+
+        菜单项说明（措辞需让用户一目了然）：
+        - 打开           → 用默认程序打开（同双击）
+        - 用其他应用打开… → 调出 Windows「打开方式」对话框，仅文件/文件夹/快捷方式可用
+        - 打开文件位置   → 在资源管理器中定位该文件
+        - 编辑属性…      → 修改名称/路径/参数等属性（不是替换图标图片！）
+        - 重命名         → 直接改名
+        - 删除           → 移除该图标
+        """
         menu = QMenu(self)
+        icon = widget.icon_model
 
+        # 打开（同双击行为）
         open_action = menu.addAction(tr("icon.menu.open"))
-        open_action.triggered.connect(lambda: self.icon_double_clicked.emit(widget.icon_model.id))
+        open_action.triggered.connect(lambda: self.icon_double_clicked.emit(icon.id))
 
+        # 用其他应用打开 — 仅对真实文件/文件夹/快捷方式有意义
+        if icon.type in (IconType.FILE, IconType.FOLDER, IconType.SHORTCUT):
+            open_with_action = menu.addAction(tr("icon.menu.open_with"))
+            open_with_action.triggered.connect(lambda: self._open_with(icon))
+
+        # 在资源管理器中定位文件
         open_loc_action = menu.addAction(tr("icon.menu.open_location"))
-        open_loc_action.triggered.connect(lambda: self._open_file_location(widget.icon_model))
+        open_loc_action.triggered.connect(lambda: self._open_file_location(icon))
 
         menu.addSeparator()
+
+        # 编辑属性（名称/路径/参数），保持与创建对话框一致
+        edit_action = menu.addAction(tr("icon.menu.edit"))
+        edit_action.triggered.connect(lambda: self._edit_icon(icon))
 
         rename_action = menu.addAction(tr("icon.menu.rename"))
         rename_action.triggered.connect(lambda: widget.name_label._start_edit())
@@ -219,13 +314,76 @@ class IconGrid(QScrollArea):
 
         menu.exec(widget.mapToGlobal(pos))
 
+    def _edit_icon(self, icon: IconModel):
+        """打开编辑对话框，保存后刷新图标。"""
+        from PyQt6.QtWidgets import QDialog
+        from .icon_edit_dialog import IconEditDialog
+        from .services.icon_resolver import IconResolver
+
+        old_path = icon.target_path or icon.source_path
+        dlg = IconEditDialog(icon, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        ok, err_key = dlg.apply()
+        if not ok:
+            self.status_message.emit(tr(err_key or "status.edit_invalid"))
+            return
+
+        resolver = IconResolver(self.icon_cache_dir)
+        reextract = False
+
+        # 1) 快捷方式：自定义图标优先；未设置时回退到目标路径默认图标
+        if icon.type == IconType.SHORTCUT:
+            spec = dlg.get_custom_icon_spec()
+            if spec:
+                pixmap = resolver.extract_icon_from_file(spec[0], spec[1])
+                if pixmap and not pixmap.isNull():
+                    self._delete_cache(icon)
+                    new_name = f"{uuid.uuid4()}.png"
+                    pixmap.save(str(resolver.cache_dir / new_name), "PNG")
+                    icon.icon_cache_file = new_name
+                # 无论自定义图标是否提取成功，都不再走默认重提取
+            else:
+                reextract = True
+
+        # 2) 文件/文件夹路径变化 → 重新提取
+        if icon.type in (IconType.FILE, IconType.FOLDER):
+            new_path = icon.target_path or icon.source_path
+            if new_path and new_path != old_path:
+                reextract = True
+
+        if reextract:
+            new_path = icon.target_path or icon.source_path
+            if new_path:
+                new_cache = resolver.extract_and_cache(new_path)
+                if new_cache:
+                    self._delete_cache(icon)
+                    icon.icon_cache_file = new_cache
+
+        self.data_store.save()
+        # 刷新显示
+        w = self._icon_widgets.get(icon.id)
+        if w:
+            w.name_label.set_text(icon.display_name)
+            w.refresh_icon()
+        self.status_message.emit(tr("status.edited", name=icon.display_name))
+
+    def _delete_cache(self, icon: IconModel):
+        if icon.icon_cache_file:
+            old = self.icon_cache_dir / icon.icon_cache_file
+            if old.exists():
+                try:
+                    old.unlink()
+                except (OSError, PermissionError):
+                    pass
+
     def _on_rename_requested(self, icon_id: str, new_name: str):
         self.data_store.rename_icon(icon_id, new_name)
         self.status_message.emit(tr("status.renamed", name=new_name))
 
     def _remove_icon(self, icon_id: str):
         widget = self._icon_widgets.get(icon_id)
-        name = widget.icon_model.display_name if widget else "此图标"
+        name = widget.icon_model.display_name if widget else tr("icon.remove.unknown")
         confirm = QMessageBox.question(
             self, tr("icon.remove.title"),
             tr("icon.remove.confirm", name=name),
@@ -247,3 +405,14 @@ class IconGrid(QScrollArea):
             os.startfile(path)
         else:
             self.status_message.emit(tr("status.path_missing", path=path))
+
+    def _open_with(self, icon: IconModel):
+        """Show Windows 'Open with...' dialog for a file/folder/shortcut."""
+        path = icon.target_path or icon.source_path
+        if not path or not os.path.exists(path):
+            self.status_message.emit(tr("status.path_missing", path=path))
+            return
+        try:
+            subprocess.Popen(['rundll32.exe', 'shell32.dll,OpenAs_RunDLL', path])
+        except Exception as e:
+            self.status_message.emit(tr("status.open_with_failed", err=str(e)))

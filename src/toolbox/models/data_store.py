@@ -24,7 +24,7 @@ class DataStore:
     def load(self) -> list[TabModel]:
         """Load tabs from JSON. Returns default tab on any failure."""
         if not self.tabs_file.exists():
-            self.tabs = [TabModel(name="主页", order=0)]
+            self.tabs = [TabModel(name="Home", order=0)]
             self.save()
             return self.tabs
 
@@ -35,7 +35,7 @@ class DataStore:
             # Corrupted file — back it up and start fresh
             backup = self.tabs_file.with_suffix(".json.bak")
             shutil.copy2(self.tabs_file, backup)
-            self.tabs = [TabModel(name="主页", order=0)]
+            self.tabs = [TabModel(name="Home", order=0)]
             self.save()
             return self.tabs
 
@@ -43,7 +43,7 @@ class DataStore:
         tabs_data = data.get("tabs", [])
 
         if not tabs_data:
-            self.tabs = [TabModel(name="主页", order=0)]
+            self.tabs = [TabModel(name="Home", order=0)]
             self.save()
             return self.tabs
 
@@ -52,13 +52,15 @@ class DataStore:
         return self.tabs
 
     def save(self):
-        """Save current state to JSON."""
+        """Save current state to JSON (atomic write via temp file)."""
         data = {
             "version": 1,
             "tabs": [t.to_dict() for t in self.tabs],
         }
-        with open(self.tabs_file, "w", encoding="utf-8") as f:
+        tmp = self.tabs_file.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        tmp.replace(self.tabs_file)
 
     def find_tab(self, tab_id: str) -> Optional[TabModel]:
         """Find a tab by its ID."""
@@ -75,7 +77,7 @@ class DataStore:
                     return tab, icon
         return None
 
-    def add_tab(self, name: str = "New Tab") -> TabModel:
+    def add_tab(self, name: str = "Home") -> TabModel:
         """Add a new tab and return it."""
         tab = TabModel(name=name, order=len(self.tabs))
         self.tabs.append(tab)
@@ -83,7 +85,19 @@ class DataStore:
         return tab
 
     def remove_tab(self, tab_id: str):
-        """Remove a tab and all its icons."""
+        """Remove a tab and all its icons, cleaning up cache files."""
+        # Clean up icon cache files before removing
+        for t in self.tabs:
+            if t.id == tab_id:
+                for icon in t.icons:
+                    if icon.icon_cache_file:
+                        cache_path = self.icons_dir / icon.icon_cache_file
+                        if cache_path.exists():
+                            try:
+                                cache_path.unlink()
+                            except (OSError, PermissionError):
+                                pass
+                break
         self.tabs = [t for t in self.tabs if t.id != tab_id]
         # Renumber order
         for i, t in enumerate(self.tabs):
@@ -185,4 +199,7 @@ class DataStore:
     def clean_orphan_cache(self):
         """Delete unreferenced icon cache files."""
         for orphan in self.orphan_cache_files():
-            (self.icons_dir / orphan).unlink()
+            try:
+                (self.icons_dir / orphan).unlink()
+            except (OSError, PermissionError):
+                pass

@@ -75,9 +75,10 @@ class IconLabel(QFrame):
 
     def _text_width(self) -> int:
         """可用于文字的实际宽度。"""
+        from .icon_widget import IconWidget
         fw = self.width()
         if fw < 30:
-            fw = 68  # 布局前的默认估算
+            fw = IconWidget.WIDGET_WIDTH  # 布局前的默认估算
         # QLabel 宽度 = fw - Frame 的 margins(0) = fw
         # 文字可用的宽度 = QLabel 宽度 - 左右 padding × 2
         return max(20, fw - PILL_PAD_H * 2)

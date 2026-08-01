@@ -9,6 +9,15 @@ from PyQt6.QtGui import QPixmap
 from ..models.icon_model import IconType
 from ..utils.windows_shortcut import resolve_shortcut
 
+# Single source of truth for fallback icon type → standard pixmap mapping
+FALLBACK_ICON_MAP: dict = {
+    IconType.FILE: QStyle.StandardPixmap.SP_FileIcon,
+    IconType.FOLDER: QStyle.StandardPixmap.SP_DirIcon,
+    IconType.SHORTCUT: QStyle.StandardPixmap.SP_FileLinkIcon,
+    IconType.URL: QStyle.StandardPixmap.SP_ComputerIcon,
+    IconType.COMMAND: QStyle.StandardPixmap.SP_CommandLink,
+}
+
 
 class IconResolver:
     """Extracts system icons for files/folders and caches them as PNG."""
@@ -30,7 +39,7 @@ class IconResolver:
             pixmap = None
 
         if pixmap is None or pixmap.isNull():
-            pixmap = self._get_fallback(IconType.FILE)
+            pixmap = self.get_fallback(IconType.FILE)
 
         cache_name = f"{uuid.uuid4()}.png"
         cache_path = self.cache_dir / cache_name
@@ -49,11 +58,11 @@ class IconResolver:
         file_info = QFileInfo(file_path)
         icon = self._provider.icon(file_info)
         if icon.isNull():
-            return self._get_fallback(IconType.FILE)
+            return self.get_fallback(IconType.FILE)
 
         pixmap = icon.pixmap(self.icon_size, self.icon_size)
         if pixmap.isNull():
-            return self._get_fallback(IconType.FILE)
+            return self.get_fallback(IconType.FILE)
         return pixmap
 
     def resolve_shortcut(self, lnk_path: str) -> dict:
@@ -70,20 +79,43 @@ class IconResolver:
             }
         return result
 
-    def _get_fallback(self, icon_type: IconType) -> QPixmap:
-        """Return a generic fallback icon."""
+    def extract_icon_from_file(self, file_path: str, index: int = 0,
+                               size: int | None = None) -> QPixmap | None:
+        """Extract the icon at a given index from an exe/dll/ico file.
+
+        Uses Windows ExtractIconEx via pywin32; falls back to the file's
+        default icon if index extraction is unavailable. Returns None on failure.
+        """
+        if not file_path or not Path(file_path).exists():
+            return None
+        size = size or self.icon_size
+        try:
+            import win32gui
+            large, _ = win32gui.ExtractIconEx(file_path, index, 1, 0)
+            if large:
+                from PyQt6.QtGui import QIcon
+                pixmap = QIcon.fromWinHICON(large[0]).pixmap(size, size)
+                win32gui.DestroyIcon(large[0])
+                if pixmap and not pixmap.isNull():
+                    return pixmap
+        except Exception:
+            pass
+        # Fallback: default icon of the file
+        try:
+            return self._extract_icon(file_path)
+        except Exception:
+            return None
+
+    def get_fallback(self, icon_type: IconType) -> QPixmap:
+        """Return a generic fallback icon for the given icon type."""
         style = QApplication.style()
         if not style:
             pixmap = QPixmap(self.icon_size, self.icon_size)
             pixmap.fill(Qt.GlobalColor.lightGray)
             return pixmap
 
-        mapping = {
-            IconType.FILE: QStyle.StandardPixmap.SP_FileIcon,
-            IconType.FOLDER: QStyle.StandardPixmap.SP_DirIcon,
-            IconType.SHORTCUT: QStyle.StandardPixmap.SP_FileLinkIcon,
-            IconType.URL: QStyle.StandardPixmap.SP_ComputerIcon,
-            IconType.COMMAND: QStyle.StandardPixmap.SP_CommandLink,
-        }
-        std_icon = mapping.get(icon_type, QStyle.StandardPixmap.SP_FileIcon)
+        std_icon = FALLBACK_ICON_MAP.get(icon_type, QStyle.StandardPixmap.SP_FileIcon)
         return style.standardIcon(std_icon).pixmap(self.icon_size, self.icon_size)
+
+    # Backward-compatible alias
+    _get_fallback = get_fallback

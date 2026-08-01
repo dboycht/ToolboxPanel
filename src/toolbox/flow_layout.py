@@ -156,6 +156,17 @@ class FlowLayout(QLayout):
             if self.parent():
                 self.parent().updateGeometry()
 
+    def set_items(self, items: list):
+        """Replace all items in the layout and re-layout.
+
+        Used by IconGrid.rebuild_from_model() to synchronize the layout
+        with the sorted model data without directly mutating _items.
+        """
+        self._items = list(items)
+        self.invalidate()
+        if self.parent():
+            self.parent().updateGeometry()
+
     def remove_widget(self, widget):
         """Remove a specific widget from the layout.
 

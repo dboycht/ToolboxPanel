@@ -76,6 +76,7 @@ class ProgressDialog(QDialog):
     def closeEvent(self, event):
         # 操作中不允许关闭
         if not self._close_btn.isEnabled():
+            self.append_log(tr("progress.cannot_close"))
             event.ignore()
         else:
             super().closeEvent(event)

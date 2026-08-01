@@ -70,9 +70,15 @@ class Launcher:
 
 
 def _split_args(args_str: str) -> list[str]:
-    """Split a command-line argument string into parts, respecting quotes."""
+    """Split a command-line argument string into parts, respecting quotes.
+
+    Uses posix=False on Windows to avoid backslash-as-escape behavior
+    that corrupts Windows file paths like C:\\Program Files\\App.
+    """
     import shlex
     try:
+        if sys.platform == "win32":
+            return shlex.split(args_str, posix=False)
         return shlex.split(args_str)
     except ValueError:
         return args_str.split()

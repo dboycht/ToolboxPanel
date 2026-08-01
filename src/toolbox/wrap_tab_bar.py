@@ -137,10 +137,11 @@ class WrapTabBar(QWidget):
         idx = len(self._buttons)
         btn = _TabButton(name, idx, self)
         btn.dragged.connect(self._on_drag_reorder)
-        btn.double_clicked.connect(lambda: self.rename_requested.emit(idx))
+        btn.double_clicked.connect(lambda b=btn: self.rename_requested.emit(b._index))
         btn.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        btn.customContextMenuRequested.connect(lambda pos: self.context_menu_requested.emit(idx))
-        btn.clicked.connect(lambda checked, i=idx: self.set_current(i))
+        btn.customContextMenuRequested.connect(
+            lambda pos, b=btn: self.context_menu_requested.emit(b._index))
+        btn.clicked.connect(lambda checked, b=btn: self.set_current(b._index))
         self._layout.insert_widget_at(idx, btn)
         self._buttons.append(btn)
         if self._current_index < 0:
@@ -160,7 +161,12 @@ class WrapTabBar(QWidget):
 
     def set_tab_text(self, index: int, text: str):
         if 0 <= index < len(self._buttons):
-            self._buttons[index].setText(text)
+            btn = self._buttons[index]
+            btn.setText(text)
+            # Recalculate button width for new text
+            fm = btn.fontMetrics()
+            text_w = fm.horizontalAdvance(text) + 32
+            btn.setFixedWidth(max(40, min(200, text_w)))
 
     def tab_text(self, index: int) -> str:
         if 0 <= index < len(self._buttons):
@@ -199,4 +205,9 @@ class WrapTabBar(QWidget):
         """批量更新所有标签文字（用于语言切换）。"""
         for i, txt in enumerate(texts):
             if i < len(self._buttons):
-                self._buttons[i].setText(txt)
+                btn = self._buttons[i]
+                btn.setText(txt)
+                # Recalculate button width for translated text
+                fm = btn.fontMetrics()
+                text_w = fm.horizontalAdvance(txt) + 32
+                btn.setFixedWidth(max(40, min(200, text_w)))

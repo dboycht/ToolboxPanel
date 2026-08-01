@@ -34,30 +34,36 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | | |
 |---|---|
 | 🖱️ **拖放添加** | 从资源管理器拖入文件/文件夹/.lnk 快捷方式即可创建图标 |
-| 🔗 **自定义图标** | 右键空白区域 → 新建网址/命令图标 |
+| 🔗 **自定义图标** | 右键空白区域 → 新建文件/文件夹/快捷方式/网址/命令图标 |
 | ✅ **批量管理** | 文件 → 批量管理，勾选图标后批量删除 |
+| ✏️ **编辑属性** | 右键 → 编辑属性…，快捷方式支持描述与自定义图标 |
+| 🖥️ **打开方式** | 右键 → 用其他应用打开…（Windows 打开方式对话框） |
+| 🔍 **图标搜索** | Ctrl+F 按名称过滤，Esc 关闭 |
+| 📏 **图标大小** | 视图 → 图标大小（小/中/大），偏好持久化 |
 | 📱 **手机网格布局** | 图标自动排列，窗口缩放时自动调整列数 |
 | ↔️ **拖动排序** | 图标可在标签页内拖动排序，也可跨标签页移动 |
 | 🏷️ **多行标签栏** | 窗口缩小时标签页自动换行，双击/F2 重命名，←→ 切换 |
-| ✏️ **图标改名** | 双击图标文字即可编辑名称 |
 | 🌐 **中英双语** | 文件 → 语言 切换，偏好自动保存 |
 | 📦 **导入导出** | ZIP 压缩包备份/恢复，含版本信息和进度条 |
-| ⌨️ **快捷键** | 15+ 快捷键覆盖所有功能，Ctrl+B/Shift+Del/←→ 等 |
+| ⌨️ **快捷键** | 15+ 快捷键覆盖所有功能，Ctrl+B/Ctrl+F/Shift+Del 等 |
 | 💾 **自动保存** | 所有操作即时写入 `data/tabs.json`，支持启动恢复 |
 | 🎨 **Win11 风格** | 圆角、浅色主题、Fluent Design 风格 |
 
 | | |
 |---|---|
 | 🖱️ **Drag & drop** | Drop files, folders, or .lnk shortcuts from Explorer to create icons |
-| 🔗 **Custom icons** | Right-click empty area → New URL / Command icon |
+| 🔗 **Custom icons** | Right-click empty area → New File/Folder/Shortcut/URL/Command icon |
 | ✅ **Batch manage** | File → Batch Manage, check icons to bulk delete |
+| ✏️ **Edit properties** | Right-click → Edit…; shortcuts support description & custom icon |
+| 🖥️ **Open With** | Right-click → Open With… (Windows dialog) |
+| 🔍 **Search icons** | Ctrl+F filters by name, Esc closes |
+| 📏 **Icon size** | View → Icon Size (small/medium/large), preference saved |
 | 📱 **Phone‑grid layout** | Auto‑flow grid, columns adjust on window resize |
 | ↔️ **Drag to reorder** | Rearrange icons within a tab; drag to another tab to move |
 | 🏷️ **Multi-row tabs** | Tabs wrap on narrow windows; double-click/F2 to rename; arrows to switch |
-| ✏️ **Rename icons** | Double‑click the label to edit |
 | 🌐 **Bilingual** | File → Language, preference auto‑saved |
 | 📦 **Backup** | ZIP export/import with metadata and progress bar |
-| ⌨️ **Shortcuts** | 15+ keyboard shortcuts: Ctrl+B, Shift+Del, arrows, and more |
+| ⌨️ **Shortcuts** | 15+ keyboard shortcuts: Ctrl+B, Ctrl+F, Shift+Del, and more |
 | 💾 **Auto‑save** | Instant persistence to `data/tabs.json`; survives restart |
 | 🎨 **Win11 themed** | Rounded corners, light theme, Fluent Design aesthetic |
 
@@ -193,6 +199,26 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 ---
 
 ## 更新日志 · Changelog
+
+### v1.10.4 (2026-08-01)
+
+**新增**
+- 图标编辑功能：右键图标 → 编辑属性…，按类型显示字段（名称/路径/参数/URL/命令）
+- 快捷方式设置界面优化：新增描述字段 + 自定义图标（文件选择 + 索引 0-999 + 使用默认重置）
+- 用其他应用打开（右键 → 用其他应用打开…），调出 Windows「打开方式」对话框
+- 图标搜索：Ctrl+F / 视图 → 查找，按名称实时过滤，Esc 关闭
+- 图标大小切换：视图 → 图标大小（小 32 / 中 48 / 大 64），偏好持久化
+- 新建快捷方式图标（右键空白区域 → 新建快捷方式图标…）
+- 批量管理复选框高对比度样式
+
+**修复**
+- 修复 IconGrid.setStyleSheet 过早调用导致的 Qt 6 原生崩溃（移至 __init__ 末尾）
+- 修复 IconEditDialog 未使用导入（QStackedWidget/QMessageBox/Qt）
+- 修复图标选择行重复添加（addRow 冗余调用）
+- 修复图标重提取逻辑混乱（自定义图标优先 → 路径变化回退重提取）
+- 新增 IconModel.description 字段持久化快捷方式描述
+- 新增 IconResolver.extract_icon_from_file()（ExtractIconEx 按索引提取，失败回退默认图标）
+- 清理临时调试文件
 
 ### v1.10.3 (2026-07-19)
 
