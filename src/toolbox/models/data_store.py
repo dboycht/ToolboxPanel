@@ -6,6 +6,7 @@ from typing import Optional
 
 from .tab_model import TabModel
 from .icon_model import IconModel
+from .list_item_model import ListItemModel
 
 
 class DataStore:
@@ -77,9 +78,9 @@ class DataStore:
                     return tab, icon
         return None
 
-    def add_tab(self, name: str = "Home") -> TabModel:
+    def add_tab(self, name: str = "Home", tab_type: str = "grid") -> TabModel:
         """Add a new tab and return it."""
-        tab = TabModel(name=name, order=len(self.tabs))
+        tab = TabModel(name=name, order=len(self.tabs), tab_type=tab_type)
         self.tabs.append(tab)
         self.save()
         return tab
@@ -183,6 +184,42 @@ class DataStore:
         for i, ic in enumerate(tab.icons):
             ic.sort_order = i
         self.save()
+
+    def find_list_item(self, item_id: str) -> Optional[tuple[TabModel, ListItemModel]]:
+        """Find a list item and its parent tab by item ID."""
+        for tab in self.tabs:
+            for item in tab.list_items:
+                if item.id == item_id:
+                    return tab, item
+        return None
+
+    def add_list_item(self, tab_id: str, item: ListItemModel):
+        """Add a list item to the specified list tab."""
+        tab = self.find_tab(tab_id)
+        if tab:
+            item.sort_order = len(tab.list_items)
+            tab.list_items.append(item)
+            self.save()
+
+    def remove_list_item(self, item_id: str):
+        """Remove a list item."""
+        result = self.find_list_item(item_id)
+        if result:
+            tab, item = result
+            tab.list_items.remove(item)
+            self.save()
+
+    def update_list_item(self, item_id: str, description: str | None = None,
+                         path: str | None = None):
+        """Update description and/or path of a list item."""
+        result = self.find_list_item(item_id)
+        if result:
+            _, item = result
+            if description is not None:
+                item.description = description
+            if path is not None:
+                item.path = path
+            self.save()
 
     def orphan_cache_files(self) -> set[str]:
         """Return set of cache filenames not referenced by any icon."""

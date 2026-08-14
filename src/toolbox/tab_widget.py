@@ -12,6 +12,7 @@ from .models.data_store import DataStore
 from .models.tab_model import TabModel
 from .models.icon_model import IconModel, IconType
 from .icon_grid import IconGrid
+from .list_tab_page import ListTabPage
 from .wrap_tab_bar import WrapTabBar
 from .services.icon_resolver import IconResolver
 from .services.launcher import Launcher
@@ -26,6 +27,7 @@ class TabWidget(QWidget):
     """
 
     new_tab_requested = pyqtSignal()
+    new_list_tab_requested = pyqtSignal()
     status_message = pyqtSignal(str)
     search_closed = pyqtSignal()
 
@@ -54,6 +56,7 @@ class TabWidget(QWidget):
 
         # tab_id → (page_index, IconGrid)
         self._icon_grids: dict[str, IconGrid] = {}
+        self._list_pages: dict[str, ListTabPage] = {}
         self._tab_records: list[dict] = []  # [{id, name, order}, ...]
 
     # ── 公开 API (兼容旧 QTabWidget 接口) ──
@@ -91,6 +94,7 @@ class TabWidget(QWidget):
             self._stack.removeWidget(w)
             w.deleteLater()
         self._icon_grids.clear()
+        self._list_pages.clear()
         self._tab_records.clear()
         while self._tab_bar.count() > 0:
             self._tab_bar.remove_tab(0)
@@ -102,6 +106,7 @@ class TabWidget(QWidget):
             self._stack.removeWidget(w)
             w.deleteLater()
         self._icon_grids.clear()
+        self._list_pages.clear()
         self._tab_records.clear()
 
         for i in range(self._tab_bar.count()):
@@ -111,10 +116,20 @@ class TabWidget(QWidget):
             self.add_tab_page(tab)
 
     def add_tab_page(self, tab: TabModel):
-        """添加一个带图标网格的标签页。"""
+        """按 tab_type 添加图标网格或列表页。"""
         idx = self._tab_bar.add_tab(tab.name)
         self._tab_records.insert(idx, {"id": tab.id, "name": tab.name, "order": idx})
 
+        if tab.tab_type == "list":
+            self._add_list_page(tab, idx)
+        else:
+            self._add_grid_page(tab, idx)
+
+        if self._stack.count() == 1:
+            self._stack.setCurrentIndex(0)
+        return idx
+
+    def _add_grid_page(self, tab: TabModel, idx: int):
         grid = IconGrid(tab, self.data_store, self.data_store.icons_dir)
         grid.icon_removed.connect(self._on_icon_removed)
         grid.icon_moved.connect(self._on_icon_moved_between_tabs)
@@ -135,9 +150,12 @@ class TabWidget(QWidget):
 
         self._icon_grids[tab.id] = grid
         self._stack.insertWidget(idx, grid)
-        if self._stack.count() == 1:
-            self._stack.setCurrentIndex(0)
-        return idx
+
+    def _add_list_page(self, tab: TabModel, idx: int):
+        page = ListTabPage(tab, self.data_store)
+        page.status_message.connect(self.status_message.emit)
+        self._list_pages[tab.id] = page
+        self._stack.insertWidget(idx, page)
 
     def _get_current_grid(self) -> IconGrid | None:
         w = self._stack.currentWidget()
@@ -230,12 +248,15 @@ class TabWidget(QWidget):
     def _show_tab_context_menu(self, tab_idx: int):
         menu = QMenu(self)
         new_tab_action = menu.addAction(tr("tab.menu.new"))
+        new_list_tab_action = menu.addAction(tr("list.new_tab"))
         rename_action = menu.addAction(tr("tab.menu.rename"))
         menu.addSeparator()
         delete_action = menu.addAction(tr("tab.menu.delete"))
         chosen = menu.exec(self._tab_bar.mapToGlobal(self._tab_bar.pos()))
         if chosen == new_tab_action:
             self.new_tab_requested.emit()
+        elif chosen == new_list_tab_action:
+            self.new_list_tab_requested.emit()
         elif chosen == rename_action:
             self._rename_tab(tab_idx)
         elif chosen == delete_action:
@@ -258,8 +279,8 @@ class TabWidget(QWidget):
         if self._stack.count() <= 1:
             QMessageBox.warning(self, tr("tab.delete.blocked_title"), tr("tab.delete.blocked"))
             return
-        grid = self._stack.widget(tab_index)
-        if not isinstance(grid, IconGrid):
+        page = self._stack.widget(tab_index)
+        if page is None:
             return
         name = self._tab_bar.tab_text(tab_index)
         confirm = QMessageBox.question(
@@ -268,11 +289,16 @@ class TabWidget(QWidget):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if confirm == QMessageBox.StandardButton.Yes:
-            self.data_store.remove_tab(grid.tab.id)
-            self._icon_grids.pop(grid.tab.id, None)
-            self._stack.removeWidget(grid)
+            # 找到对应 tab_id 并清理（grid 或 list 两种类型）
+            if isinstance(page, IconGrid):
+                self.data_store.remove_tab(page.tab.id)
+                self._icon_grids.pop(page.tab.id, None)
+            elif isinstance(page, ListTabPage):
+                self.data_store.remove_tab(page.tab.id)
+                self._list_pages.pop(page.tab.id, None)
+            self._stack.removeWidget(page)
             self._tab_bar.remove_tab(tab_index)
-            grid.deleteLater()
+            page.deleteLater()
             self.status_message.emit(tr("tab.deleted", name=name))
 
     # ── 键盘快捷操作 ──

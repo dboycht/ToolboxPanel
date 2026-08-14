@@ -88,7 +88,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "app.menu.about":              {"zh": "关于(&A)",                       "en": "&About"},
     "app.about.title":             {"zh": "关于 工具箱",                    "en": "About Toolbox"},
     "app.about.text":              {"zh":
-        "工具箱 v1.10.4 — 手机桌面风格的启动器\n"
+        "工具箱 v1.11.1 — 手机桌面风格的启动器\n"
         "作者: dboycht\n"
         "项目地址: https://github.com/dboycht/ToolboxPanel\n\n"
         "• 从资源管理器拖入文件/文件夹/快捷方式即可创建图标\n"
@@ -98,7 +98,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "• 数据自动保存到 data/ 文件夹\n"
         "• 支持搜索过滤、图标大小切换、打开方式",
                                     "en":
-        "Toolbox v1.10.4 — Phone‑home‑screen style launcher\n"
+        "Toolbox v1.11.1 — Phone‑home‑screen style launcher\n"
         "Author: dboycht\n"
         "Project: https://github.com/dboycht/ToolboxPanel\n\n"
         "• Drag files / folders / shortcuts from Explorer to create icons\n"
@@ -212,6 +212,24 @@ TEXTS: dict[str, dict[str, str]] = {
     # ── General ──
     "btn.ok":                      {"zh": "确定",                           "en": "OK"},
     "btn.cancel":                  {"zh": "取消",                           "en": "Cancel"},
+    # list tab
+    "list.new_tab":                {"zh": "新建列表标签页",                 "en": "New List Tab"},
+    "list.default_name":           {"zh": "列表",                           "en": "List"},
+    "list.new_item":               {"zh": "新建列表项",                     "en": "New List Item"},
+    "list.col.desc":               {"zh": "说明",                           "en": "Description"},
+    "list.col.path":               {"zh": "路径",                           "en": "Path"},
+    "list.desc_ph":                {"zh": "文本说明",                       "en": "Description"},
+    "list.select_file":            {"zh": "选择文件",                       "en": "Select File"},
+    "list.select_folder":          {"zh": "选择文件夹",                     "en": "Select Folder"},
+    "list.empty_hint":             {"zh": "空白列表 — 右键空白处新建列表项", "en": "Empty list — right-click to add an item"},
+    "list.delete_title":           {"zh": "删除列表项",                     "en": "Delete List Item"},
+    "list.confirm_delete":         {"zh": "确定要删除列表项「{desc}」吗？", "en": "Delete list item '{desc}'?"},
+    "list.this_row":               {"zh": "此行",                           "en": "this row"},
+    "list.desc_updated":           {"zh": "说明已更新",                     "en": "Description updated"},
+    "list.path_updated":           {"zh": "路径已更新",                     "en": "Path updated"},
+    "list.item_added":             {"zh": "已添加列表项: {desc}",           "en": "List item added: {desc}"},
+    "list.pick_title":             {"zh": "为「{title}」选择路径",          "en": "Pick a path for '{title}'"},
+    "list.pick_hint":              {"zh": "选择文件或文件夹：",             "en": "Choose a file or folder:"},
     # shortcut dialog
     "shortcut.dialog.title":       {"zh": "快捷键参考",                      "en": "Shortcut Reference"},
     "shortcut.col.action":         {"zh": "功能",                            "en": "Action"},

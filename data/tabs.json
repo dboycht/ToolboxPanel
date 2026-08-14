@@ -2,10 +2,12 @@
   "version": 1,
   "tabs": [
     {
-      "id": "t1",
-      "name": "Home",
+      "id": "ea904833-052f-4caa-8fa2-b12a078a0c8a",
+      "name": "新建标签页",
       "order": 0,
-      "icons": []
+      "tab_type": "grid",
+      "icons": [],
+      "list_items": []
     }
   ]
 }

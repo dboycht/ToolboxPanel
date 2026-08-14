@@ -30,7 +30,7 @@ def build_metadata(data_dir: Path) -> dict:
         except Exception:
             pass
     return {
-        "version": "1.10.4",
+        "version": "1.11.1",
         "exported_at": datetime.now().isoformat(),
         "tab_count": tab_count,
         "icon_count": icon_count,

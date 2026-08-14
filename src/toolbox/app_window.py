@@ -55,6 +55,7 @@ class AppWindow(QMainWindow):
 
         # 连接信号
         self.tab_widget.new_tab_requested.connect(self._on_new_tab)
+        self.tab_widget.new_list_tab_requested.connect(self._on_new_list_tab)
         self.tab_widget.status_message.connect(self.status_bar.showMessage)
         # 搜索栏被 Esc 关闭时，取消菜单勾选
         self.tab_widget.search_closed.connect(
@@ -157,6 +158,11 @@ class AppWindow(QMainWindow):
         new_tab_action.setShortcut("Ctrl+T")
         new_tab_action.triggered.connect(self._on_new_tab)
         file_menu.addAction(new_tab_action)
+
+        new_list_tab_action = QAction(tr("list.new_tab") + "\tCtrl+Shift+T", self)
+        new_list_tab_action.setShortcut("Ctrl+Shift+T")
+        new_list_tab_action.triggered.connect(self._on_new_list_tab)
+        file_menu.addAction(new_list_tab_action)
 
         file_menu.addSeparator()
 
@@ -325,6 +331,16 @@ class AppWindow(QMainWindow):
         if tab_name is None:
             return  # 用户取消
         tab = self.data_store.add_tab(tab_name)
+        self.tab_widget.add_tab_page(tab)
+        self.status_bar.showMessage(tr("app.status.created_tab", name=tab.name))
+
+    def _on_new_list_tab(self):
+        """新建列表式标签页。"""
+        default_name = tr("list.default_name")
+        tab_name = self._prompt_text(tr("tab.rename.title"), tr("tab.rename.prompt"), default_name)
+        if tab_name is None:
+            return  # 用户取消
+        tab = self.data_store.add_tab(tab_name, tab_type="list")
         self.tab_widget.add_tab_page(tab)
         self.status_bar.showMessage(tr("app.status.created_tab", name=tab.name))
 
