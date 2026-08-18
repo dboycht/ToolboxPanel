@@ -6,14 +6,59 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                               QMenu, QMessageBox, QDialog, QFormLayout,
                               QLineEdit, QHBoxLayout, QPushButton,
                               QDialogButtonBox, QFileDialog, QLabel,
-                              QHeaderView, QAbstractItemView, QSizePolicy)
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QTimer
-from PyQt6.QtGui import QKeyEvent
+                              QHeaderView, QAbstractItemView,
+                              QApplication)
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint
+from PyQt6.QtGui import QKeyEvent, QDrag, QPainter, QPixmap
 
 from .models.data_store import DataStore
 from .models.tab_model import TabModel
 from .models.list_item_model import ListItemModel
 from .i18n import tr
+
+# 列表行内部拖拽的 MIME 类型（内容为 item_id 的 UTF-8 文本）
+_LIST_DRAG_MIME = "application/x-toolbox-list-item"
+
+
+class _ListTree(QTreeWidget):
+    """列表页专用 QTreeWidget：重写拖放虚函数，把内部行排序交给宿主处理。
+
+    为什么不用 QTreeWidget 内置 InternalMove：drop 位置计算在顶层列表场景
+    会失败，此时 Qt 的 startDrag 补偿逻辑会删除源行（行消失）且顺序不变；
+    且 QTreeModel::moveRows 在 Qt 6 被禁用。
+    为什么不用 viewport 事件过滤器收 Drop：PyQt6 中 QDropEvent 由
+    QDragManager 特殊投递，不经过事件过滤器（实测 sendEvent 只触发
+    User/Mouse 事件的过滤器）。拖放必须走 QTreeWidget 的虚函数重写。
+    """
+
+    def __init__(self, host: "ListTabPage", parent=None):
+        super().__init__(parent)
+        self._host = host
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(_LIST_DRAG_MIME):
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasFormat(_LIST_DRAG_MIME):
+            self._host._show_drop_feedback(event.position().toPoint())
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dragLeaveEvent(self, event):
+        self._host._clear_drop_feedback()
+        super().dragLeaveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasFormat(_LIST_DRAG_MIME):
+            self._host._handle_drop(event)
+            event.acceptProposedAction()
+            self._host._clear_drop_feedback()
+        else:
+            super().dropEvent(event)
 
 
 class ListTabPage(QWidget):
@@ -36,7 +81,7 @@ class ListTabPage(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
 
-        self._tree = QTreeWidget()
+        self._tree = _ListTree(self)
         self._tree.setColumnCount(2)
         self._tree.setHeaderLabels([tr("list.col.desc"), tr("list.col.path")])
         header = self._tree.header()
@@ -80,16 +125,17 @@ class ListTabPage(QWidget):
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
 
-        # 左键上下拖拽调整行顺序（QTreeWidget InternalMove 提供拖拽体验；
-        # drop 后由 viewport 事件过滤器 + _sync_order_after_drop 同步模型并持久化。
-        # 注意：QTreeModel 的 moveRows 在 Qt 6 被禁用，且 InternalMove drop
-        # 只发 rowsRemoved/rowsInserted 不发 rowsMoved，故不能用 model 信号）
-        self._tree.setDragEnabled(True)
+        # 左键上下拖拽调整行顺序 — 完全自定义拖拽（不用 QTreeWidget 内置
+        # InternalMove：drop 位置计算失败时 Qt 会删除源行导致行消失且顺序
+        # 不变；QTreeModel::moveRows 在 Qt 6 被禁用）。
+        # 鼠标事件（启动 QDrag）走 viewport 过滤器；拖放事件（DragEnter/
+        # DragMove/Drop）由 _ListTree 虚函数处理（QDropEvent 不经过过滤器）。
         self._tree.setAcceptDrops(True)
-        self._tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
-        self._tree.setDropIndicatorShown(True)
-        self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._tree.viewport().setAcceptDrops(True)
         self._tree.viewport().installEventFilter(self)
+        self._drag_start_pos: QPoint | None = None
+        self._drag_triggered = False
+        self._suppress_click = False
 
         layout.addWidget(self._tree)
 
@@ -133,11 +179,126 @@ class ListTabPage(QWidget):
         return None
 
     def eventFilter(self, obj, event):
-        """监听 viewport 的内部拖拽 drop：等待 view 处理完再同步模型顺序。"""
-        if obj is self._tree.viewport() and event.type() == QEvent.Type.Drop:
-            # singleShot(0)：在 drop 事件完全处理完（行已移动）后的下一轮同步
-            QTimer.singleShot(0, self._sync_order_after_drop)
+        """viewport 鼠标事件驱动：左键按住拖动行时启动 QDrag。
+
+        拖放事件（DragEnter/DragMove/Drop）不经过事件过滤器
+        （QDropEvent 由 QDragManager 特殊投递），由 _ListTree 虚函数处理。
+        """
+        if obj is self._tree.viewport():
+            etype = event.type()
+            if etype == QEvent.Type.MouseButtonPress:
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._drag_start_pos = event.position().toPoint()
+                    self._drag_triggered = False
+            elif etype == QEvent.Type.MouseMove:
+                if self._drag_start_pos is not None and not self._drag_triggered:
+                    dist = (event.position().toPoint() - self._drag_start_pos).manhattanLength()
+                    if dist >= QApplication.startDragDistance():
+                        self._drag_triggered = True
+                        self._start_drag(event.position().toPoint())
+                        return True
+            elif etype == QEvent.Type.MouseButtonRelease:
+                self._drag_start_pos = None
         return super().eventFilter(obj, event)
+
+    # ── 自定义拖拽 ──
+
+    def _start_drag(self, pos: QPoint):
+        """启动行拖拽（半透明 ghost 跟随鼠标）。"""
+        index = self._tree.indexAt(pos)
+        if not index.isValid():
+            self._drag_start_pos = None
+            return
+        item = self._tree.itemFromIndex(index)
+        item_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if not item_id:
+            self._drag_start_pos = None
+            return
+
+        drag = QDrag(self._tree)
+        mime = QMimeData()
+        mime.setData(_LIST_DRAG_MIME, item_id.encode("utf-8"))
+        drag.setMimeData(mime)
+
+        # 半透明 ghost：抓取整行作为拖拽图像
+        rect = self._tree.visualItemRect(item)
+        pix = self._tree.viewport().grab(rect)
+        ghost = QPixmap(pix.size())
+        ghost.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(ghost)
+        painter.setOpacity(0.6)
+        painter.drawPixmap(0, 0, pix)
+        painter.end()
+        drag.setPixmap(ghost)
+        drag.setHotSpot(QPoint(pix.width() // 2, pix.height() // 2))
+
+        # 拖拽后释放左键可能误触发 itemClicked（打开路径），抑制一次
+        self._suppress_click = True
+        drag.exec(Qt.DropAction.MoveAction)
+        self._drag_start_pos = None
+        self._drag_triggered = False
+
+    def _drop_target_row(self, pos: QPoint) -> int:
+        """根据 drop 位置返回「插入到该行之前」的行号。"""
+        index = self._tree.indexAt(pos)
+        if index.isValid():
+            item = self._tree.itemFromIndex(index)
+            row = self._tree.indexOfTopLevelItem(item)
+            rect = self._tree.visualItemRect(item)
+            if pos.y() > rect.center().y():
+                return row + 1
+            return row
+        count = self._tree.topLevelItemCount()
+        if count == 0:
+            return 0
+        last = self._tree.topLevelItem(count - 1)
+        if pos.y() > self._tree.visualItemRect(last).bottom():
+            return count
+        return 0
+
+    def _move_row(self, item_id: str, target_row: int) -> bool:
+        """把指定 item 的行移动到 target_row（插入到该位置前）。
+
+        返回 True 表示顺序发生了变化。
+        """
+        from_row = -1
+        for i in range(self._tree.topLevelItemCount()):
+            if self._tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole) == item_id:
+                from_row = i
+                break
+        if from_row < 0:
+            return False
+        count = self._tree.topLevelItemCount()
+        target_row = max(0, min(target_row, count))
+        # 移动后位置不变的两种情况：目标即自身 / 目标在自身正下方
+        if target_row == from_row or target_row == from_row + 1:
+            return False
+        row_item = self._tree.takeTopLevelItem(from_row)
+        if target_row > from_row:
+            target_row -= 1
+        self._tree.insertTopLevelItem(target_row, row_item)
+        return True
+
+    def _show_drop_feedback(self, pos: QPoint):
+        """拖拽悬停时高亮目标行作为插入反馈。"""
+        row = self._drop_target_row(pos)
+        count = self._tree.topLevelItemCount()
+        if 0 <= row < count:
+            self._tree.setCurrentItem(self._tree.topLevelItem(row))
+        else:
+            self._tree.setCurrentItem(None)
+
+    def _clear_drop_feedback(self):
+        self._tree.setCurrentItem(None)
+
+    def _handle_drop(self, event):
+        """内部拖拽 drop：移动行并同步模型 + 持久化。"""
+        data = bytes(event.mimeData().data(_LIST_DRAG_MIME)).decode("utf-8", "replace")
+        if not data:
+            return
+        target_row = self._drop_target_row(event.position().toPoint())
+        if self._move_row(data, target_row):
+            self._sync_order_after_drop()
 
     def _sync_order_after_drop(self):
         """读取当前 UI 行顺序，同步到模型并持久化（拖拽 drop 后调用）。"""
@@ -169,6 +330,10 @@ class ListTabPage(QWidget):
 
     def _on_item_clicked(self, row: QTreeWidgetItem, column: int):
         """单击列 1 → 打开文件/文件夹。"""
+        if self._suppress_click:
+            # 刚结束一次拖拽，抑制由此触发的误点击（防止意外打开路径）
+            self._suppress_click = False
+            return
         if column != 1:
             return
         path = row.text(1).strip()
