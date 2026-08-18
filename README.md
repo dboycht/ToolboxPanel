@@ -200,6 +200,12 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
+### v1.11.3 (2026-08-18)
+
+**修复**
+- 修复列表式标签页拖拽排序失效的问题（拖拽后行消失、顺序不保存）——改为完全自定义拖拽实现
+- 修复列表式标签页拖拽时程序闪退的问题（缺失导入）
+
 ### v1.11.2 (2026-08-18)
 
 **新增**
