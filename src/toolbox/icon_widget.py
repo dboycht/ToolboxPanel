@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QMimeData
 from PyQt6.QtGui import QPixmap, QDrag, QPainter, QMouseEvent
 
-from .models.icon_model import IconModel, IconType
+from .models.icon_model import IconModel
 from .icon_label import IconLabel
 
 # Icon size presets — used by View > Icon Size menu

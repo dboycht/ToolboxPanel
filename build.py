@@ -4,7 +4,7 @@
     python build.py          # 编译到 dist/Toolbox/
     python build.py clean    # 清理
 """
-import sys, os, shutil, subprocess
+import sys, shutil, subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -79,7 +79,7 @@ def build():
         "--hidden-import", "win32com.client",
     ]
 
-    print(f"  正在编译 ...")
+    print("  正在编译 ...")
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     if result.returncode != 0:
         print("\n编译失败！")
@@ -92,7 +92,7 @@ def build():
             for f in (PROJECT_ROOT / "dist" / "Toolbox").rglob("*")
             if f.is_file()
         ) / (1024 * 1024)
-        print(f"\n  编译成功！")
+        print("\n  编译成功！")
         print(f"  📁 {PROJECT_ROOT / 'dist' / 'Toolbox'}")
         print(f"  📦 文件夹大小: {total:.1f} MB")
     else:

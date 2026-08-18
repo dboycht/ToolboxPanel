@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QEvent
 from PyQt6.QtGui import QDragEnterEvent, QDragMoveEvent, QDropEvent
 
 from .flow_layout import FlowLayout
-from .icon_widget import IconWidget, SIZE_PRESETS
+from .icon_widget import IconWidget
 from .models.data_store import DataStore
 from .models.tab_model import TabModel
 from .models.icon_model import IconModel, IconType

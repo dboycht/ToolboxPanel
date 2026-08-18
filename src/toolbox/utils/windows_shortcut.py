@@ -1,6 +1,5 @@
 """Windows .lnk shortcut resolution using pywin32."""
 import sys
-from pathlib import Path
 from typing import Optional
 
 

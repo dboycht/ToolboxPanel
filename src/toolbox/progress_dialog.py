@@ -1,7 +1,6 @@
 """进度对话框 — QProgressBar + 日志输出。"""
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QProgressBar, QTextEdit,
                               QDialogButtonBox, QLabel, QPushButton)
-from PyQt6.QtCore import Qt
 from .i18n import tr
 
 

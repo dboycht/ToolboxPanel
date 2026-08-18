@@ -365,8 +365,8 @@ class AppWindow(QMainWindow):
         edit.selectAll()
         layout.addWidget(edit)
         btns = QDialogButtonBox()
-        btn_ok = btns.addButton(tr("btn.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
-        btn_cancel = btns.addButton(tr("btn.cancel"), QDialogButtonBox.ButtonRole.RejectRole)
+        btns.addButton(tr("btn.ok"), QDialogButtonBox.ButtonRole.AcceptRole)
+        btns.addButton(tr("btn.cancel"), QDialogButtonBox.ButtonRole.RejectRole)
         btns.accepted.connect(dlg.accept)
         btns.rejected.connect(dlg.reject)
         layout.addWidget(btns)
@@ -481,7 +481,7 @@ class AppWindow(QMainWindow):
     def _import_data(self):
         """从 ZIP 压缩包导入数据（带进度条 + 重载）。"""
         from PyQt6.QtWidgets import QFileDialog
-        from .services.backup_manager import BackupWorker, unique_filename
+        from .services.backup_manager import BackupWorker
         from .progress_dialog import ProgressDialog
 
         zip_path, _ = QFileDialog.getOpenFileName(

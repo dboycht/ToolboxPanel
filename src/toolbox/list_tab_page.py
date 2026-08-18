@@ -1,6 +1,5 @@
 """列表式标签页 — 两列列表：说明 + 文件/文件夹地址。"""
 import os
-from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                               QMenu, QMessageBox, QDialog, QFormLayout,
@@ -9,7 +8,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                               QHeaderView, QAbstractItemView,
                               QApplication)
 from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint, QMimeData
-from PyQt6.QtGui import QKeyEvent, QDrag, QPainter, QPixmap
+from PyQt6.QtGui import QDrag, QPainter, QPixmap
 
 from .models.data_store import DataStore
 from .models.tab_model import TabModel

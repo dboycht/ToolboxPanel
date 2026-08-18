@@ -4,8 +4,6 @@
 - 创建：IconEditDialog.create_for_type(type, parent=..., **prefill)
 - 快捷方式类型额外支持：描述、自定义图标（文件+索引）
 """
-from pathlib import Path
-
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
                               QLineEdit, QHBoxLayout, QPushButton,
                               QDialogButtonBox, QFileDialog, QSpinBox,

@@ -1,7 +1,6 @@
 """备份管理器 — ZIP 导入导出 + 元数据。"""
 import json
 import zipfile
-import shutil
 import secrets
 from datetime import datetime
 from pathlib import Path

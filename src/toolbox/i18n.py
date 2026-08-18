@@ -6,7 +6,6 @@ Usage:
     on_language_changed(lambda: refresh_ui())
 """
 from __future__ import annotations
-from pathlib import Path
 from typing import Callable
 
 # ── 当前语言 · Current language ──

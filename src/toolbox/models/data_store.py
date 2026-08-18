@@ -40,7 +40,6 @@ class DataStore:
             self.save()
             return self.tabs
 
-        version = data.get("version", 1)
         tabs_data = data.get("tabs", [])
 
         if not tabs_data:

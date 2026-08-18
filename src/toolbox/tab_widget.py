@@ -3,8 +3,8 @@ import uuid
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QStackedWidget, QMenu,
-                              QMessageBox, QPushButton, QHBoxLayout,
-                              QDialog, QFormLayout, QLabel, QLineEdit,
+                              QMessageBox,
+                              QDialog, QLabel, QLineEdit,
                               QDialogButtonBox, QFileDialog)
 from PyQt6.QtCore import pyqtSignal, Qt
 
@@ -313,7 +313,6 @@ class TabWidget(QWidget):
     def keyPressEvent(self, event):
         key = event.key()
         ctrl = bool(event.modifiers() & Qt.KeyboardModifier.ControlModifier)
-        shift = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
 
         # Ctrl+W — 关闭当前标签页
         if ctrl and key == Qt.Key.Key_W:
