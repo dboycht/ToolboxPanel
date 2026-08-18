@@ -215,6 +215,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "list.new_tab":                {"zh": "新建列表标签页",                 "en": "New List Tab"},
     "list.default_name":           {"zh": "列表",                           "en": "List"},
     "list.new_item":               {"zh": "新建列表项",                     "en": "New List Item"},
+    "list.edit_item":              {"zh": "编辑列表项",                     "en": "Edit List Item"},
     "list.col.desc":               {"zh": "说明",                           "en": "Description"},
     "list.col.path":               {"zh": "路径",                           "en": "Path"},
     "list.desc_ph":                {"zh": "文本说明",                       "en": "Description"},

@@ -223,6 +223,9 @@ class ListTabPage(QWidget):
         # 半透明 ghost：抓取整行作为拖拽图像
         rect = self._tree.visualItemRect(item)
         pix = self._tree.viewport().grab(rect)
+        # 高分屏下 grab 返回的 pixmap 带 devicePixelRatio>1，拖拽显示会被放大，
+        # 导致幽灵窗口与鼠标错位（偏左/漂移）；统一按 1:1 处理
+        pix.setDevicePixelRatio(1.0)
         ghost = QPixmap(pix.size())
         ghost.fill(Qt.GlobalColor.transparent)
         painter = QPainter(ghost)
@@ -230,7 +233,11 @@ class ListTabPage(QWidget):
         painter.drawPixmap(0, 0, pix)
         painter.end()
         drag.setPixmap(ghost)
-        drag.setHotSpot(QPoint(pix.width() // 2, pix.height() // 2))
+        # 以鼠标按下位置为抓取点（相对行左上角），使幽灵窗口紧贴鼠标跟随，
+        # 而不是固定在 ghost 中心导致视觉偏移
+        hot_x = max(0, min(pix.width() - 1, self._drag_start_pos.x() - rect.x()))
+        hot_y = max(0, min(pix.height() - 1, self._drag_start_pos.y() - rect.y()))
+        drag.setHotSpot(QPoint(hot_x, hot_y))
 
         # 拖拽后释放左键可能误触发 itemClicked（打开路径），抑制一次
         self._suppress_click = True
@@ -368,10 +375,41 @@ class ListTabPage(QWidget):
             self._create_item()
             return
         menu = QMenu(self)
+        edit_action = menu.addAction(tr("icon.menu.edit"))
+        rename_action = menu.addAction(tr("icon.menu.rename"))
+        menu.addSeparator()
         delete_action = menu.addAction(tr("icon.menu.remove"))
         chosen = menu.exec(self._tree.viewport().mapToGlobal(pos))
-        if chosen == delete_action:
+        if chosen == edit_action:
+            self._edit_row(row)
+        elif chosen == rename_action:
+            self._rename_row(row)
+        elif chosen == delete_action:
             self._delete_row(row)
+
+    def _edit_row(self, row: QTreeWidgetItem):
+        """右键 → 编辑属性…：弹对话框修改说明与路径。"""
+        item_id = row.data(0, Qt.ItemDataRole.UserRole)
+        result = self.data_store.find_list_item(item_id)
+        if not result:
+            return
+        _, item = result
+        values = self._list_item_dialog(tr("list.edit_item"), item.description, item.path)
+        if values is None:
+            return
+        desc, path = values
+        if not desc and not path:
+            return
+        self.data_store.update_list_item(item_id, description=desc, path=path)
+        row.setText(0, desc)
+        row.setText(1, path)
+        row.setToolTip(0, desc)
+        row.setToolTip(1, path)
+        self.status_message.emit(tr("status.edited", name=desc or path))
+
+    def _rename_row(self, row: QTreeWidgetItem):
+        """右键 → 重命名：进入列 0 内联编辑（完成时由 itemChanged 持久化）。"""
+        self._tree.editItem(row, 0)
 
     def _delete_row(self, row: QTreeWidgetItem):
         item_id = row.data(0, Qt.ItemDataRole.UserRole)
@@ -389,15 +427,15 @@ class ListTabPage(QWidget):
         self._update_empty_hint()
         self.status_message.emit(tr("status.removed", name=desc))
 
-    def _create_item(self):
-        """空白右键 → 新建列表项对话框。"""
+    def _list_item_dialog(self, title: str, desc: str = "", path: str = "") -> tuple[str, str] | None:
+        """新建/编辑列表项的通用对话框，返回 (desc, path)；取消返回 None。"""
         dlg = QDialog(self)
-        dlg.setWindowTitle(tr("list.new_item"))
+        dlg.setWindowTitle(title)
         dlg.setMinimumWidth(420)
         layout = QVBoxLayout(dlg)
 
         form = QFormLayout()
-        desc_edit = QLineEdit()
+        desc_edit = QLineEdit(desc)
         desc_edit.setPlaceholderText(tr("list.desc_ph"))
         form.addRow(tr("list.col.desc"), desc_edit)
 
@@ -406,7 +444,7 @@ class ListTabPage(QWidget):
         h = QHBoxLayout(path_row)
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(4)
-        path_edit = QLineEdit()
+        path_edit = QLineEdit(path)
         file_btn = QPushButton(tr("list.select_file"))
         folder_btn = QPushButton(tr("list.select_folder"))
         file_btn.clicked.connect(
@@ -435,9 +473,15 @@ class ListTabPage(QWidget):
         layout.addWidget(btns)
 
         if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return desc_edit.text().strip(), path_edit.text().strip()
+
+    def _create_item(self):
+        """空白右键 → 新建列表项对话框。"""
+        values = self._list_item_dialog(tr("list.new_item"))
+        if values is None:
             return
-        desc = desc_edit.text().strip()
-        path = path_edit.text().strip()
+        desc, path = values
         if not desc and not path:
             return
         item = ListItemModel(description=desc, path=path)
