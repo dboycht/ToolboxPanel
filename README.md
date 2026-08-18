@@ -200,6 +200,14 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
+### v1.11.5 (2026-08-18)
+
+**新增**
+- 单实例运行：同一时间只允许一个实例，重复启动时自动拉取已有实例的窗口（防止数据文件被多个实例互相覆盖）
+
+**其他**
+- 代码清理：移除未使用的导入与局部变量
+
 ### v1.11.4 (2026-08-18)
 
 **新增**
