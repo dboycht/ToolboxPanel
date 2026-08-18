@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import uuid
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QScrollArea, QWidget, QMenu, QMessageBox,

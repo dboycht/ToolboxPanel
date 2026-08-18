@@ -267,12 +267,11 @@ class TabWidget(QWidget):
         new_name = self._prompt_text(tr("tab.rename.title"), tr("tab.rename.prompt"), current_name)
         if new_name is not None and new_name != current_name:
             self._tab_bar.set_tab_text(tab_index, new_name)
-            # 找到对应 grid 更新模型
-            for grid in self._icon_grids.values():
-                if self._stack.indexOf(grid) == tab_index:
-                    self.data_store.rename_tab(grid.tab.id, new_name)
-                    grid.tab.name = new_name
-                    break
+            # 无论网格页还是列表页，都同步模型并持久化
+            page = self._stack.widget(tab_index)
+            if page is not None and getattr(page, "tab", None) is not None:
+                self.data_store.rename_tab(page.tab.id, new_name)
+                page.tab.name = new_name
             self.status_message.emit(tr("tab.renamed", name=new_name))
 
     def _delete_tab(self, tab_index: int):

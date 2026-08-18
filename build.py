@@ -8,6 +8,8 @@ import sys, os, shutil, subprocess
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(PROJECT_ROOT))
+from src.toolbox import __version__
 
 
 def clean():
@@ -23,7 +25,7 @@ def clean():
 
 def build():
     print("=" * 50)
-    print("  工具箱 v1.00.2 编译")
+    print(f"  工具箱 v{__version__} 编译")
     print("=" * 50)
 
     cmd = [

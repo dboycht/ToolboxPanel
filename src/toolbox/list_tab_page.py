@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                               QLineEdit, QHBoxLayout, QPushButton,
                               QDialogButtonBox, QFileDialog, QLabel,
                               QHeaderView, QAbstractItemView, QSizePolicy)
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QTimer
 from PyQt6.QtGui import QKeyEvent
 
 from .models.data_store import DataStore
@@ -79,6 +79,18 @@ class ListTabPage(QWidget):
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._on_context_menu)
+
+        # 左键上下拖拽调整行顺序（QTreeWidget InternalMove 提供拖拽体验；
+        # drop 后由 viewport 事件过滤器 + _sync_order_after_drop 同步模型并持久化。
+        # 注意：QTreeModel 的 moveRows 在 Qt 6 被禁用，且 InternalMove drop
+        # 只发 rowsRemoved/rowsInserted 不发 rowsMoved，故不能用 model 信号）
+        self._tree.setDragEnabled(True)
+        self._tree.setAcceptDrops(True)
+        self._tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self._tree.setDropIndicatorShown(True)
+        self._tree.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._tree.viewport().installEventFilter(self)
+
         layout.addWidget(self._tree)
 
         # 空列表提示（有行时隐藏）
@@ -119,6 +131,25 @@ class ListTabPage(QWidget):
             if row.data(0, Qt.ItemDataRole.UserRole) == item_id:
                 return row
         return None
+
+    def eventFilter(self, obj, event):
+        """监听 viewport 的内部拖拽 drop：等待 view 处理完再同步模型顺序。"""
+        if obj is self._tree.viewport() and event.type() == QEvent.Type.Drop:
+            # singleShot(0)：在 drop 事件完全处理完（行已移动）后的下一轮同步
+            QTimer.singleShot(0, self._sync_order_after_drop)
+        return super().eventFilter(obj, event)
+
+    def _sync_order_after_drop(self):
+        """读取当前 UI 行顺序，同步到模型并持久化（拖拽 drop 后调用）。"""
+        new_ids = []
+        for i in range(self._tree.topLevelItemCount()):
+            item_id = self._tree.topLevelItem(i).data(0, Qt.ItemDataRole.UserRole)
+            if item_id:
+                new_ids.append(item_id)
+        old_ids = [it.id for it in self.tab.list_items]
+        if new_ids and new_ids != old_ids:
+            self.data_store.reorder_list_items(self.tab.id, new_ids)
+            self.status_message.emit(tr("list.reordered"))
 
     def _update_empty_hint(self):
         self._empty_hint.setVisible(self._tree.topLevelItemCount() == 0)
@@ -245,8 +276,8 @@ class ListTabPage(QWidget):
         if not desc and not path:
             return
         item = ListItemModel(description=desc, path=path)
+        # add_list_item 内部已把 item 追加到 tab.list_items 并 save()，不要重复 append
         self.data_store.add_list_item(self.tab.id, item)
-        self.tab.list_items.append(item)
         self.add_item(item)
         self._update_empty_hint()
         self.status_message.emit(tr("list.item_added", desc=desc or path))

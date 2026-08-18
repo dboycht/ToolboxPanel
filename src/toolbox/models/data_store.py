@@ -221,6 +221,24 @@ class DataStore:
                 item.path = path
             self.save()
 
+    def reorder_list_items(self, tab_id: str, ordered_item_ids: list[str]):
+        """Reorder list items by the given id order (e.g. after UI drag).
+
+        Ids missing from `ordered_item_ids` are appended at the end
+        (defensive: never silently drop items).
+        """
+        tab = self.find_tab(tab_id)
+        if not tab:
+            return
+        by_id = {it.id: it for it in tab.list_items}
+        seen = set(ordered_item_ids)
+        reordered = [by_id[i] for i in ordered_item_ids if i in by_id]
+        reordered += [it for it in tab.list_items if it.id not in seen]
+        tab.list_items = reordered
+        for idx, it in enumerate(tab.list_items):
+            it.sort_order = idx
+        self.save()
+
     def orphan_cache_files(self) -> set[str]:
         """Return set of cache filenames not referenced by any icon."""
         referenced = set()

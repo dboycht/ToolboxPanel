@@ -131,19 +131,26 @@ class AppWindow(QMainWindow):
         # 同步图标大小勾选（_setup_menus 已按 self._icon_size 初始化）
         for name, action in self._size_actions.items():
             action.setChecked(name == self._icon_size)
-        # Refresh tab texts
+        # Refresh tab texts（网格页与列表页都处理）
         for i in range(self.tab_widget.count()):
-            grid = self.tab_widget.widget(i)
-            from .icon_grid import IconGrid
-            if isinstance(grid, IconGrid):
-                tab = grid.tab
-                # Use stored name or translate the default
-                name = tab.name
-                # If name is the old-language default, translate it
-                if name in ("新建标签页", "New Tab", "主页", "Home"):
-                    name = tr("data.default_tab") if i == 0 and name in ("主页", "Home") else tr("tab.default_name")
-                    tab.name = name
-                self.tab_widget.setTabText(i, name)
+            page = self.tab_widget.widget(i)
+            tab = getattr(page, "tab", None)
+            if tab is None:
+                continue
+            name = tab.name
+            # 若是旧语言下的默认名，翻译成当前语言
+            is_home = i == 0 and name in ("主页", "Home")
+            is_grid_default = name in ("新建标签页", "New Tab")
+            is_list_default = name in ("列表", "List")
+            if is_home:
+                name = tr("data.default_tab")
+            elif getattr(tab, "tab_type", "grid") == "list" and is_list_default:
+                name = tr("list.default_name")
+            elif is_grid_default:
+                name = tr("tab.default_name")
+            if name != tab.name:
+                tab.name = name
+            self.tab_widget.setTabText(i, name)
 
     # ── 菜单栏 · Menu bar ──
 
@@ -445,7 +452,7 @@ class AppWindow(QMainWindow):
         # 重建默认标签页
         default_name = tr("tab.default_name")
         tab = self.data_store.add_tab(default_name)
-        tw.add_tab_page(tab)
+        self.tab_widget.add_tab_page(tab)
         self.status_bar.showMessage(tr("reset.done"))
 
     def _export_data(self):
@@ -503,7 +510,8 @@ class AppWindow(QMainWindow):
             self.status_bar.showMessage(tr("import.done"))
 
     def _on_about(self):
-        QMessageBox.about(self, tr("app.about.title"), tr("app.about.text"))
+        from . import __version__
+        QMessageBox.about(self, tr("app.about.title"), tr("app.about.text", version=__version__))
 
     def closeEvent(self, event):
         self.data_store.save()

@@ -74,7 +74,7 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 ```bash
 # 克隆项目
 git clone <repo-url>
-cd VibeCoding
+cd ToolboxPanel
 
 # 安装依赖 (仅两个)
 pip install -r requirements.txt
@@ -128,7 +128,7 @@ dist/Toolbox/
 ## 项目结构 · Project Structure
 
 ```
-VibeCoding/
+ToolboxPanel/
 ├── run.py                         # 开发入口 · Dev entry point
 ├── launcher.py                    # 打包入口 · Build entry point
 ├── build.py                       # 编译脚本 · Build script
@@ -199,6 +199,19 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 ---
 
 ## 更新日志 · Changelog
+
+### v1.11.2 (2026-08-18)
+
+**新增**
+- 列表式标签页支持左键上下拖拽调整行顺序（带插入指示线），顺序自动保存
+
+**修复**
+- 修复列表标签页添加新项后重启应用该项出现两次的问题（数据重复写入）
+- 修复「文件 → 重置数据」必然崩溃的问题（未定义变量）
+- 修复编辑快捷方式图标并设置自定义图标时的崩溃（缺失 import）
+- 修复列表标签页重命名不保存的问题（重启后名称还原）
+- 修复语言切换时列表标签页名称不刷新的问题
+- 版本号收敛为单一来源（`__version__`），关于对话框 / 导出元数据 / 编译横幅自动跟随
 
 ### v1.11.1 (2026-08-14)
 

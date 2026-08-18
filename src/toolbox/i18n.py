@@ -88,7 +88,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "app.menu.about":              {"zh": "关于(&A)",                       "en": "&About"},
     "app.about.title":             {"zh": "关于 工具箱",                    "en": "About Toolbox"},
     "app.about.text":              {"zh":
-        "工具箱 v1.11.1 — 手机桌面风格的启动器\n"
+        "工具箱 v{version} — 手机桌面风格的启动器\n"
         "作者: dboycht\n"
         "项目地址: https://github.com/dboycht/ToolboxPanel\n\n"
         "• 从资源管理器拖入文件/文件夹/快捷方式即可创建图标\n"
@@ -98,7 +98,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "• 数据自动保存到 data/ 文件夹\n"
         "• 支持搜索过滤、图标大小切换、打开方式",
                                     "en":
-        "Toolbox v1.11.1 — Phone‑home‑screen style launcher\n"
+        "Toolbox v{version} — Phone‑home‑screen style launcher\n"
         "Author: dboycht\n"
         "Project: https://github.com/dboycht/ToolboxPanel\n\n"
         "• Drag files / folders / shortcuts from Explorer to create icons\n"
@@ -140,7 +140,6 @@ TEXTS: dict[str, dict[str, str]] = {
     "edit.title":                  {"zh": "编辑图标属性",                   "en": "Edit Icon Properties"},
     "edit.field.name":             {"zh": "名称:",                          "en": "Name:"},
     "edit.field.path":             {"zh": "路径:",                          "en": "Path:"},
-    "edit.field.name":             {"zh": "名称:",                          "en": "Name:"},
     "edit.field.desc":             {"zh": "描述:",                          "en": "Description:"},
     "edit.field.desc_ph":          {"zh": "快捷方式说明（可选）",           "en": "Shortcut description (optional)"},
     "edit.field.icon":             {"zh": "图标:",                          "en": "Icon:"},
@@ -228,6 +227,7 @@ TEXTS: dict[str, dict[str, str]] = {
     "list.desc_updated":           {"zh": "说明已更新",                     "en": "Description updated"},
     "list.path_updated":           {"zh": "路径已更新",                     "en": "Path updated"},
     "list.item_added":             {"zh": "已添加列表项: {desc}",           "en": "List item added: {desc}"},
+    "list.reordered":              {"zh": "列表项顺序已更新",               "en": "List order updated"},
     "list.pick_title":             {"zh": "为「{title}」选择路径",          "en": "Pick a path for '{title}'"},
     "list.pick_hint":              {"zh": "选择文件或文件夹：",             "en": "Choose a file or folder:"},
     # shortcut dialog

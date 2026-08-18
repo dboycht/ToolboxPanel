@@ -8,6 +8,8 @@ from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
+from .. import __version__
+
 
 def unique_filename() -> str:
     """生成唯一文件名：时间戳 + 随机码。"""
@@ -30,7 +32,7 @@ def build_metadata(data_dir: Path) -> dict:
         except Exception:
             pass
     return {
-        "version": "1.11.1",
+        "version": __version__,
         "exported_at": datetime.now().isoformat(),
         "tab_count": tab_count,
         "icon_count": icon_count,
