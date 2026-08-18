@@ -200,6 +200,14 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
+### v1.11.4 (2026-08-18)
+
+**新增**
+- 列表式标签页行右键新增「编辑属性…」（修改说明与路径）和「重命名」（内联改名）
+
+**修复**
+- 修复列表式标签页拖拽时幽灵窗口位置偏左/漂移的问题（高分屏 DPI 错位 + 抓取点修正）
+
 ### v1.11.3 (2026-08-18)
 
 **修复**
