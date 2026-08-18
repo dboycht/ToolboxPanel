@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QTreeWidget, QTreeWidgetItem,
                               QDialogButtonBox, QFileDialog, QLabel,
                               QHeaderView, QAbstractItemView,
                               QApplication)
-from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QEvent, QPoint, QMimeData
 from PyQt6.QtGui import QKeyEvent, QDrag, QPainter, QPixmap
 
 from .models.data_store import DataStore
