@@ -47,7 +47,7 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | 📦 **导入导出** | ZIP 压缩包备份/恢复，含版本信息和进度条 |
 | ⌨️ **快捷键** | 15+ 快捷键覆盖所有功能，Ctrl+B/Ctrl+F/Shift+Del 等 |
 | 💾 **自动保存** | 所有操作即时写入 `data/tabs.json`，支持启动恢复 |
-| 🎨 **Win11 风格** | 圆角、浅色主题、Fluent Design 风格 |
+| 🎨 **Win11 风格** | 圆角设计、Fluent 风格，浅色/深色主题即时切换 |
 
 | | |
 |---|---|
@@ -65,7 +65,7 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | 📦 **Backup** | ZIP export/import with metadata and progress bar |
 | ⌨️ **Shortcuts** | 15+ keyboard shortcuts: Ctrl+B, Ctrl+F, Shift+Del, and more |
 | 💾 **Auto‑save** | Instant persistence to `data/tabs.json`; survives restart |
-| 🎨 **Win11 themed** | Rounded corners, light theme, Fluent Design aesthetic |
+| 🎨 **Win11 themed** | Rounded corners, Fluent Design aesthetic, light/dark themes |
 
 ---
 
@@ -199,6 +199,12 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 ---
 
 ## 更新日志 · Changelog
+
+### v1.11.6 (2026-08-25)
+
+**新增**
+- 多主题外观：视图 → 主题，可在浅色 / 深色（Win11 深色配色）之间即时切换，偏好自动保存
+- 导入数据前新增二次确认对话框：提示「导入将清空并覆盖现有数据」，防止误操作
 
 ### v1.11.5 (2026-08-18)
 
