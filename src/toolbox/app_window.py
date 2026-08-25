@@ -490,6 +490,15 @@ class AppWindow(QMainWindow):
         if not zip_path:
             return
 
+        # 二次确认：导入会清空并覆盖现有数据（tabs.json / config.json / 图标缓存）
+        confirm = QMessageBox.warning(
+            self, tr("import.confirm.title"),
+            tr("import.confirm.text"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
         dlg = ProgressDialog(tr("import.title"), self)
         worker = BackupWorker("import", self.data_store.data_dir, zip_path)
 
