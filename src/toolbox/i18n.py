@@ -74,6 +74,9 @@ TEXTS: dict[str, dict[str, str]] = {
     "app.menu.file":               {"zh": "文件(&F)",                       "en": "&File"},
     "app.menu.view":               {"zh": "视图(&V)",                       "en": "&View"},
     "app.menu.icon_size":          {"zh": "图标大小",                       "en": "Icon Size"},
+    "app.menu.theme":              {"zh": "主题",                           "en": "Theme"},
+    "theme.light":                 {"zh": "浅色",                           "en": "Light"},
+    "theme.dark":                  {"zh": "深色",                           "en": "Dark"},
     "app.menu.size_small":         {"zh": "小",                             "en": "Small"},
     "app.menu.size_medium":        {"zh": "中",                             "en": "Medium"},
     "app.menu.size_large":         {"zh": "大",                             "en": "Large"},
@@ -286,6 +289,8 @@ TEXTS: dict[str, dict[str, str]] = {
     "bulk_delete.done":            {"zh": "已删除 {count} 个图标",          "en": "Deleted {count} icon(s)"},
     "status.batch_mode_on":        {"zh": "批量管理模式：勾选图标后点击「批量删除勾选图标」",
                                                                            "en": "Batch mode: check icons then click 'Delete Checked Icons'"},
+
+    "status.theme_switched":       {"zh": "已切换到{theme}主题",            "en": "Switched to {theme} theme"},
 
     # ── Search ──
     "search.placeholder":          {"zh": "搜索图标…",                      "en": "Search icons…"},

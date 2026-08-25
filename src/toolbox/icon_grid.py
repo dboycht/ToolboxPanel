@@ -16,6 +16,7 @@ from .models.data_store import DataStore
 from .models.tab_model import TabModel
 from .models.icon_model import IconModel, IconType
 from .i18n import tr
+from . import themes
 
 
 class _DropContainer(QWidget):
@@ -28,18 +29,29 @@ class _DropContainer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setStyleSheet("_DropContainer { background-color: #ffffff; }")
+        # 主题切换时重刷（拖放悬停态不会跨主题切换保留，按常态重置即可）
+        themes.on_theme_changed(self._apply_normal_style)
+        self._apply_normal_style()
+
+    def _apply_normal_style(self):
+        """常态样式：底色与页面卡片一致。"""
+        self.setStyleSheet(
+            f"_DropContainer {{ background-color: {themes.token('base')}; }}")
+
+    def _apply_drag_over_style(self):
+        """拖放悬停样式：虚线边框提示可放置。"""
+        t = themes.token
+        self.setStyleSheet(
+            f"_DropContainer {{"
+            f"  background-color: {t('drop_zone_bg')};"
+            f"  border: 2px dashed {t('accent')};"
+            f"  border-radius: 8px;"
+            f"}}")
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls() or event.mimeData().hasFormat("application/x-toolbox-icon"):
             event.acceptProposedAction()
-            self.setStyleSheet(
-                "_DropContainer {"
-                "  background-color: #f0f6ff;"
-                "  border: 2px dashed #0067c0;"
-                "  border-radius: 8px;"
-                "}"
-            )
+            self._apply_drag_over_style()
         else:
             event.ignore()
 
@@ -50,10 +62,10 @@ class _DropContainer(QWidget):
             event.ignore()
 
     def dragLeaveEvent(self, event):
-        self.setStyleSheet("_DropContainer { background-color: #ffffff; }")
+        self._apply_normal_style()
 
     def dropEvent(self, event: QDropEvent):
-        self.setStyleSheet("_DropContainer { background-color: #ffffff; }")
+        self._apply_normal_style()
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             paths = [QUrl(url).toLocalFile() for url in urls if QUrl(url).isLocalFile()]

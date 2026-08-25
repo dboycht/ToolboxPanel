@@ -14,6 +14,7 @@ from .models.data_store import DataStore
 from .models.tab_model import TabModel
 from .models.list_item_model import ListItemModel
 from .i18n import tr
+from . import themes
 
 # 列表行内部拖拽的 MIME 类型（内容为 item_id 的 UTF-8 文本）
 _LIST_DRAG_MIME = "application/x-toolbox-list-item"
@@ -90,33 +91,6 @@ class ListTabPage(QWidget):
         self._tree.setRootIsDecorated(False)
         self._tree.setAlternatingRowColors(True)
         self._tree.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self._tree.setStyleSheet("""
-            QTreeWidget {
-                background-color: #ffffff;
-                alternate-background-color: #f7f9fb;
-                border: 1px solid #e0e0e0;
-                border-radius: 6px;
-                font-size: 10pt;
-            }
-            QTreeWidget::item {
-                padding: 4px 2px;
-            }
-            QTreeWidget::item:hover {
-                background-color: rgba(0, 103, 192, 0.06);
-            }
-            QTreeWidget::item:selected {
-                background-color: rgba(0, 103, 192, 0.12);
-                color: #1e1e1e;
-            }
-            QHeaderView::section {
-                background-color: #f0f0f0;
-                padding: 5px 8px;
-                font-weight: 600;
-                border: none;
-                border-right: 1px solid #e0e0e0;
-                border-bottom: 1px solid #e0e0e0;
-            }
-        """)
 
         self._tree.itemChanged.connect(self._on_item_changed)
         self._tree.itemClicked.connect(self._on_item_clicked)
@@ -138,10 +112,9 @@ class ListTabPage(QWidget):
 
         layout.addWidget(self._tree)
 
-        # 空列表提示（有行时隐藏）
+        # 空列表提示（有行时隐藏；样式由 _refresh_style 按主题设置）
         self._empty_hint = QLabel(tr("list.empty_hint"))
         self._empty_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_hint.setStyleSheet("color: #999999; font-size: 11pt; padding: 24px;")
         layout.addWidget(self._empty_hint)
         layout.addStretch()
 
@@ -155,6 +128,43 @@ class ListTabPage(QWidget):
         for item in sorted(tab.list_items, key=lambda i: i.sort_order):
             self.add_item(item)
         self._update_empty_hint()
+
+        # 主题样式初始应用 + 切换时重刷（弱引用注册，部件销毁自动失效）
+        themes.on_theme_changed(self._refresh_style)
+        self._refresh_style()
+
+    def _refresh_style(self):
+        """按当前主题令牌重刷树与空提示样式（构建时与主题切换回调共用）。"""
+        t = themes.token
+        self._tree.setStyleSheet(f"""
+            QTreeWidget {{
+                background-color: {t('base')};
+                alternate-background-color: {t('tree_alt_row')};
+                border: 1px solid {t('border_soft')};
+                border-radius: 6px;
+                font-size: 10pt;
+            }}
+            QTreeWidget::item {{
+                padding: 4px 2px;
+            }}
+            QTreeWidget::item:hover {{
+                background-color: {t('tree_hover_bg')};
+            }}
+            QTreeWidget::item:selected {{
+                background-color: {t('tree_sel_bg')};
+                color: {t('tree_sel_text')};
+            }}
+            QHeaderView::section {{
+                background-color: {t('header_bg')};
+                padding: 5px 8px;
+                font-weight: 600;
+                border: none;
+                border-right: 1px solid {t('border_soft')};
+                border-bottom: 1px solid {t('border_soft')};
+            }}
+        """)
+        self._empty_hint.setStyleSheet(
+            f"color: {t('hint_text')}; font-size: 11pt; padding: 24px;")
 
     # ── 行管理 ──
 
@@ -496,7 +506,7 @@ class ListTabPage(QWidget):
         dlg.setWindowTitle(tr("list.pick_title", title=title))
         layout = QVBoxLayout(dlg)
         hint = QLabel(tr("list.pick_hint"))
-        hint.setStyleSheet("color: #666666;")
+        hint.setStyleSheet(f"color: {themes.token('muted_text')};")
         layout.addWidget(hint)
         btns = QHBoxLayout()
         file_btn = QPushButton(tr("list.select_file"))

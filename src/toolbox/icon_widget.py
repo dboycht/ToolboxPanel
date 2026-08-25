@@ -8,6 +8,7 @@ from PyQt6.QtGui import QPixmap, QDrag, QPainter, QMouseEvent
 
 from .models.icon_model import IconModel
 from .icon_label import IconLabel
+from . import themes
 
 # Icon size presets — used by View > Icon Size menu
 SIZE_PRESETS = {
@@ -47,17 +48,6 @@ class IconWidget(QWidget):
         # Top row: spacer + checkbox (for batch mode, normally hidden)
         self._check = QCheckBox(self)
         self._check.setFixedSize(18, 18)
-        self._check.setStyleSheet("""
-            QCheckBox {
-                background-color: #ffffff;
-                border: 2px solid #0067c0;
-                border-radius: 3px;
-                spacing: 0px;
-            }
-            QCheckBox:checked {
-                background-color: #0067c0;
-            }
-        """)
         self._check.hide()
 
         top_row = QHBoxLayout()
@@ -87,9 +77,28 @@ class IconWidget(QWidget):
             lambda new_name: self.rename_requested.emit(self.icon_model.id, new_name)
         )
 
-        self.setStyleSheet(self._base_style())
+        # 主题切换时重刷局部样式（弱引用注册，部件销毁自动失效）
+        themes.on_theme_changed(self._refresh_styles)
+        self._refresh_styles()
 
     # ── 样式 ──
+
+    def _refresh_styles(self):
+        """按当前主题令牌重刷复选框与悬停/常态样式。"""
+        t = themes.token
+        self._check.setStyleSheet(f"""
+            QCheckBox {{
+                background-color: {t('checkbox_bg')};
+                border: 2px solid {t('accent')};
+                border-radius: 3px;
+                spacing: 0px;
+            }}
+            QCheckBox:checked {{
+                background-color: {t('accent')};
+            }}
+        """)
+        self.setStyleSheet(self._hover_style() if self._hovered
+                           else self._base_style())
 
     def _base_style(self) -> str:
         return """
@@ -101,12 +110,13 @@ class IconWidget(QWidget):
         """
 
     def _hover_style(self) -> str:
-        return """
-            IconWidget {
-                background-color: rgba(0, 103, 192, 0.08);
-                border: 1px solid rgba(0, 103, 192, 0.25);
+        t = themes.token
+        return f"""
+            IconWidget {{
+                background-color: {t('hover_tint_bg')};
+                border: 1px solid {t('hover_tint_border')};
                 border-radius: 8px;
-            }
+            }}
         """
 
     def enterEvent(self, event):

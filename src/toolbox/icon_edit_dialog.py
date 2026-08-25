@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLabel,
                               QWidget)
 from .models.icon_model import IconModel, IconType
 from .i18n import tr
+from . import themes
 
 
 class IconEditDialog(QDialog):
@@ -27,7 +28,8 @@ class IconEditDialog(QDialog):
 
         # 类型提示：明确说明这是「属性编辑」（名称/路径等），不是替换图标图片
         type_hint = QLabel(tr(f"edit.type.{icon.type}"))
-        type_hint.setStyleSheet("color: #666666; font-size: 9pt;")
+        type_hint.setStyleSheet(
+            f"color: {themes.token('muted_text')}; font-size: 9pt;")
         layout.addWidget(type_hint)
 
         form = QFormLayout()
@@ -190,7 +192,7 @@ class IconEditDialog(QDialog):
         )
 
         idx_label = QLabel(tr("edit.field.icon_index"))
-        idx_label.setStyleSheet("color: #666666;")
+        idx_label.setStyleSheet(f"color: {themes.token('muted_text')};")
         spin = QSpinBox()
         spin.setRange(0, 999)
         spin.setValue(0)
@@ -268,15 +270,16 @@ class IconEditDialog(QDialog):
 
 
 def _browse_btn_style() -> str:
-    return """
-        QPushButton {
-            background-color: #e0e0e0;
-            color: #1e1e1e;
-            border: 1px solid #c0c0c0;
+    t = themes.token
+    return f"""
+        QPushButton {{
+            background-color: {t('btn_secondary_bg')};
+            color: {t('btn_secondary_text')};
+            border: 1px solid {t('btn_secondary_border')};
             border-radius: 4px;
             padding: 2px 6px;
-        }
-        QPushButton:hover {
-            background-color: #d0d0d0;
-        }
+        }}
+        QPushButton:hover {{
+            background-color: {t('btn_secondary_hover')};
+        }}
     """

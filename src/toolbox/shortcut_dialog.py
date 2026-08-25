@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetIte
                               QDialogButtonBox, QHeaderView, QAbstractItemView)
 from PyQt6.QtCore import Qt
 from .i18n import tr
+from . import themes
 
 
 SHORTCUTS = [
@@ -45,16 +46,16 @@ def show_shortcut_dialog(parent=None):
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.verticalHeader().setVisible(False)
     table.setAlternatingRowColors(True)
-    table.setStyleSheet("""
-        QTableWidget {
-            gridline-color: #e0e0e0;
+    table.setStyleSheet(f"""
+        QTableWidget {{
+            gridline-color: {themes.token('gridline')};
             font-size: 10pt;
-        }
-        QHeaderView::section {
-            background-color: #f0f0f0;
+        }}
+        QHeaderView::section {{
+            background-color: {themes.token('header_bg')};
             padding: 6px;
             font-weight: bold;
-        }
+        }}
     """)
 
     for i, (action_key, shortcut) in enumerate(SHORTCUTS):

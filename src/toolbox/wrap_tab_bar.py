@@ -4,6 +4,7 @@ from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QMimeData
 from PyQt6.QtGui import QDrag, QPainter, QPixmap
 
 from .flow_layout import FlowLayout
+from . import themes
 
 
 class _TabButton(QPushButton):
@@ -19,7 +20,9 @@ class _TabButton(QPushButton):
         self.setCheckable(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        self.setStyleSheet(_tab_style(False))
+        # 主题切换时重刷样式（弱引用注册，部件销毁自动失效）
+        themes.on_theme_changed(self._refresh_style)
+        self._refresh_style()
         # 根据文字长度自动调整按钮宽度
         fm = self.fontMetrics()
         text_w = fm.horizontalAdvance(text) + 32  # padding
@@ -27,7 +30,11 @@ class _TabButton(QPushButton):
 
     def set_selected(self, sel: bool):
         self.setChecked(sel)
-        self.setStyleSheet(_tab_style(sel))
+        self._refresh_style()
+
+    def _refresh_style(self):
+        """按当前选中态与主题令牌重刷样式。"""
+        self.setStyleSheet(_tab_style(self.isChecked()))
 
     def mouseDoubleClickEvent(self, event):
         self.double_clicked.emit()
@@ -82,31 +89,32 @@ class _TabButton(QPushButton):
 
 
 def _tab_style(selected: bool) -> str:
+    t = themes.token
     if selected:
-        return """
-            QPushButton {
-                background-color: #ffffff;
-                color: #1e1e1e;
+        return f"""
+            QPushButton {{
+                background-color: {t('base')};
+                color: {t('text')};
                 border: none;
                 border-radius: 8px;
                 padding: 5px 16px;
                 font-size: 9pt;
                 font-weight: 600;
-            }
+            }}
         """
-    return """
-        QPushButton {
+    return f"""
+        QPushButton {{
             background-color: transparent;
-            color: #5a5a5a;
+            color: {t('tab_inactive_text')};
             border: none;
             border-radius: 8px;
             padding: 5px 16px;
             font-size: 9pt;
-        }
-        QPushButton:hover {
-            background-color: rgba(0, 0, 0, 0.04);
-            color: #333333;
-        }
+        }}
+        QPushButton:hover {{
+            background-color: {t('tab_hover_bg')};
+            color: {t('tab_hover_text')};
+        }}
     """
 
 

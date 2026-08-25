@@ -10,6 +10,7 @@ from PyQt6.QtGui import QAction, QActionGroup
 from .models.data_store import DataStore
 from .tab_widget import TabWidget
 from .i18n import tr, current_lang, set_language, on_language_changed
+from . import themes
 
 
 def get_data_dir() -> Path:
@@ -49,6 +50,14 @@ class AppWindow(QMainWindow):
 
         # 图标大小偏好（菜单构建前读取，供勾选状态同步）
         self._icon_size = self._load_icon_size()
+
+        # 主题偏好（菜单构建前读取；此处再应用一次，保证脱离 main() 直接
+        # 构造 AppWindow（如测试）时主题也生效）
+        self._theme = self._load_theme()
+        from PyQt6.QtWidgets import QApplication as _QApp
+        _qapp = _QApp.instance()
+        if _qapp is not None:
+            themes.apply_theme(_qapp, self._theme)
 
         # 菜单栏
         self._setup_menus()
@@ -96,6 +105,32 @@ class AppWindow(QMainWindow):
         return "medium"
 
     @staticmethod
+    def _load_theme() -> str:
+        config_file = get_data_dir() / "config.json"
+        try:
+            if config_file.exists():
+                cfg = json.loads(config_file.read_text(encoding="utf-8"))
+                theme = cfg.get("theme", themes.DEFAULT_THEME)
+                if theme in themes.THEMES:
+                    return theme
+        except Exception:
+            pass
+        return themes.DEFAULT_THEME
+
+    @staticmethod
+    def _save_theme(theme: str):
+        config_file = get_data_dir() / "config.json"
+        try:
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            cfg = {}
+            if config_file.exists():
+                cfg = json.loads(config_file.read_text(encoding="utf-8"))
+            cfg["theme"] = theme
+            config_file.write_text(json.dumps(cfg, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    @staticmethod
     def _save_language(lang: str):
         config_file = get_data_dir() / "config.json"
         try:
@@ -131,6 +166,9 @@ class AppWindow(QMainWindow):
         # 同步图标大小勾选（_setup_menus 已按 self._icon_size 初始化）
         for name, action in self._size_actions.items():
             action.setChecked(name == self._icon_size)
+        # 同步主题勾选
+        for name, action in self._theme_actions.items():
+            action.setChecked(name == self._theme)
         # Refresh tab texts（网格页与列表页都处理）
         for i in range(self.tab_widget.count()):
             page = self.tab_widget.widget(i)
@@ -258,6 +296,22 @@ class AppWindow(QMainWindow):
             size_group.addAction(action)
             size_menu.addAction(action)
             self._size_actions[preset_name] = action
+
+        # Theme submenu — 单选组，勾选状态与当前主题同步
+        theme_menu = view_menu.addMenu(tr("app.menu.theme"))
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+
+        self._theme_actions: dict[str, QAction] = {}
+        for theme_name in themes.available_themes():
+            action = QAction(tr(f"theme.{theme_name}"), self)
+            action.setCheckable(True)
+            action.setChecked(theme_name == self._theme)
+            action.triggered.connect(
+                lambda checked, n=theme_name: self._change_theme(n))
+            theme_group.addAction(action)
+            theme_menu.addAction(action)
+            self._theme_actions[theme_name] = action
 
         # ── 帮助菜单 · Help ──
         help_menu = menu_bar.addMenu(tr("app.menu.help"))
@@ -392,6 +446,21 @@ class AppWindow(QMainWindow):
             action.setChecked(name == preset_name)
         self.tab_widget.set_icon_size(preset_name)
         self._save_icon_size(preset_name)
+
+    def _change_theme(self, theme_name: str):
+        """切换主题：应用调色板/样式表、同步菜单勾选并持久化偏好。"""
+        if theme_name not in themes.THEMES or theme_name == self._theme:
+            return
+        self._theme = theme_name
+        for name, action in self._theme_actions.items():
+            action.setChecked(name == theme_name)
+        from PyQt6.QtWidgets import QApplication as _QApp
+        _qapp = _QApp.instance()
+        if _qapp is not None:
+            themes.apply_theme(_qapp, theme_name)
+        self._save_theme(theme_name)
+        self.status_bar.showMessage(
+            tr("status.theme_switched", theme=tr(f"theme.{theme_name}")))
 
     @staticmethod
     def _save_icon_size(preset_name: str):
