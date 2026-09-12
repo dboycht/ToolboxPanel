@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ToolboxPanel v2 · WinUI 3 最小验证样板（P0）
+
+    目的只有一个：在真机上确认
+      1) 工具链能编译出 WinUI 3 应用（本机只有 VS 生成工具 + .NET 9 SDK）
+      2) Mica / Acrylic / DesktopAcrylic 三种系统材质真的能显示
+      3) 能读取现有 data/tabs.json（v1 格式）并列出标签页
+    验证通过后再铺开写完整 UI。
+
+    ⚠️ 用 **unpackaged**（非 MSIX 打包）模式：直接 dotnet run / 双击 exe 即可，
+       不需要证书与 MSIX 安装，最小验证阶段最省事。
+       代价：需要目标机器有 Windows App SDK 运行时；本项目用
+       WindowsAppSDKSelfContained=true 把运行时随输出一起带上，避免这个依赖。
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <RootNamespace>ToolboxPanel</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- unpackaged 部署 -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <PublishTrimmed>false</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 2.4.0 是当前稳定版；SystemBackdropElement 自 2.0.1 起 GA -->
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
+  </ItemGroup>
+
+</Project>

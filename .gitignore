@@ -32,6 +32,15 @@ MANIFEST
 *.manifest
 *.spec
 
+# ── .NET / WinUI 3（v2.0.1 主线，winui/）──────────────────────────────
+# ⚠️ 上面的 `*.manifest` 是 Python/PyInstaller 规则，会把 WinUI 的
+#    winui/app.manifest 一起吃掉（csproj 里 ApplicationManifest 指向它，
+#    必须入库），所以这里显式加回。
+!winui/app.manifest
+winui/bin/
+winui/obj/
+*.user
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
