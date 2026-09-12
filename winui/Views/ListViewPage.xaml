@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    ListViewPage.xaml —— W3 列表页（tab_type == "list"）
+    ListViewPage.xaml —— 列表页（紧凑版：行高 26、11~12 号字、两列）
 
     对应 v1.11.6 的 ListTabPage：两列（说明 / 路径），点一行打开该路径。
     行内编辑、右键菜单、拖拽排序属于 W5。
@@ -12,18 +12,26 @@
     xmlns:vm="using:ToolboxPanel.ViewModels">
 
     <UserControl.Resources>
+        <Style x:Key="CompactRowStyle" TargetType="ListViewItem">
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="Padding" Value="8,3" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="CornerRadius" Value="4" />
+        </Style>
+
         <DataTemplate x:Key="ListRowTemplate" x:DataType="vm:ListRowViewModel">
-            <Grid Padding="8,6" ColumnSpacing="16">
+            <Grid ColumnSpacing="10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" />
                     <ColumnDefinition Width="3*" />
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0" Text="{x:Bind Description}"
-                           FontSize="13" TextTrimming="CharacterEllipsis" />
+                           FontSize="12" TextTrimming="CharacterEllipsis" />
 
                 <TextBlock Grid.Column="1" Text="{x:Bind Path}"
-                           FontSize="12" Opacity="0.7"
+                           FontSize="11" Opacity="0.6"
                            TextTrimming="CharacterEllipsis" />
             </Grid>
         </DataTemplate>
@@ -32,18 +40,19 @@
     <Grid>
         <ListView x:Name="Rows"
                   ItemTemplate="{StaticResource ListRowTemplate}"
+                  ItemContainerStyle="{StaticResource CompactRowStyle}"
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnRowClick"
-                  Padding="8,4"
+                  Padding="6,4"
                   Background="Transparent" />
 
         <StackPanel x:Name="EmptyHint"
                     VerticalAlignment="Center" HorizontalAlignment="Center"
-                    Spacing="8" Visibility="Collapsed">
-            <FontIcon Glyph="&#xE8FD;" FontSize="40" Opacity="0.5" />
-            <TextBlock Text="这一页还没有列表项" Opacity="0.7" FontSize="13" />
-            <TextBlock Text="（新建 / 编辑在 W5 实现）" Opacity="0.45" FontSize="11" />
+                    Spacing="6" Visibility="Collapsed">
+            <FontIcon Glyph="&#xE8FD;" FontSize="32" Opacity="0.45" />
+            <TextBlock Text="这一页还没有列表项" Opacity="0.65" FontSize="12" />
+            <TextBlock Text="（新建 / 编辑在 W5 实现）" Opacity="0.4" FontSize="10.5" />
         </StackPanel>
     </Grid>
 </UserControl>

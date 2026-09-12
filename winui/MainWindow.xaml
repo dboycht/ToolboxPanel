@@ -1,16 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    MainWindow.xaml —— W3 主界面（真实窗口，不再是 W0 的样板）
+    MainWindow.xaml —— W3 主界面（紧凑版）
 
     结构：自绘标题栏（拖动区） / 标签栏 / 内容区（网格页或列表页） / 状态栏
+    密度（2026-09-12 按用户"不够紧凑"的反馈收紧过一次，单位 px）：
+      标题栏 34 · 标签栏项 26 高 / 图块 76×84 · 状态栏单项 10.5 号字单行 · 外围留白 8
 
-    ⚠️ 两条玻璃纪律（血泪，见 ERROR.md E9 / E11）：
-      · 根 Grid 必须是 Transparent，**任何一层高不透明度深色底都会把系统材质盖住**；
-      · 窗口材质不生效时才由代码补一层纯色兜底，保证文字可读。
-
-    ⚠️ 拖动用 WinUI 原生的 `Window.SetTitleBar(AppTitleBar)` + 系统标题栏按钮：
-      这样**保留系统的最小化/最大化/关闭、窗口缩放、贴边分屏与圆角阴影**。
-      （QML 时代为了透明被迫去掉 WS_CAPTION 而丢掉缩放，WinUI 3 没有这个取舍。）
+    ⚠️ 两条玻璃纪律（见 memory/01-玻璃与窗口材质.md）：
+      · 根 Grid 必须 Transparent，**任何高不透明度深色底都会把系统材质盖住**；
+      · 材质不生效时才由代码补纯色兜底。
+    ⚠️ 拖动用 WinUI 原生的 `Window.SetTitleBar(AppTitleBar)` + 系统标题栏按钮（保住缩放/贴边/圆角）。
 -->
 <Window
     x:Class="ToolboxPanel.MainWindow"
@@ -20,18 +19,27 @@
 
     <Grid x:Name="RootGrid" Background="Transparent">
         <Grid.Resources>
-            <!-- 标签栏的一项：图标 + 名称 + 数量 -->
+            <!-- 标签栏项：图标 + 名称 + 数量，尽量矮 -->
             <DataTemplate x:Key="TabStripItemTemplate" x:DataType="vm:TabItemViewModel">
-                <StackPanel Orientation="Horizontal" Spacing="8" Padding="2,0" VerticalAlignment="Center">
-                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="14" />
-                    <TextBlock Text="{x:Bind Name}" FontSize="13" VerticalAlignment="Center" />
-                    <TextBlock Text="{x:Bind Summary}" FontSize="10" Opacity="0.55" VerticalAlignment="Center" />
+                <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
+                    <TextBlock Text="{x:Bind Name}" FontSize="12" VerticalAlignment="Center" />
+                    <TextBlock Text="{x:Bind Summary}" FontSize="10" Opacity="0.5" VerticalAlignment="Center" />
                 </StackPanel>
             </DataTemplate>
+
+            <!-- 紧凑的标签项容器（去掉 WinUI 默认的大内边距） -->
+            <Style x:Key="CompactTabItemStyle" TargetType="ListViewItem">
+                <Setter Property="MinHeight" Value="0" />
+                <Setter Property="MinWidth" Value="0" />
+                <Setter Property="Padding" Value="9,3" />
+                <Setter Property="Margin" Value="0,0,3,0" />
+                <Setter Property="CornerRadius" Value="5" />
+            </Style>
         </Grid.Resources>
 
         <Grid.RowDefinitions>
-            <RowDefinition Height="48" />
+            <RowDefinition Height="34" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -39,24 +47,25 @@
 
         <!-- ① 自绘标题栏（代码里设为拖动区；系统按钮仍在右上角） -->
         <Grid x:Name="AppTitleBar" Grid.Row="0" Background="Transparent">
-            <StackPanel Orientation="Horizontal" Spacing="10"
-                        Margin="16,0,0,0" VerticalAlignment="Center">
-                <FontIcon Glyph="&#xE71D;" FontSize="14" />
-                <TextBlock Text="ToolboxPanel" FontSize="13" FontWeight="SemiBold" />
-                <TextBlock x:Name="BackdropLabel" FontSize="11" Opacity="0.6" VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" Spacing="7"
+                        Margin="12,0,0,0" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE71D;" FontSize="12" />
+                <TextBlock Text="ToolboxPanel" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock x:Name="BackdropLabel" FontSize="10.5" Opacity="0.5" VerticalAlignment="Center" />
             </StackPanel>
         </Grid>
 
-        <!-- ② 标签栏（横向可滚动） -->
-        <Border Grid.Row="1" Margin="12,0,12,8" CornerRadius="8"
-                Background="#1AFFFFFF" BorderThickness="1" BorderBrush="#22FFFFFF">
+        <!-- ② 标签栏（矮、横向可滚动） -->
+        <Border Grid.Row="1" Margin="8,0,8,6" CornerRadius="6"
+                Background="#14FFFFFF" BorderThickness="1" BorderBrush="#1AFFFFFF">
             <ScrollViewer HorizontalScrollBarVisibility="Auto"
                           HorizontalScrollMode="Auto"
                           VerticalScrollBarVisibility="Disabled"
                           VerticalScrollMode="Disabled"
-                          Padding="4,2">
+                          Padding="3,2">
                 <ListView x:Name="TabStrip"
                           ItemTemplate="{StaticResource TabStripItemTemplate}"
+                          ItemContainerStyle="{StaticResource CompactTabItemStyle}"
                           SelectionMode="Single"
                           SelectionChanged="OnTabSelectionChanged"
                           ScrollViewer.VerticalScrollMode="Disabled"
@@ -65,7 +74,7 @@
                           BorderThickness="0">
                     <ListView.ItemsPanel>
                         <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                            <StackPanel Orientation="Horizontal" Spacing="3" />
                         </ItemsPanelTemplate>
                     </ListView.ItemsPanel>
                 </ListView>
@@ -77,10 +86,12 @@
                         HorizontalContentAlignment="Stretch"
                         VerticalContentAlignment="Stretch" />
 
-        <!-- ④ 状态栏 -->
-        <Border Grid.Row="3" Margin="12,8,12,12" Padding="10,8"
-                CornerRadius="6" Background="#33000000">
-            <TextBlock x:Name="StatusText" FontSize="11" TextWrapping="Wrap" Text="正在载入…" />
+        <!-- ④ 状态栏（单行、矮） -->
+        <Border Grid.Row="3" Margin="8,5,8,8" Padding="8,4"
+                CornerRadius="5" Background="#26000000">
+            <TextBlock x:Name="StatusText" FontSize="10.5"
+                       TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
+                       Text="正在载入…" />
         </Border>
     </Grid>
 </Window>

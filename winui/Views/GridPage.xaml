@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    GridPage.xaml —— W3 网格页（一个 grid 型标签页的内容）
+    GridPage.xaml —— 网格页（紧凑版：76×84 图块、32px 图标、11 号字两行名）
 
     ⚠️ WinUI 的 GridView **自己管 delegate 的 x/y**：模板里不要绑 y、不要给 y 加动画
-       （QML 时代踩过同一类坑，见 ERROR.md E6）。要做入场/悬停动效就放在内层容器或 transform 上。
+       （同类坑见 memory/05-布局与动效通用坑.md）。
 -->
 <UserControl
     x:Class="ToolboxPanel.Views.GridPage"
@@ -12,28 +12,46 @@
     xmlns:vm="using:ToolboxPanel.ViewModels">
 
     <UserControl.Resources>
-        <DataTemplate x:Key="IconTileTemplate" x:DataType="vm:IconTileViewModel">
-            <Grid Width="104" Height="112" Padding="4">
-                <StackPanel VerticalAlignment="Center" Spacing="6">
+        <!--
+            图块容器：**必须显式给 Width/Height**。
+            WinUI 的 GridView 默认用 ItemsWrapGrid，而 ItemsWrapGrid 会把每个 item 撑成
+            "可用宽度 / 列数"，于是图标被横向拉开、一屏只放得下少数几列（就是"不紧凑"的根因）。
+            给容器定死尺寸后，列数按 容器宽度 自动排（880 宽 ≈ 10 列）。
+        -->
+        <Style x:Key="CompactTileStyle" TargetType="GridViewItem">
+            <Setter Property="Width" Value="68" />
+            <Setter Property="Height" Value="72" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Padding" Value="1" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="VerticalContentAlignment" Value="Top" />
+        </Style>
 
-                    <!-- 真图标（从 data/icons/*.png 缓存来的） -->
+        <DataTemplate x:Key="IconTileTemplate" x:DataType="vm:IconTileViewModel">
+            <Grid HorizontalAlignment="Stretch" VerticalAlignment="Top">
+                <StackPanel VerticalAlignment="Top" Spacing="2">
+
+                    <!-- 真图标（data/icons/*.png 缓存） -->
                     <Image Source="{x:Bind IconSource}"
-                           Width="48" Height="48"
+                           Width="30" Height="30"
                            VerticalAlignment="Center"
                            Visibility="{x:Bind HasIcon}" />
 
                     <!-- 拿不到图标时的字形兜底 -->
-                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="38"
+                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="24"
                               HorizontalAlignment="Center"
                               Visibility="{x:Bind HasNoIcon}" />
 
                     <TextBlock Text="{x:Bind DisplayName}"
-                               FontSize="12"
+                               FontSize="10.5"
+                               LineHeight="12.5"
                                MaxLines="2"
                                TextTrimming="CharacterEllipsis"
                                TextWrapping="Wrap"
                                TextAlignment="Center"
-                               HorizontalAlignment="Center" />
+                               HorizontalAlignment="Stretch" />
                 </StackPanel>
             </Grid>
         </DataTemplate>
@@ -42,19 +60,20 @@
     <Grid>
         <GridView x:Name="TileGrid"
                   ItemTemplate="{StaticResource IconTileTemplate}"
+                  ItemContainerStyle="{StaticResource CompactTileStyle}"
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnTileClick"
-                  Padding="16,12"
+                  Padding="4,3"
                   Background="Transparent" />
 
         <!-- 空页提示（没有图标时显示） -->
         <StackPanel x:Name="EmptyHint"
                     VerticalAlignment="Center" HorizontalAlignment="Center"
-                    Spacing="8" Visibility="Collapsed">
-            <FontIcon Glyph="&#xE8A5;" FontSize="40" Opacity="0.5" />
-            <TextBlock Text="这一页还没有图标" Opacity="0.7" FontSize="13" />
-            <TextBlock Text="（新建 / 拖入图标在 W5 实现）" Opacity="0.45" FontSize="11" />
+                    Spacing="6" Visibility="Collapsed">
+            <FontIcon Glyph="&#xE8A5;" FontSize="32" Opacity="0.45" />
+            <TextBlock Text="这一页还没有图标" Opacity="0.65" FontSize="12" />
+            <TextBlock Text="（新建 / 拖入图标在 W5 实现）" Opacity="0.4" FontSize="10.5" />
         </StackPanel>
     </Grid>
 </UserControl>

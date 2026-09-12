@@ -44,18 +44,23 @@ public sealed partial class MainWindow : Window
     /// <summary>启动时选中的标签页下标（--tab=N；验证用，默认 0）。</summary>
     private int _startupTabIndex;
 
+    /// <summary>纯 UI 演示模式（--demo）：假数据、不读写任何数据文件、点击不启动程序。</summary>
+    private bool _isDemo;
+
     public MainWindow()
     {
         InitializeComponent();
 
         Title = "ToolboxPanel";
+
+        // 先按默认尺寸开，启动参数里给了 --size 再覆盖（演示模式默认更小更紧凑）
         AppWindow.Resize(new SizeInt32(1200, 800));
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         CustomizeCaptionButtons();
 
-        ApplyStartupArguments();   // --backdrop= / --pos=
+        ApplyStartupArguments();   // --demo / --backdrop= / --pos= / --size= / --tab=
         LoadData();
     }
 
@@ -63,19 +68,34 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 启动参数（验证/开发用）：
+    ///   --demo                                             纯 UI 演示（假数据、不碰文件、点击不启动）
     ///   --backdrop=none|mica|micaAlt|acrylic|acrylicThin   指定初始材质
     ///   --pos=x,y                                          指定窗口位置
+    ///   --size=WxH                                         指定窗口尺寸
     ///   --tab=N                                            指定初始选中的标签页下标
     /// </summary>
     private void ApplyStartupArguments()
     {
         string backdrop = "mica";
+        SizeInt32? size = null;
 
         foreach (var argument in Environment.GetCommandLineArgs())
         {
-            if (argument.StartsWith("--backdrop=", StringComparison.OrdinalIgnoreCase))
+            if (argument.Equals("--demo", StringComparison.OrdinalIgnoreCase))
+            {
+                _isDemo = true;
+            }
+            else if (argument.StartsWith("--backdrop=", StringComparison.OrdinalIgnoreCase))
             {
                 backdrop = argument["--backdrop=".Length..];
+            }
+            else if (argument.StartsWith("--size=", StringComparison.OrdinalIgnoreCase))
+            {
+                var parts = argument["--size=".Length..].Split('x', 'X');
+                if (parts.Length == 2 && int.TryParse(parts[0], out int w) && int.TryParse(parts[1], out int h))
+                {
+                    size = new SizeInt32(Math.Max(360, w), Math.Max(320, h));
+                }
             }
             else if (argument.StartsWith("--tab=", StringComparison.OrdinalIgnoreCase)
                      && int.TryParse(argument["--tab=".Length..], out int tabIndex))
@@ -97,6 +117,17 @@ public sealed partial class MainWindow : Window
                     }
                 }
             }
+        }
+
+        // 尺寸：给了 --size 用它；演示模式给一个更紧凑、贴合内容的默认值；否则 1200x800
+        var targetSize = size ?? (_isDemo ? new SizeInt32(880, 560) : new SizeInt32(1200, 800));
+        try
+        {
+            AppWindow.Resize(targetSize);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("ApplyStartupArguments/size", ex);
         }
 
         ApplyBackdrop(backdrop);
@@ -200,8 +231,13 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            _viewModel = new MainViewModel();
+            _viewModel = _isDemo ? MainViewModel.CreateDemo() : new MainViewModel();
             _viewModel.Load();
+
+            if (_isDemo)
+            {
+                Title = "ToolboxPanel · 纯 UI 演示";
+            }
 
             TabStrip.ItemsSource = _viewModel.Tabs;
 
@@ -264,6 +300,7 @@ public sealed partial class MainWindow : Window
 
         ContentHost.Content = page;
         _transientStatus = null;
+        _log.AppendLine($"显示标签页 = [{tab.Kind}] {tab.Name}（selectedIndex={TabStrip.SelectedIndex}，页面={page.GetType().Name}）");
         UpdateStatusBar();
     }
 
@@ -307,19 +344,19 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        // 状态栏单行：材质已经显示在标题栏上，这里不再重复（省出横向空间）
         var parts = new List<string>();
         if (_viewModel is not null)
         {
             parts.Add(_viewModel.StatusText);
         }
 
-        parts.Add(_backdropLine);
         if (!string.IsNullOrEmpty(_transientStatus))
         {
             parts.Add(_transientStatus);
         }
 
-        StatusText.Text = string.Join(Environment.NewLine, parts);
+        StatusText.Text = string.Join("   ·   ", parts);
     }
 
     private void FlushLog()
