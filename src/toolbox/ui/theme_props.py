@@ -1,14 +1,14 @@
-"""主题令牌的 QML 视图类（**静态生成**，勿手改）。
+"""主题令牌的 QML 视图类（**静态生成，勿手改**）。
 
-为什么是静态类而不是 `type()` 动态构造：
-PyQt6 要求 property 的 `notify` 信号**定义在声明该 property 的类里**，
-且必须是真实 pyqtSignal 对象；用 `type()` 在类体之后建类时，
-闭包里拿不到该信号，会报
-`the notify signal 'changed()' was not defined in this class`。
-静态类把信号与 property 写在同一个类体中，PyQt6 元类能正确识别。
+生成方式：`theme_props.py` 由 DEVELOPMENT.md §0.4 记录的脚本生成 ——
+从 `theme.py` 的 `DARK`/`LIGHT`（颜色令牌）与 `PARAM_SPECS`（数字参数）取键集合。
 
-令牌键集合来自 `theme.py` 的 `DARK/LIGHT` 与 `PARAM_SPECS`；
-新增令牌时需重新生成本文件（生成方式见 DEVELOPMENT.md §0.4）。
+为什么必须是静态类而不是 `type()` 动态构造：
+PyQt6 要求 property 的 `notify` 信号**定义在声明该 property 的那个类里**，
+且必须是真实 pyqtSignal 对象；用 `type()` 在类体执行之后建类时拿不到该信号，
+会报 `the notify signal 'changed()' was not defined in this class`。
+
+⚠️ **新增令牌后必须重跑生成脚本**，否则 QML 侧读到的是 undefined。
 """
 from PyQt6.QtCore import pyqtProperty, pyqtSignal
 
@@ -16,10 +16,7 @@ from .theme_base import TokenViewBase
 
 
 class ColorView(TokenViewBase):
-    """颜色令牌视图。
-
-    QML 用法：`theme.c.accent` / `theme.c.text` / `theme.c.border` …
-    """
+    """颜色令牌视图。QML 用法：`theme.c.accent` / `theme.c.text` …"""
 
     changed = pyqtSignal()
 
@@ -109,7 +106,7 @@ class ColorView(TokenViewBase):
 
 
 class NumberView(TokenViewBase):
-    """数字参数视图（本文件由脚本生成，勿手改）。"""
+    """数字参数视图。QML 用法：`theme.n.radius` / `theme.n.window_opacity` …"""
 
     changed = pyqtSignal()
 
@@ -136,6 +133,10 @@ class NumberView(TokenViewBase):
     @pyqtProperty(float, notify=changed)
     def radius(self):
         return float(self._get("radius") or 0.0)
+
+    @pyqtProperty(float, notify=changed)
+    def sheet_opacity(self):
+        return float(self._get("sheet_opacity") or 0.0)
 
     @pyqtProperty(float, notify=changed)
     def window_opacity(self):

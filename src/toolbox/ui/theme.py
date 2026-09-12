@@ -24,18 +24,23 @@ from .theme_base import TokenViewBase
 # ── 可调参数（数字类，带范围与默认）────────────────────────────────────
 # key: (默认值, 最小值, 最大值, 步长, 中文名, 英文名)
 #
-# ⚠️ window_opacity 默认值取值讲究（实测调过）：
-# 1.0 = 完全不透明 → DWM 毛玻璃**看不见**；0.82 时桌面只透出约 12%，
-# 暗色桌面下肉眼几乎察觉不到。0.62 能明显看出「透出桌面 + 被模糊」，
-# 同时深色底上的文字仍可读。想更实/更透都在设置面板里拖。
+# ⚠️ window_opacity 默认值取值讲究（**实测定标，别随意调高**）：
+# 它控制「玻璃色调对 DWM 模糊层」的遮盖程度：
+#   1.00 -> 完全不透明，毛玻璃彻底看不见
+#   0.82 -> 桌面只透出约 12%，暗色桌面下肉眼几乎察觉不到（曾经的错误默认值）
+#   0.34 -> 毛玻璃非常明显（实测该值下 ΔRGB=581）
+#   >0.6 -> 开始明显盖住模糊，观感退回「实心板」
+# 故默认取 0.42（深色）/ 0.58（浅色），上限仍保留 1.0 供用户自选。
 PARAM_SPECS: dict[str, tuple] = {
-    "window_opacity":   (0.62, 0.20, 1.00, 0.02, "窗口不透明度", "Window opacity"),
+    "window_opacity":   (0.42, 0.20, 1.00, 0.02, "窗口不透明度", "Window opacity"),
     "card_opacity":     (0.16, 0.00, 0.60, 0.02, "卡片不透明度", "Card opacity"),
     "card_hover_opacity": (0.26, 0.00, 0.80, 0.02, "卡片悬停", "Card hover"),
     "blur_radius":      (26.0, 0.0, 64.0, 1.0, "模糊强度", "Blur radius"),
     "radius":           (16.0, 0.0, 32.0, 1.0, "圆角", "Corner radius"),
     "anim_ms":          (260.0, 0.0, 800.0, 10.0, "动效时长(ms)", "Animation (ms)"),
     "hover_ms":         (160.0, 0.0, 600.0, 10.0, "悬停时长(ms)", "Hover (ms)"),
+    # 抽屉（设置面板）玻璃色调：旧版写死 0.97 近实心，是"整体看着不透明"的主因之一
+    "sheet_opacity":    (0.62, 0.20, 1.00, 0.02, "抽屉不透明度", "Panel opacity"),
 }
 
 # ── 预置主题：颜色令牌 ────────────────────────────────────────────────
@@ -93,14 +98,14 @@ PRESETS: dict[str, dict] = {
     "dark": {
         "zh": "深色", "en": "Dark",
         "colors": DARK,
-        "params": {"window_opacity": 0.62, "card_opacity": 0.16,
+        "params": {"sheet_opacity": 0.62, "window_opacity": 0.42, "card_opacity": 0.16,
                    "card_hover_opacity": 0.26, "blur_radius": 26.0,
                    "radius": 16.0, "anim_ms": 260.0, "hover_ms": 160.0},
     },
     "light": {
         "zh": "浅色", "en": "Light",
         "colors": LIGHT,
-        "params": {"window_opacity": 0.70, "card_opacity": 0.10,
+        "params": {"sheet_opacity": 0.62, "window_opacity": 0.58, "card_opacity": 0.10,
                    "card_hover_opacity": 0.18, "blur_radius": 26.0,
                    "radius": 16.0, "anim_ms": 260.0, "hover_ms": 160.0},
     },
@@ -110,7 +115,7 @@ PRESETS: dict[str, dict] = {
                    "window": "#0b1020", "base": "#111830", "alt_base": "#16203c",
                    "accent": "#5b8def", "accent_hover": "#7aa5f5",
                    "glow_1": "#3a5b8def", "glow_2": "#3a3f6fd8"},
-        "params": {"window_opacity": 0.60, "card_opacity": 0.18,
+        "params": {"sheet_opacity": 0.62, "window_opacity": 0.44, "card_opacity": 0.18,
                    "card_hover_opacity": 0.28, "blur_radius": 32.0,
                    "radius": 18.0, "anim_ms": 300.0, "hover_ms": 180.0},
     },
@@ -121,7 +126,7 @@ PRESETS: dict[str, dict] = {
                    "accent": "#a06bf0", "accent_hover": "#b78bf7",
                    "accent_pressed": "#8450d6",
                    "glow_1": "#3aa06bf0", "glow_2": "#3ae45c8a"},
-        "params": {"window_opacity": 0.62, "card_opacity": 0.18,
+        "params": {"sheet_opacity": 0.62, "window_opacity": 0.42, "card_opacity": 0.18,
                    "card_hover_opacity": 0.28, "blur_radius": 30.0,
                    "radius": 20.0, "anim_ms": 280.0, "hover_ms": 170.0},
     },
@@ -132,7 +137,7 @@ PRESETS: dict[str, dict] = {
                    "accent": "#4fb07a", "accent_hover": "#6bc794",
                    "accent_pressed": "#3d8f61",
                    "glow_1": "#3a4fb07a", "glow_2": "#3ac9a24b"},
-        "params": {"window_opacity": 0.64, "card_opacity": 0.16,
+        "params": {"sheet_opacity": 0.62, "window_opacity": 0.46, "card_opacity": 0.16,
                    "card_hover_opacity": 0.26, "blur_radius": 26.0,
                    "radius": 16.0, "anim_ms": 260.0, "hover_ms": 160.0},
     },

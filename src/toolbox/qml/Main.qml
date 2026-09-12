@@ -33,12 +33,21 @@ Window {
     readonly property real shellRadius: maxed ? 0 : theme.n.radius
     readonly property int animMs: Math.round(theme.n.anim_ms)
 
-    // 毛玻璃未生效时（老系统 / 系统关闭了透明效果）提高底色不透明度兜底
+    // 毛玻璃未生效时（老系统 / 系统关闭了透明效果 / 虚拟显示适配器禁用 acrylic）
+    // 才提高不透明度兜底 —— 但上限只到 0.88，留一点通透感；
+    // 注意：**生效时不要额外加不透明度**，否则会把模糊盖住（E9）。
     readonly property real shellOpacity:
         win.backdropActive ? theme.n.window_opacity
-                           : Math.min(1.0, theme.n.window_opacity + 0.12)
+                           : Math.min(0.88, theme.n.window_opacity + 0.30)
 
-    // ── 外壳：圆角 + 半透明玻璃 ─────────────────────────────────────────
+    // ── 外壳：圆角 + **淡色调**（关键：不能盖深色渐变）──────────────────
+    // ⚠️ 实测教训（ERROR.md E9）：这里原先铺的是深色渐变
+    //   #6E1A1D2B → #C4101219（60%~88% 不透明），结果把 DWM acrylic
+    //   **整个糊住**，看起来就是一块实心深色板 —— 用户反馈"根本没有透明效果"。
+    //   实测对照：同一窗口左半用深色渐变 ΔRGB=0（完全不透），
+    //             右半用 alpha 0.34 的淡色调 ΔRGB=581（明显透出桌面/模糊）。
+    //   结论：**玻璃感靠"极淡色调 + DWM 模糊"，不靠深色底**。
+    //   要加深就把设置里的「窗口不透明度」调高，但超过约 0.6 就会盖住模糊。
     Rectangle {
         id: shell
         anchors.fill: parent

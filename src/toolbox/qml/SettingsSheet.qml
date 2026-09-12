@@ -39,10 +39,19 @@ Item {
         width: 380
         height: parent.height
         anchors.right: parent.right
-        x: sheet.opened ? 0 : width
+        // ⚠️ 收起时 x 必须是「自身宽度」的**正偏移**，才能整块移到窗口右侧之外；
+        // 原先写的是 `x: opened ? 0 : width` —— 这里 width 就是自身宽度，
+        // 但配合 anchors.right 语义上很含糊，实测会停在窗口内（只靠 clip 遮住）。
+        // 现在用显式属性，语义明确。
+        property real hiddenOffset: width
+        x: sheet.opened ? 0 : hiddenOffset
         radius: 0
 
-        color: Qt.rgba(theme.c.base.r, theme.c.base.g, theme.c.base.b, 0.97)
+        // 抽屉也用玻璃色调（不再是 0.97 的近实心）——
+        // 这是用户反馈"根本不透明"的主因之一：抽屉一开就占掉小半个窗口，
+        // 若它不透明，整体观感就是一块实心板。见 ERROR.md E9。
+        color: Qt.rgba(theme.c.base.r, theme.c.base.g, theme.c.base.b,
+                       theme.n.sheet_opacity)
         border.width: 1
         border.color: theme.c.border
 
