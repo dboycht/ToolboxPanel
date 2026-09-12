@@ -18,6 +18,12 @@ Window {
     minimumWidth: 640
     minimumHeight: 460
     visible: true
+    // ⚠️ 半透明三件套，缺一不可（踩过，见 ERROR.md E8）：
+    //   1) color: 透明
+    //   2) Qt.FramelessWindowHint（Qt 因此**不会**把窗口标记为不透明）
+    //   3) Python 侧去掉 WS_CAPTION|WS_THICKFRAME（见 window.py _strip_frame）
+    // 只要窗口被当成不透明，DWM acrylic 与圆角镂空**都不会生效**，
+    // 表现就是"毛玻璃没透明感、圆角外也不透桌面"。
     color: "transparent"
     flags: Qt.Window | Qt.FramelessWindowHint
     title: app.appTitle + " · v" + appVersion

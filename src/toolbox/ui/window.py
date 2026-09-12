@@ -152,11 +152,18 @@ class WindowController(QObject):
             self.backdropChanged.emit()
             return False
 
-        # 深色非客户区（与深色主题一致）
-        _dwm_set(self._hwnd, _DWMWA_USE_IMMERSIVE_DARK_MODE, 1)
-        # 不让 DWM 画边框（无边框观感），但保留 WS_CAPTION 以保住拖动能力
+        # ⚠️ 顺序很重要（踩过）：
+        # 1) **先**去掉 WS_CAPTION / WS_THICKFRAME。
+        #    WS_CAPTION 会让窗口被视为不透明，DWM backdrop 与逐像素半透明**都不会生效**
+        #    （症状：毛玻璃没有透明感、圆角外也不透桌面）。
+        #    去掉后拖动由本类的 startDrag()（SC_MOVE）承担，**不依赖标题栏**，
+        #    所以"为了能拖动而保留 WS_CAPTION"是错的选择。
+        self._strip_frame()
+        # 2) DWM 不画非客户区边框
         _dwm_set(self._hwnd, _DWMWA_NCRENDERING_POLICY, _DWMNCRP_DISABLED)
-
+        # 3) 深色标题栏/边框（与深色主题一致）
+        _dwm_set(self._hwnd, _DWMWA_USE_IMMERSIVE_DARK_MODE, 1)
+        # 4) 最后挂系统 backdrop
         want = _DWMSBT_TRANSIENTWINDOW if mode == "acrylic" else _DWMSBT_MAINWINDOW
         ok = _dwm_set(self._hwnd, _DWMWA_SYSTEMBACKDROP_TYPE, want)
         if not ok:
@@ -165,6 +172,62 @@ class WindowController(QObject):
         self._backdrop_active = bool(ok)
         self.backdropChanged.emit()
         return self._backdrop_active
+
+    def _strip_frame(self):
+        """去掉标题栏与非客户边框，让窗口具备逐像素半透明能力。
+
+        保留 WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME?
+        —— 不保留 THICKFRAME：它同样会挡住半透明。
+        缩放（resize）因此不可用，改用 QML 自绘边缘（后续 P2 再加）。
+        """
+        if not self._hwnd:
+            return
+        try:
+            user32 = ctypes.WinDLL("user32")
+            user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+            user32.SetWindowLongPtrW.argtypes = [
+                wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+            user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+
+            GWL_STYLE = -16
+            WS_CAPTION = 0x00C00000
+            WS_THICKFRAME = 0x00040000
+            WS_POPUP = 0x80000000
+            WS_SYSMENU = 0x00080000
+            WS_MINIMIZEBOX = 0x00020000
+            WS_MAXIMIZEBOX = 0x00010000
+            SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER = 0x0001, 0x0002, 0x0004
+            SWP_FRAMECHANGED, SWP_NOACTIVATE = 0x0020, 0x0010
+
+            style = user32.GetWindowLongPtrW(wintypes.HWND(self._hwnd), GWL_STYLE)
+            style = int(style)
+            style &= ~(WS_CAPTION | WS_THICKFRAME)
+            style |= (WS_POPUP | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX)
+            user32.SetWindowLongPtrW(wintypes.HWND(self._hwnd), GWL_STYLE, style)
+            user32.SetWindowPos(
+                wintypes.HWND(self._hwnd), None, 0, 0, 0, 0,
+                SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)
+        except Exception:
+            pass
+
+    # ── 对外查询（QML 用来决定是否回退不透明底色）──────────────────
+
+    @pyqtSlot(result=int)
+    def debugStyles(self) -> int:
+        """返回当前 GWL_STYLE，便于验证样式是否已生效（0 表示未 Windows/未挂载）。"""
+        if not self._hwnd:
+            return 0
+        try:
+            user32 = ctypes.WinDLL("user32")
+            user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+            user32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+            return int(user32.GetWindowLongPtrW(wintypes.HWND(self._hwnd), -16))
+        except Exception:
+            return 0
 
     # ── 窗口操作 ───────────────────────────────────────────────────
 
