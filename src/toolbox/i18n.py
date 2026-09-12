@@ -175,6 +175,21 @@ TEXTS: dict[str, dict[str, str]] = {
     "validate.url_required":       {"zh": "网址不能为空",                   "en": "URL cannot be empty"},
     "validate.command_required":   {"zh": "命令不能为空",                   "en": "Command cannot be empty"},
 
+    # ── Settings / theme (v2.0.1 新增：主题高度自定义) ──
+    "settings.title":              {"zh": "设置",                           "en": "Settings"},
+    "settings.preset":             {"zh": "预置主题",                       "en": "Preset theme"},
+    "settings.tuning":             {"zh": "外观微调",                       "en": "Appearance tuning"},
+    "settings.language":           {"zh": "语言",                           "en": "Language"},
+    "settings.reset":              {"zh": "恢复默认外观",                   "en": "Reset appearance"},
+    "settings.tuning_hint":        {"zh": "拖动滑杆即时生效，偏好自动保存",
+                                                                           "en": "Sliders apply instantly; preferences are saved"},
+    "theme.midnight":              {"zh": "午夜蓝",                         "en": "Midnight"},
+    "theme.grape":                 {"zh": "葡萄紫",                         "en": "Grape"},
+    "theme.matcha":                {"zh": "抹茶绿",                         "en": "Matcha"},
+    "search.no_result":            {"zh": "没有匹配的图标",                 "en": "No matching icons"},
+    "grid.empty_hint":             {"zh": "拖入文件 / 文件夹 / 快捷方式即可创建图标\n或右键空白区域新建",
+                                                                           "en": "Drag files / folders / shortcuts here to create icons\nor right-click empty area"},
+
     # ── URL dialog ──
     "url.dialog.title":            {"zh": "新建网址图标",                   "en": "New URL Icon"},
     "url.label.name":              {"zh": "名称:",                          "en": "Name:"},
