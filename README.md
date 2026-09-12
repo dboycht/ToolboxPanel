@@ -209,7 +209,7 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 > 说明：本条为重构**起步版本**，功能正在逐步对齐 v1.11.6。
 > 重构期间的选型依据（含为何最终选 QML）、分层边界、复用/重写清单与实施阶段
-> 见开发副本 `DEVELOPMENT.md` 第 0 节；已踩的坑见 `ERROR.md` E1–E5。
+> 见开发副本 `DEVELOPMENT.md` 第 0 节；已踩的坑见 `ERROR.md` E1–E6。
 
 ### v1.11.6 (2026-08-25)
 
