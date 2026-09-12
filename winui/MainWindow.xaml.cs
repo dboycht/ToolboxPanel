@@ -3,7 +3,8 @@
 // 职责（只做验证，不做正式功能）：
 //   1) 窗口级材质：Mica / MicaAlt / DesktopAcrylic(Base/Thin) / 纯色回退，按钮实时切换；
 //   2) 自绘标题栏 + ExtendsContentIntoTitleBar，让系统材质能透到标题栏区域；
-//   3) 读取**现有** data/tabs.json（v1 旧格式）并列出标签页 —— 字段一个都不改；
+//   3) 读取**现有** data/tabs.json（v1 旧格式）并列出标签页 —— 走 W1 的 C# 数据层
+//      （ToolboxPanel.Core 的 DataStore），不再是样板自己手写的 JSON 解析；
 //   4) 自检结果同时写进窗口状态栏和 %TEMP%\toolboxpanel-w0-verify.txt，
 //      便于无法看图时也能确认「材质是否受支持 / 数据读到几条」。
 //
@@ -13,12 +14,14 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
-using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
+using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Storage;
 using Windows.Graphics;
 using Windows.UI;
 
@@ -32,6 +35,9 @@ public sealed partial class MainWindow : Window
 
     private readonly StringBuilder _log = new();
     private string _backdropLine = "窗口材质：未初始化";
+
+    /// <summary>样板用到的数据层（只读；不做任何写操作）。</summary>
+    private DataStore? _store;
 
     public MainWindow()
     {
@@ -191,72 +197,60 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // ────────────────────────────── 读旧数据 ──────────────────────────────
+    // ────────────────────────────── 读旧数据（走真正的数据层）──────────────────────────────
 
     /// <summary>
-    /// 读取 v1 版 data/tabs.json。为了「字段一字不改」，这里只做**只读**解析，
-    /// 不写回、不迁移。真实数据层在 W1 用 C# 重写（原子写 + 损坏容错 + 增删改查）。
+    /// 用 W1 的 C# 数据层（<see cref="DataStore"/>，ToolboxPanel.Core）读取现有 data/tabs.json。
+    ///
+    /// ⚠️ 样板**只读不写**：不调用任何增删改，避免验证阶段动到用户的真实数据。
+    /// （<see cref="DataStore.Load"/> 本身在「文件不存在 / 损坏」时会落一份兜底数据，这是原版行为。）
     /// </summary>
     private void LoadTabsFromLegacyJson()
     {
-        var path = FindLegacyTabsJson();
-        if (path is null)
-        {
-            _log.AppendLine("tabs.json = 未找到（从 exe 目录向上 10 层内查找 data/tabs.json）");
-            UpdateStatus();
-            return;
-        }
-
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(path));
-            var root = doc.RootElement;
+            _store = DataStore.CreateDefault();
+            var tabs = _store.Load();
 
-            int version = root.TryGetProperty("version", out var v) && v.TryGetInt32(out var vi) ? vi : 0;
-            var rows = new List<TabRow>();
+            var rows = new List<TabRow>(tabs.Count);
             int gridCount = 0, listCount = 0;
 
-            if (root.TryGetProperty("tabs", out var tabs) && tabs.ValueKind == JsonValueKind.Array)
+            foreach (var tab in tabs)
             {
-                foreach (var t in tabs.EnumerateArray())
+                if (tab.IsListTab)
                 {
-                    string name = GetString(t, "name");
-                    string tabType = GetString(t, "tab_type");
-                    if (string.IsNullOrEmpty(tabType))
-                    {
-                        tabType = "grid";   // 旧 JSON 无 tab_type → 按 grid（向后兼容）
-                    }
-
-                    int iconCount = ArrayLength(t, "icons");
-                    int itemCount = ArrayLength(t, "list_items");
-                    if (tabType == "list") { listCount++; } else { gridCount++; }
-
-                    rows.Add(new TabRow
-                    {
-                        Name = string.IsNullOrEmpty(name) ? "(未命名标签页)" : name,
-                        Kind = tabType,
-                        Accent = tabType == "list"
-                            ? new SolidColorBrush(Color.FromArgb(255, 63, 167, 214))
-                            : new SolidColorBrush(Color.FromArgb(255, 118, 200, 147)),
-                        Summary = $"id={ShortId(GetString(t, "id"))} · order={GetInt(t, "order")} · "
-                                  + $"图标 {iconCount} 个 · 列表项 {itemCount} 个"
-                                  + DescribeListItems(t),
-                    });
+                    listCount++;
                 }
+                else
+                {
+                    gridCount++;
+                }
+
+                rows.Add(new TabRow
+                {
+                    Name = string.IsNullOrEmpty(tab.Name) ? "(未命名标签页)" : tab.Name,
+                    Kind = tab.TabType,
+                    Accent = tab.IsListTab
+                        ? new SolidColorBrush(Color.FromArgb(255, 63, 167, 214))
+                        : new SolidColorBrush(Color.FromArgb(255, 118, 200, 147)),
+                    Summary = $"id={ShortId(tab.Id)} · order={tab.Order} · "
+                              + $"图标 {tab.Icons.Count} 个 · 列表项 {tab.ListItems.Count} 个"
+                              + DescribeListItems(tab),
+                });
             }
 
             TabList.ItemsSource = rows;
 
-            _log.AppendLine($"tabs.json 路径 = {path}");
-            _log.AppendLine($"tabs.json version = {version}；读到 {rows.Count} 个标签页（grid {gridCount} / list {listCount}）");
-            foreach (var r in rows)
+            _log.AppendLine($"数据目录 = {_store.DataDirectory}");
+            _log.AppendLine($"读到 {rows.Count} 个标签页（grid {gridCount} / list {listCount}）");
+            foreach (var row in rows)
             {
-                _log.AppendLine($"  - [{r.Kind}] {r.Name} :: {r.Summary}");
+                _log.AppendLine($"  - [{row.Kind}] {row.Name} :: {row.Summary}");
             }
         }
         catch (Exception ex)
         {
-            _log.AppendLine("tabs.json 解析失败：" + ex.Message);
+            _log.AppendLine("数据层读取失败：" + ex.Message);
             App.WriteCrash("LoadTabsFromLegacyJson", ex);
         }
 
@@ -264,36 +258,10 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>把列表页条目也写出来 —— 这样「数据真的读到了」一眼可验。</summary>
-    private static string DescribeListItems(JsonElement tab)
-    {
-        if (!tab.TryGetProperty("list_items", out var items) || items.ValueKind != JsonValueKind.Array)
-        {
-            return string.Empty;
-        }
-
-        var parts = new List<string>();
-        foreach (var it in items.EnumerateArray())
-        {
-            parts.Add(GetString(it, "description"));
-        }
-
-        return parts.Count > 0 ? $" → [{string.Join(", ", parts)}]" : string.Empty;
-    }
-
-    private static string? FindLegacyTabsJson()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        for (int i = 0; i < 10 && dir is not null; i++, dir = dir.Parent)
-        {
-            var candidate = Path.Combine(dir.FullName, "data", "tabs.json");
-            if (File.Exists(candidate))
-            {
-                return candidate;
-            }
-        }
-
-        return null;
-    }
+    private static string DescribeListItems(TabModel tab)
+        => tab.ListItems.Count > 0
+            ? $" → [{string.Join(", ", tab.ListItems.Select(item => item.Description))}]"
+            : string.Empty;
 
     // ────────────────────────────── 小工具 ──────────────────────────────
 
@@ -338,26 +306,14 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static string GetString(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
-            ? v.GetString() ?? string.Empty
-            : string.Empty;
-
-    private static int GetInt(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.TryGetInt32(out var i) ? i : -1;
-
-    private static int ArrayLength(JsonElement e, string name) =>
-        e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Array
-            ? v.GetArrayLength()
-            : 0;
-
     private static string ShortId(string id) =>
         string.IsNullOrEmpty(id) ? "?" : (id.Length > 8 ? id[..8] : id);
 }
 
 /// <summary>
-/// 标签页行（仅样板用；字段名与 tabs.json 对齐，方便对照）。
-/// 正式模型在 W1：移植 models/tab_model.py 等，字段一个都不改。
+/// 标签页的**展示行**（视图模型，只服务于样板的 ListView 模板）。
+/// 真正的数据模型是 <see cref="TabModel"/> / <see cref="IconModel"/> / <see cref="ListItemModel"/>
+/// （ToolboxPanel.Core，字段与 tabs.json 一一对应）。
 /// </summary>
 public sealed class TabRow
 {

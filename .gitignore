@@ -32,13 +32,13 @@ MANIFEST
 *.manifest
 *.spec
 
-# ── .NET / WinUI 3（v2.0.1 主线，winui/）──────────────────────────────
+# ── .NET / WinUI 3（v2.0.1 主线：winui/ 应用 + core/ 数据层 + tests/ 单测）──
 # ⚠️ 上面的 `*.manifest` 是 Python/PyInstaller 规则，会把 WinUI 的
 #    winui/app.manifest 一起吃掉（csproj 里 ApplicationManifest 指向它，
 #    必须入库），所以这里显式加回。
 !winui/app.manifest
-winui/bin/
-winui/obj/
+bin/
+obj/
 *.user
 
 # Installer logs

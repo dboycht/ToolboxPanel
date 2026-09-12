@@ -41,4 +41,9 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- W1 的 C# 数据层（纯 .NET 类库，无 UI 依赖，可单测） -->
+    <ProjectReference Include="..\core\ToolboxPanel.Core.csproj" />
+  </ItemGroup>
+
 </Project>
