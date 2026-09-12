@@ -19,4 +19,13 @@
     <InternalsVisibleTo Include="ToolboxPanel.Core.Tests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      W2 的图标提取要把 HICON 编码成 PNG。
+      为什么用 System.Drawing.Common：它就是 GDI+ 的托管封装（Windows 专用），
+      `Bitmap.FromHicon` 能正确保留 32bpp 图标的 alpha 通道 —— 这是本项目唯一需要的图像编码能力。
+    -->
+    <PackageReference Include="System.Drawing.Common" Version="9.0.20" />
+  </ItemGroup>
+
 </Project>
