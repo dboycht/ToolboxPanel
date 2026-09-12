@@ -1,10 +1,12 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net9.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- 与 core 一致：需要 COM 互操作（测试里用 IShellLink 造真实 .lnk 再读回来） -->
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
   </PropertyGroup>
 
   <ItemGroup>

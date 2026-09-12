@@ -1,9 +1,22 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <!--
+      ⚠️ 必须是 **net9.0-windows**（不能是纯 net9.0）：
+        W2 的系统能力要用 COM 互操作（IShellLink / IPersistFile 解析 .lnk），
+        而 .NET 5+ 的内置 COM 互操作只在 Windows 专用 TFM 下默认可用。
+        本项目本来就只跑 Windows，这样也更准确。
+    -->
+    <TargetFramework>net9.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <RootNamespace>ToolboxPanel.Core</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 单测要复用 core 里的 COM 互操作声明（IShellLinkW）去「造」真实 .lnk -->
+    <InternalsVisibleTo Include="ToolboxPanel.Core.Tests" />
+  </ItemGroup>
 
 </Project>
