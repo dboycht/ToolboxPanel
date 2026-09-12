@@ -20,6 +20,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
@@ -52,6 +53,8 @@ public sealed partial class MainWindow : Window
     private bool _windowSizeReady;
 
     private DispatcherQueueTimer? _sizeSaveTimer;
+    private Storyboard? _settingsAnimation;
+    private bool _settingsPanelOpen;
     private string _backdropLine = "窗口材质：未初始化";
     private string? _transientStatus;
 
@@ -318,24 +321,106 @@ public sealed partial class MainWindow : Window
         Settings.Refresh();
     }
 
-    private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(SettingsOverlay.Visibility != Visibility.Visible);
+    private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(!_settingsPanelOpen);
 
     /// <summary>点面板外的空白处关闭（这一层在面板"下面"，点面板本身不会触发）。</summary>
     private void OnSettingsBackdropTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
         => ShowSettings(false);
 
+    /// <summary>
+    /// 打开/收起设置面板。**带滑入/滑出动画**（面板从右侧滑进来 + 遮罩淡入）；
+    /// 关掉"界面动效"时直接切换，不做动画。
+    /// </summary>
     private void ShowSettings(bool open)
     {
-        SettingsOverlay.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        _settingsPanelOpen = open;
+        StopSettingsAnimation();
+
+        bool animate = _settingsData?.AnimationsEnabled ?? true;
+        var duration = new Duration(TimeSpan.FromMilliseconds(
+            Math.Clamp((_settingsData?.AnimationDurationMs ?? 220) * 1.2, 120, 420)));
+
         SettingsButton.Background = open
             ? new SolidColorBrush(Color.FromArgb(30, 255, 255, 255))
             : new SolidColorBrush(Colors.Transparent);
 
         if (open)
         {
-            // 让面板拿到焦点：Esc 关闭的键盘加速器才生效
-            Settings.Focus(FocusState.Programmatic);
+            SettingsOverlay.Visibility = Visibility.Visible;
+
+            if (!animate)
+            {
+                SettingsPanelTransform.TranslateX = 0;
+                SettingsBackdrop.Opacity = 1;
+                Settings.Focus(FocusState.Programmatic);
+                _log.AppendLine("设置面板：打开（动效关闭 → 直接显示）");
+                FlushLog();
+                return;
+            }
+
+            SettingsBackdrop.Opacity = 0;
+            SettingsPanelTransform.TranslateX = SettingsPanelHost.Width;
+            _settingsAnimation = BuildSettingsAnimation(
+                toTranslateX: 0, toBackdropOpacity: 1, duration, onCompleted: () => Settings.Focus(FocusState.Programmatic));
+            _settingsAnimation.Begin();
+            _log.AppendLine($"设置面板：滑入动画开始（{duration.TimeSpan.TotalMilliseconds:F0}ms）");
+            FlushLog();
         }
+        else
+        {
+            if (!animate || SettingsOverlay.Visibility != Visibility.Visible)
+            {
+                SettingsOverlay.Visibility = Visibility.Collapsed;
+                SettingsPanelTransform.TranslateX = SettingsPanelHost.Width;
+                SettingsBackdrop.Opacity = 1;
+                return;
+            }
+
+            _settingsAnimation = BuildSettingsAnimation(
+                toTranslateX: SettingsPanelHost.Width, toBackdropOpacity: 0, duration,
+                onCompleted: () => SettingsOverlay.Visibility = Visibility.Collapsed);
+            _settingsAnimation.Begin();
+            _log.AppendLine($"设置面板：滑出动画开始（{duration.TimeSpan.TotalMilliseconds:F0}ms）");
+            FlushLog();
+        }
+    }
+
+    private Storyboard BuildSettingsAnimation(
+        double toTranslateX, double toBackdropOpacity, Duration duration, Action onCompleted)
+    {
+        var easing = EntranceAnimator.CreateEasing(_settingsData?.AnimationEasing ?? AnimationEasing.Standard);
+
+        var slide = new DoubleAnimation
+        {
+            From = SettingsPanelTransform.TranslateX,
+            To = toTranslateX,
+            Duration = duration,
+            EasingFunction = easing,
+        };
+        Storyboard.SetTarget(slide, SettingsPanelTransform);
+        Storyboard.SetTargetProperty(slide, "TranslateX");
+
+        var fade = new DoubleAnimation
+        {
+            From = SettingsBackdrop.Opacity,
+            To = toBackdropOpacity,
+            Duration = duration,
+            EasingFunction = easing,
+        };
+        Storyboard.SetTarget(fade, SettingsBackdrop);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(slide);
+        storyboard.Children.Add(fade);
+        storyboard.Completed += (_, _) => onCompleted();
+        return storyboard;
+    }
+
+    private void StopSettingsAnimation()
+    {
+        _settingsAnimation?.Stop();
+        _settingsAnimation = null;
     }
 
     // ────────────────────────────── 材质 ──────────────────────────────

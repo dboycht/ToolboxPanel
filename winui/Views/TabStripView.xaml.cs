@@ -29,11 +29,12 @@ public sealed partial class TabStripView : UserControl
     /// <summary>图标槽展开后的宽度（DIP）。</summary>
     private const double GlyphSlotWidth = 16;
 
-    /// <summary>指针范围复核的容差（DIP）：小于这个距离就认为"还没离开"。</summary>
-    private const double ExitTolerance = 8;
-
-    /// <summary>展开后这段时间内的"退出"一律忽略（毫秒）。</summary>
-    private const int ExitDebounceMs = 220;
+    /// <summary>
+    /// 指针范围复核的容差（DIP）：只有指针"明显离开"才算离开。
+    /// ⚠️ 不要用"时间去抖"来忽略退出 —— 那会把**真实退出**一起吞掉，
+    /// 表现就是"鼠标走开了图标还挂着"（用户实测反馈）。退出与否只看坐标。
+    /// </summary>
+    private const double ExitTolerance = 2;
 
     private readonly Dictionary<TabItemViewModel, Border> _glyphHosts = new();
     private readonly HashSet<TabItemViewModel> _expanded = new();
@@ -41,11 +42,14 @@ public sealed partial class TabStripView : UserControl
 
     private TabIconMode _iconMode = TabIconMode.Hover;
     private AnimationSpec _spec = AnimationSpec.Disabled;
-    private DateTime _lastExpandAt = DateTime.MinValue;
 
     public TabStripView()
     {
         InitializeComponent();
+
+        // 兜底：指针离开整条标签栏时，把所有展开项收起来
+        // （万一某项没收到 PointerExited，也不会留下"图标一直挂着"的状态）
+        Tabs.PointerExited += OnStripPointerExited;
     }
 
     /// <summary>选中项变化（主窗口据此切页）。</summary>
@@ -145,17 +149,28 @@ public sealed partial class TabStripView : UserControl
             position.X >= -ExitTolerance && position.X <= root.ActualWidth + ExitTolerance &&
             position.Y >= -ExitTolerance && position.Y <= root.ActualHeight + ExitTolerance;
 
+        // 指针确实还在项内（多半是展开动画改动布局导致的"假退出"）→ 忽略；
+        // 真的离开了 → 立刻收起（不做时间去抖，否则会把真实退出吞掉）
         if (stillInside)
         {
-            return;   // 指针没真的离开（多半是布局平移导致的假退出）→ 忽略
-        }
-
-        if ((DateTime.UtcNow - _lastExpandAt).TotalMilliseconds < ExitDebounceMs)
-        {
-            return;   // 刚展开就"退出"→ 去抖
+            return;
         }
 
         SetExpanded(tab, expand: false, animate: true);
+    }
+
+    /// <summary>指针离开整条标签栏：把所有展开项收起来（兜底，防止残留展开态）。</summary>
+    private void OnStripPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (_iconMode != TabIconMode.Hover)
+        {
+            return;
+        }
+
+        foreach (var tab in _expanded.ToList())
+        {
+            SetExpanded(tab, expand: false, animate: true);
+        }
     }
 
     private void RequestExpand(object sender, bool expand)
@@ -186,7 +201,6 @@ public sealed partial class TabStripView : UserControl
         if (expand)
         {
             _expanded.Add(tab);
-            _lastExpandAt = DateTime.UtcNow;
         }
         else
         {
@@ -208,6 +222,7 @@ public sealed partial class TabStripView : UserControl
 
         var widthAnimation = new DoubleAnimation
         {
+            From = expand ? 0 : GlyphSlotWidth,       // 显式起始值，别依赖"当前值"
             To = expand ? GlyphSlotWidth : 0,
             Duration = duration,
             EasingFunction = easing,
@@ -220,6 +235,7 @@ public sealed partial class TabStripView : UserControl
 
         var opacityAnimation = new DoubleAnimation
         {
+            From = expand ? 0 : 1,
             To = expand ? 1 : 0,
             Duration = duration,
             EasingFunction = easing,

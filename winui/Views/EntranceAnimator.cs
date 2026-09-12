@@ -22,6 +22,9 @@ internal sealed class EntranceAnimator
     private readonly ListViewBase _list;
     private readonly HashSet<object> _played = new();
 
+    /// <summary>本轮起过的 Storyboard —— 下次播放前必须 Stop，否则它 HoldEnd 的值会压住我们设的起始态。</summary>
+    private readonly List<Storyboard> _running = new();
+
     private AnimationSpec _spec = AnimationSpec.Disabled;
     private bool _pending;
 
@@ -44,6 +47,11 @@ internal sealed class EntranceAnimator
     /// <summary>播放一次入场（每次切到该页都会调用）。</summary>
     public void Play()
     {
+        // ① 先停掉上一轮动画：HoldEnd 的动画**优先级高于本地值**，
+        //    不停掉的话，下面设的 Opacity=0 会被"上一轮停在 1"的值盖住 ——
+        //    表现就是"先看到最终态、再播一遍动画"（用户实测反馈的 2012）。
+        StopRunning();
+
         _played.Clear();
 
         if (!_spec.Enabled)
@@ -54,11 +62,19 @@ internal sealed class EntranceAnimator
 
         _pending = true;
 
-        // ⚠️ 关键（用户实测反馈的不协调）：**同步**把已实现的容器置为起始态，再起动画。
-        //    否则页面会先以"最终态"渲染一帧，随后动画又把它拉回 0 重新播一遍 ——
-        //    看起来就是"先显示出来、然后才播动画"。设 Opacity / Transform 不需要布局，同一帧即可完成。
+        // ② 同步置起始态（Opacity / RenderTransform 不触发布局，同一帧内完成，渲染在之后 ⇒ 不闪）
         HideRealized();
         PlayRealized();
+    }
+
+    private void StopRunning()
+    {
+        foreach (var storyboard in _running)
+        {
+            storyboard.Stop();
+        }
+
+        _running.Clear();
     }
 
     /// <summary>把已实现的容器同步置为起始态（不可见 + 位移）。</summary>
@@ -127,9 +143,12 @@ internal sealed class EntranceAnimator
         var easing = CreateEasing(_spec.Easing);
 
         var storyboard = new Storyboard();
-        storyboard.Children.Add(CreateAnimation(container, "Opacity", 1, duration, beginTime, easing));
-        storyboard.Children.Add(CreateAnimation(transform, "TranslateY", 0, duration, beginTime, easing));
+        storyboard.Children.Add(CreateAnimation(container, "Opacity", from: 0, to: 1, duration, beginTime, easing));
+
+        // ⚠️ 显式给 From：动画起始值不再依赖"当前值"，切页重播时不会先停一拍最终态
+        storyboard.Children.Add(CreateAnimation(transform, "TranslateY", from: _spec.FromOffset, to: 0, duration, beginTime, easing));
         storyboard.Begin();
+        _running.Add(storyboard);
         return true;
     }
 
@@ -147,6 +166,7 @@ internal sealed class EntranceAnimator
 
     private void ResetAll()
     {
+        StopRunning();
         _pending = false;
         _played.Clear();
 
@@ -166,10 +186,12 @@ internal sealed class EntranceAnimator
     }
 
     private static DoubleAnimation CreateAnimation(
-        DependencyObject target, string property, double to, Duration duration, TimeSpan beginTime, EasingFunctionBase easing)
+        DependencyObject target, string property, double from, double to,
+        Duration duration, TimeSpan beginTime, EasingFunctionBase easing)
     {
         var animation = new DoubleAnimation
         {
+            From = from,           // 显式起始值：不依赖"当前值/上一轮残留值"
             To = to,
             Duration = duration,
             BeginTime = beginTime,
