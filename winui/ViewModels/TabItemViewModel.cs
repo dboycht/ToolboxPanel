@@ -8,6 +8,7 @@
 // ⚠️ 视图模型不反向依赖 UI 之外的逻辑：数据来自 ToolboxPanel.Core，UI 只读它。
 
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using ToolboxPanel.Core.Models;
@@ -15,14 +16,34 @@ using ToolboxPanel.Core.Models;
 namespace ToolboxPanel.ViewModels;
 
 /// <summary>一个标签页（标签栏一项 + 它自己的内容集合）。</summary>
-public sealed class TabItemViewModel
+public sealed class TabItemViewModel : INotifyPropertyChanged
 {
+    private bool _isSelected;
+
     public TabItemViewModel(TabModel model)
     {
         Model = model;
         Id = model.Id;
         Name = string.IsNullOrEmpty(model.Name) ? "(未命名标签页)" : model.Name;
         IsList = model.IsListTab;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    /// <summary>是否选中（标签栏用它显示底部强调条；由窗口在 SelectionChanged 里维护）。</summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value)
+            {
+                return;
+            }
+
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
     }
 
     public TabModel Model { get; }

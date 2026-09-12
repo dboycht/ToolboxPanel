@@ -253,6 +253,9 @@ public sealed partial class MainWindow : Window
             {
                 // 触发 OnTabSelectionChanged → 显示对应页
                 TabStrip.SelectedIndex = Math.Clamp(_startupTabIndex, 0, TabStrip.Items.Count - 1);
+
+                // 兜底：SelectedIndex 本来就是 0 时不会触发 SelectionChanged，这里主动同步一次
+                SyncSelection();
             }
             else
             {
@@ -269,11 +272,22 @@ public sealed partial class MainWindow : Window
         FlushLog();
     }
 
-    private void OnTabSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void OnTabSelectionChanged(object sender, SelectionChangedEventArgs e) => SyncSelection();
+
+    /// <summary>同步"哪个标签被选中"：更新强调条标记 + 切换内容区。</summary>
+    private void SyncSelection()
     {
-        if (TabStrip.SelectedItem is TabItemViewModel tab)
+        if (_viewModel is not null)
         {
-            ShowTab(tab);
+            foreach (var tab in _viewModel.Tabs)
+            {
+                tab.IsSelected = ReferenceEquals(tab, TabStrip.SelectedItem);
+            }
+        }
+
+        if (TabStrip.SelectedItem is TabItemViewModel selected)
+        {
+            ShowTab(selected);
         }
     }
 
@@ -296,11 +310,11 @@ public sealed partial class MainWindow : Window
             }
 
             _pages[tab.Id] = page;
+            _log.AppendLine($"首次创建页面 = [{tab.Kind}] {tab.Name}（{page.GetType().Name}）");
         }
 
         ContentHost.Content = page;
         _transientStatus = null;
-        _log.AppendLine($"显示标签页 = [{tab.Kind}] {tab.Name}（selectedIndex={TabStrip.SelectedIndex}，页面={page.GetType().Name}）");
         UpdateStatusBar();
     }
 

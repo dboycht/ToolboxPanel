@@ -65,7 +65,19 @@
                   IsItemClickEnabled="True"
                   ItemClick="OnTileClick"
                   Padding="4,3"
-                  Background="Transparent" />
+                  Background="Transparent">
+            <!--
+                入场/重排动效：用 WinUI 内置过渡，不自己写动画
+                  · EntranceThemeTransition + IsStaggeringEnabled：交错浮现（"高动效"的底子）
+                  · RepositionThemeTransition：拖拽排序后图标归位（W3 拖拽排序会用到）
+            -->
+            <GridView.ItemContainerTransitions>
+                <TransitionCollection>
+                    <EntranceThemeTransition FromVerticalOffset="14" IsStaggeringEnabled="True" />
+                    <RepositionThemeTransition IsStaggeringEnabled="True" />
+                </TransitionCollection>
+            </GridView.ItemContainerTransitions>
+        </GridView>
 
         <!-- 空页提示（没有图标时显示） -->
         <StackPanel x:Name="EmptyHint"
