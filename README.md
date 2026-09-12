@@ -200,6 +200,17 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
+### v2.0.1 (2026-09-12) — 大版本重构（开发中）
+
+**重构目标**
+- UI 前端**全部推倒重来**：高动效 + 半透明 + 毛玻璃（亚克力）观感
+- 底层数据处理继续使用 **Python**；前端改用 **Flutter（Windows 桌面）**
+- **老版本数据文件（`tabs.json` v1）保持可导入**
+
+> 说明：本条为重构**起步版本**，功能正在逐步对齐 v1.11.6。
+> 重构期间的选型依据、分层边界与实施阶段见开发副本 `DEVELOPMENT.md` 第 0 节；
+> 已踩的坑（MSVC 代码页、动画越界、无边框窗口拖动等）见 `ERROR.md` E1–E4。
+
 ### v1.11.6 (2026-08-25)
 
 **新增**
