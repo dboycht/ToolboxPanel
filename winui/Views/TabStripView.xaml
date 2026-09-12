@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    TabStripView.xaml —— 标签栏（横向可滚动）
+
+    三种图标形态（设置项 tab_icon_mode）：
+      · text   ：只保留文字（与原版 v1.11.6 / QML 一致）
+      · always ：常驻图标
+      · hover  ：悬停时图标从文字左边浮现，标签随之整体拉伸
+
+    ⚠️ 悬停判定必须做"去抖 + 范围复核"：图标槽变宽会让内容平移，
+       WinUI 可能在指针没真的离开时抛 PointerExited，导致拉伸/缩回无限往复
+       （用户实测反馈的 bug）。详见 TabStripView.xaml.cs 的注释。
+-->
+<UserControl
+    x:Class="ToolboxPanel.Views.TabStripView"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:ToolboxPanel.ViewModels">
+
+    <UserControl.Resources>
+        <!--
+            轻量样式覆盖（lightweight styling）：只改颜色、不动模板，
+            把标签项的默认选中胶囊与焦点框换成"更亮的底 + 底部强调条"。
+        -->
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#1FFFFFFF" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#29FFFFFF" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#33FFFFFF" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#14FFFFFF" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="#22FFFFFF" />
+        <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="Transparent" />
+        <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="Transparent" />
+
+        <DataTemplate x:Key="TabItemTemplate" x:DataType="vm:TabItemViewModel">
+            <Grid PointerEntered="OnItemPointerEntered"
+                  PointerMoved="OnItemPointerMoved"
+                  PointerExited="OnItemPointerExited">
+                <StackPanel Orientation="Horizontal" Spacing="6"
+                            VerticalAlignment="Center" Margin="0,0,0,2">
+                    <!--
+                        图标槽：宽度 0↔16 之间动画。标签宽度由内容决定，槽变宽 → 标签整体拉伸。
+                        IsHitTestVisible=False：让槽的增长不影响命中测试，减少悬停判定抖动。
+                    -->
+                    <Border x:Name="TabGlyphHost" Width="0" Opacity="0"
+                            VerticalAlignment="Center"
+                            IsHitTestVisible="False"
+                            Loaded="OnGlyphHostLoaded">
+                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
+                    </Border>
+
+                    <TextBlock Text="{x:Bind Name}" FontSize="12" VerticalAlignment="Center" />
+
+                    <!-- 数量文字：设置里可以隐藏（show_tab_counts） -->
+                    <TextBlock Text="{x:Bind CountLabel}" FontSize="10" Opacity="0.5"
+                               VerticalAlignment="Center"
+                               Visibility="{x:Bind ShowCount, Mode=OneWay}" />
+                </StackPanel>
+
+                <!-- 选中态：底部 2px 强调条（W4 主题引擎落地后换成主题令牌） -->
+                <Border Height="2" Width="16" CornerRadius="1"
+                        VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                        Background="#FF6CC6FF"
+                        Visibility="{x:Bind IsSelected, Mode=OneWay}" />
+            </Grid>
+        </DataTemplate>
+
+        <Style x:Key="CompactTabItemStyle" TargetType="ListViewItem">
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="Padding" Value="9,3" />
+            <Setter Property="Margin" Value="0,0,3,0" />
+            <Setter Property="CornerRadius" Value="5" />
+        </Style>
+    </UserControl.Resources>
+
+    <Border Margin="8,0,8,6" CornerRadius="6"
+            Background="#14FFFFFF" BorderThickness="1" BorderBrush="#1AFFFFFF">
+        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                      HorizontalScrollMode="Auto"
+                      VerticalScrollBarVisibility="Disabled"
+                      VerticalScrollMode="Disabled"
+                      Padding="3,2">
+            <ListView x:Name="Tabs"
+                      ItemTemplate="{StaticResource TabItemTemplate}"
+                      ItemContainerStyle="{StaticResource CompactTabItemStyle}"
+                      SelectionMode="Single"
+                      SelectionChanged="OnSelectionChanged"
+                      ScrollViewer.VerticalScrollMode="Disabled"
+                      ScrollViewer.HorizontalScrollMode="Disabled"
+                      Background="Transparent"
+                      BorderThickness="0">
+                <ListView.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="3" />
+                    </ItemsPanelTemplate>
+                </ListView.ItemsPanel>
+            </ListView>
+        </ScrollViewer>
+    </Border>
+</UserControl>

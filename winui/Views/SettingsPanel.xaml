@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SettingsPanel.xaml —— 设置面板（单独面板，按"窗口 / 标签栏 / 动效"分节）
+
+    约定：
+      · 面板自己负责"改模型 + 立刻落盘"（SettingsStore），然后抛 SettingApplied 让主窗口重新套用；
+      · 动效参数改动可以点「预览动效」立刻看效果（不用来回切标签页试）；
+      · 关掉"启用动效"时，动效细则整体禁用（灰掉）但仍保留数值。
+-->
+<UserControl
+    x:Class="ToolboxPanel.Views.SettingsPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <UserControl.Resources>
+        <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Margin" Value="0,10,0,0" />
+        </Style>
+        <Style x:Key="SectionHintStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10.5" />
+            <Setter Property="Opacity" Value="0.55" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 标题栏 -->
+        <Grid Grid.Row="0" Padding="16,14,10,10">
+            <TextBlock Text="设置" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <Button HorizontalAlignment="Right" Padding="6,2"
+                    Background="Transparent" BorderThickness="0"
+                    Click="OnCloseClick" ToolTipService.ToolTip="关闭">
+                <FontIcon Glyph="&#xE711;" FontSize="12" />
+            </Button>
+        </Grid>
+
+        <ScrollViewer Grid.Row="1" Padding="16,0,16,16">
+            <StackPanel Spacing="8">
+
+                <!-- ── 窗口 ── -->
+                <TextBlock Text="窗口" Style="{StaticResource SectionHeaderStyle}" />
+                <ComboBox x:Name="BackdropBox" Header="窗口材质" HorizontalAlignment="Stretch"
+                          SelectionChanged="OnBackdropChanged">
+                    <ComboBoxItem Content="Mica（推荐）" Tag="mica" />
+                    <ComboBoxItem Content="Mica 变体（BaseAlt）" Tag="micaAlt" />
+                    <ComboBoxItem Content="桌面 Acrylic" Tag="acrylic" />
+                    <ComboBoxItem Content="桌面 Acrylic（更透）" Tag="acrylicThin" />
+                    <ComboBoxItem Content="纯色（不启用材质）" Tag="none" />
+                </ComboBox>
+                <TextBlock Style="{StaticResource SectionHintStyle}"
+                           Text="Mica 需要 Win11；系统在省电 / 关闭透明效果 / 远程桌面等情况下会自动回退纯色。" />
+
+                <!-- ── 标签栏 ── -->
+                <TextBlock Text="标签栏" Style="{StaticResource SectionHeaderStyle}" />
+                <RadioButtons x:Name="TabIconModeChoices" Header="标签图标"
+                              SelectionChanged="OnTabIconModeChanged">
+                    <RadioButton Content="只保留文字" Tag="text" />
+                    <RadioButton Content="常驻显示图标" Tag="always" />
+                    <RadioButton Content="悬停时显示（图标浮现 + 标签拉伸）" Tag="hover" />
+                </RadioButtons>
+                <ToggleSwitch x:Name="ShowCountsSwitch" Header="显示数量"
+                              OnContent="显示" OffContent="隐藏"
+                              Toggled="OnShowCountsToggled" />
+                <TextBlock Style="{StaticResource SectionHintStyle}"
+                           Text="网格页的图标字形是密集方格，列表页是项目符号列表，便于一眼区分。" />
+
+                <!-- ── 动效 ── -->
+                <TextBlock Text="动效" Style="{StaticResource SectionHeaderStyle}" />
+                <ToggleSwitch x:Name="AnimationSwitch" Header="启用动效"
+                              OnContent="开" OffContent="关"
+                              Toggled="OnAnimationsToggled" />
+
+                <StackPanel x:Name="AnimationDetails" Spacing="6">
+                    <Slider x:Name="DurationSlider" Header="动画时长（毫秒）"
+                            Minimum="60" Maximum="600" StepFrequency="20"
+                            ValueChanged="OnDurationChanged" />
+                    <Slider x:Name="StaggerSlider" Header="交错间隔（毫秒）"
+                            Minimum="0" Maximum="120" StepFrequency="4"
+                            ValueChanged="OnStaggerChanged" />
+                    <ComboBox x:Name="EasingBox" Header="动画曲线" HorizontalAlignment="Stretch"
+                              SelectionChanged="OnEasingChanged">
+                        <ComboBoxItem Content="柔和（起步快、收尾很慢）" Tag="soft" />
+                        <ComboBoxItem Content="标准（推荐）" Tag="standard" />
+                        <ComboBoxItem Content="干脆（收尾快）" Tag="snappy" />
+                    </ComboBox>
+                    <Button x:Name="PreviewButton" Content="预览动效" Click="OnPreviewClick" />
+                    <TextBlock Style="{StaticResource SectionHintStyle}"
+                               Text="预览会重放当前标签页的入场动效；悬停标签可看图标浮现的速度。" />
+                </StackPanel>
+
+                <!-- ── 底部 ── -->
+                <Button x:Name="ResetButton" Content="恢复默认设置" Margin="0,12,0,0" Click="OnResetClick" />
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

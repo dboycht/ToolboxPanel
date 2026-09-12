@@ -1,16 +1,13 @@
-// MainWindow.xaml.cs —— W3 主界面（真实窗口）
+// MainWindow.xaml.cs —— 主窗口（编排层）
 //
-// 职责：
-//   1) 玻璃：Mica（只支持 Win11，用户已定）＋ 不生效时纯色兜底；
-//   2) 自绘标题栏（拖动区）＋ 系统最小化/最大化/关闭按钮；
-//   3) 标签栏切页：网格页（grid）/ 列表页（list）；
-//   4) 点击图标/列表项 → 用 Core 的 Launcher 真正打开，并把结果显示在状态栏；
-//   5) 自检产物：%TEMP%\toolboxpanel-verify.txt（载入结果 + 材质 + 窗口矩形），
-//      便于「不开窗口/看不了图」时也能确认程序读到了什么。
+// 职责（保持薄）：
+//   1) 窗口 chrome：自绘标题栏（拖动区）+ 系统标题栏按钮；
+//   2) 玻璃材质：按设置套用 Mica / Acrylic / 纯色（材质不生效时补纯色兜底）；
+//   3) 装配：数据（MainViewModel）→ 标签栏（TabStripView）→ 内容页（GridPage / ListViewPage）；
+//   4) 设置：读 config.json、把设置套用到界面、处理设置面板事件；
+//   5) 自检产物：%TEMP%\toolboxpanel-verify.txt（便于"看不了图"时确认程序读到了什么）。
 //
-// ⚠️ 纪律（ERROR.md E5）：本程序不会注入任何合成输入；验证交互一律交用户手点。
-// ⚠️ 开发期验证请用环境变量 TOOLBOXPANEL_DATA_DIR 指向**临时数据目录**，
-//    避免动到你的真实 data/tabs.json（AppPaths 支持这个变量）。
+// 具体的标签栏交互、设置面板控件、页面动效都在 Views/ 下的各自文件里 —— 本文件不重复实现。
 
 using System;
 using System.Collections.Generic;
@@ -21,9 +18,7 @@ using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
@@ -35,303 +30,57 @@ namespace ToolboxPanel;
 
 public sealed partial class MainWindow : Window
 {
-    /// <summary>标签图标槽展开后的宽度（DIP）。"整体拉伸"就是标签宽度跟着这个值变化。</summary>
-    private const double TabGlyphWidth = 16;
-
     private static readonly string VerifyLogPath =
         Path.Combine(Path.GetTempPath(), "toolboxpanel-verify.txt");
 
     private readonly StringBuilder _log = new();
     private readonly Dictionary<string, UIElement> _pages = new(StringComparer.Ordinal);
-    private readonly Dictionary<TabItemViewModel, Border> _tabGlyphHosts = new();
-    private readonly Dictionary<TabItemViewModel, Storyboard> _tabGlyphAnimations = new();
 
     private MainViewModel? _viewModel;
     private SettingsStore? _settings;
     private AppSettings? _settingsData;
-    private bool _syncingSettingsUi;
+
+    private string? _backdropOverride;      // --backdrop=
+    private TabIconMode? _tabIconOverride;  // --tab-icons=
+    private int _startupTabIndex;           // --tab=
+    private bool _isDemo;                   // --demo
+    private bool _openSettingsAtStartup;    // --open-settings
     private string _backdropLine = "窗口材质：未初始化";
     private string? _transientStatus;
-
-    /// <summary>启动时选中的标签页下标（--tab=N；验证用，默认 0）。</summary>
-    private int _startupTabIndex;
-
-    /// <summary>纯 UI 演示模式（--demo）：假数据、不读写任何数据文件、点击不启动程序。</summary>
-    private bool _isDemo;
-
-    /// <summary>--tab-icons=text|always|hover：本次运行临时覆盖标签图标形态（不写配置文件，供验证用）。</summary>
-    private TabIconMode? _tabIconModeOverride;
 
     public MainWindow()
     {
         InitializeComponent();
 
         Title = "ToolboxPanel";
-
-        // 先按默认尺寸开，启动参数里给了 --size 再覆盖（演示模式默认更小更紧凑）
         AppWindow.Resize(new SizeInt32(1200, 800));
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
         CustomizeCaptionButtons();
 
-        ApplyStartupArguments();   // --demo / --backdrop= / --pos= / --size= / --tab=
+        ApplyStartupArguments();
         LoadSettings();
         LoadData();
-        ApplyAnimationSetting();
+        ApplyAllSettings();
+
+        if (_openSettingsAtStartup)
+        {
+            ShowSettings(true);
+        }
     }
 
-    // ────────────────────────────── 设置（config.json）──────────────────────────────
+    // ────────────────────────────── 启动参数（开发/验证用）──────────────────────────────
 
     /// <summary>
-    /// 读设置。演示模式把 config.json 写到临时目录，**绝不碰用户真实数据目录**。
-    /// </summary>
-    private void LoadSettings()
-    {
-        try
-        {
-            _settings = _isDemo
-                ? new SettingsStore(Path.Combine(Path.GetTempPath(), "toolboxpanel-ui-demo"))
-                : SettingsStore.CreateDefault();
-
-            _settingsData = _settings.Load();
-
-            // 验证用：本次运行临时覆盖（**不落盘**，配置文件的真实值不受影响）
-            if (_tabIconModeOverride is { } overridden)
-            {
-                _settingsData.TabIconMode = overridden;
-            }
-
-            _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
-            _log.AppendLine($"标签图标形态 = {_settingsData.TabIconModeRaw ?? "(未设置→默认 hover)"}"
-                            + $"；动效 = {_settingsData.AnimationsEnabled}");
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("MainWindow.LoadSettings", ex);
-            _settingsData = new AppSettings();
-        }
-
-        SyncSettingsUi();
-    }
-
-    /// <summary>把设置值刷到设置面板控件上（加锁标志避免触发变更回调）。</summary>
-    private void SyncSettingsUi()
-    {
-        if (TabIconModeChoices is null || AnimationSwitch is null)
-        {
-            return;
-        }
-
-        _syncingSettingsUi = true;
-        try
-        {
-            TabIconModeChoices.SelectedIndex = (_settingsData?.TabIconMode ?? TabIconMode.Hover) switch
-            {
-                TabIconMode.Text => 0,
-                TabIconMode.Always => 1,
-                _ => 2,
-            };
-
-            AnimationSwitch.IsOn = _settingsData?.AnimationsEnabled ?? true;
-        }
-        finally
-        {
-            _syncingSettingsUi = false;
-        }
-    }
-
-    private void OnTabIconModeChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (_syncingSettingsUi || _settings is null || _settingsData is null)
-        {
-            return;
-        }
-
-        if (TabIconModeChoices.SelectedItem is not RadioButton { Tag: string wire })
-        {
-            return;
-        }
-
-        try
-        {
-            _settingsData.TabIconMode = AppSettings.ParseTabIconMode(wire);
-            _settings.Save(_settingsData);          // 立刻落盘（与原版"改完即存"一致）
-            ApplyTabIconMode();
-            _log.AppendLine($"设置变更：标签图标形态 = {_settingsData.TabIconModeRaw}");
-            FlushLog();
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("MainWindow.OnTabIconModeChanged", ex);
-        }
-    }
-
-    private void OnAnimationsToggled(object sender, RoutedEventArgs e)
-    {
-        if (_syncingSettingsUi || _settings is null || _settingsData is null)
-        {
-            return;
-        }
-
-        try
-        {
-            _settingsData.AnimationsEnabled = AnimationSwitch.IsOn;
-            _settings.Save(_settingsData);
-            ApplyAnimationSetting();
-            _log.AppendLine($"设置变更：动效 = {_settingsData.AnimationsEnabled}");
-            FlushLog();
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("MainWindow.OnAnimationsToggled", ex);
-        }
-    }
-
-    // ────────────────────────────── 标签图标三种形态 ──────────────────────────────
-
-    /// <summary>标签图标槽被加载出来时记下它（模式变化时要直接改这些实例）。</summary>
-    private void OnTabGlyphHostLoaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is Border host && host.DataContext is TabItemViewModel tab)
-        {
-            _tabGlyphHosts[tab] = host;
-            ApplyTabIconModeToHost(host, expand: (_settingsData?.TabIconMode ?? TabIconMode.Hover) == TabIconMode.Always);
-        }
-    }
-
-    private void OnTabPointerEntered(object sender, PointerRoutedEventArgs e)
-        => AnimateTabGlyph(sender, show: true);
-
-    private void OnTabPointerExited(object sender, PointerRoutedEventArgs e)
-        => AnimateTabGlyph(sender, show: false);
-
-    /// <summary>按当前设置重新套用三种形态（设置变化 / 载入完成时调用）。</summary>
-    private void ApplyTabIconMode()
-    {
-        bool expand = (_settingsData?.TabIconMode ?? TabIconMode.Hover) == TabIconMode.Always;
-
-        foreach (var (tab, host) in _tabGlyphHosts)
-        {
-            StopTabGlyphAnimation(tab);
-            ApplyTabIconModeToHost(host, expand);
-        }
-    }
-
-    private static void ApplyTabIconModeToHost(Border host, bool expand)
-    {
-        host.Width = expand ? TabGlyphWidth : 0;
-        host.Opacity = expand ? 1 : 0;
-    }
-
-    /// <summary>
-    /// 悬停动效：图标槽 0↔16 宽度 + 透明度渐变，标签随之"整体拉伸"。
-    /// 只有 <see cref="TabIconMode.Hover"/> 模式才响应；动效总开关关闭时直接落值不动画。
-    /// </summary>
-    private void AnimateTabGlyph(object sender, bool show)
-    {
-        if (_settingsData?.TabIconMode != TabIconMode.Hover)
-        {
-            return;
-        }
-
-        if (sender is not FrameworkElement root || root.DataContext is not TabItemViewModel tab)
-        {
-            return;
-        }
-
-        if (!_tabGlyphHosts.TryGetValue(tab, out var host))
-        {
-            return;
-        }
-
-        StopTabGlyphAnimation(tab);
-
-        var targetWidth = show ? TabGlyphWidth : 0d;
-        var targetOpacity = show ? 1d : 0d;
-
-        if (!(_settingsData?.AnimationsEnabled ?? true))
-        {
-            ApplyTabIconModeToHost(host, show);
-            return;
-        }
-
-        var widthAnimation = new DoubleAnimation
-        {
-            To = targetWidth,
-            Duration = new Duration(TimeSpan.FromMilliseconds(170)),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-
-            // 动画宽度会触发布局（"拉伸"就是要它发生），必须显式允许
-            EnableDependentAnimation = true,
-        };
-        Storyboard.SetTarget(widthAnimation, host);
-        Storyboard.SetTargetProperty(widthAnimation, "Width");
-
-        var opacityAnimation = new DoubleAnimation
-        {
-            To = targetOpacity,
-            Duration = new Duration(TimeSpan.FromMilliseconds(140)),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
-        };
-        Storyboard.SetTarget(opacityAnimation, host);
-        Storyboard.SetTargetProperty(opacityAnimation, "Opacity");
-
-        var storyboard = new Storyboard();
-        storyboard.Children.Add(widthAnimation);
-        storyboard.Children.Add(opacityAnimation);
-        _tabGlyphAnimations[tab] = storyboard;
-        storyboard.Begin();
-    }
-
-    private void StopTabGlyphAnimation(TabItemViewModel tab)
-    {
-        if (_tabGlyphAnimations.Remove(tab, out var running))
-        {
-            running.Stop();
-        }
-    }
-
-    /// <summary>动效总开关：控制标签栏与各页面的入场/重排过渡。</summary>
-    private void ApplyAnimationSetting()
-    {
-        bool enabled = _settingsData?.AnimationsEnabled ?? true;
-
-        if (TabStrip is not null)
-        {
-            TabStrip.ItemContainerTransitions.Clear();
-            if (enabled)
-            {
-                TabStrip.ItemContainerTransitions.Add(new EntranceThemeTransition
-                {
-                    FromVerticalOffset = 8,
-                    IsStaggeringEnabled = true,
-                });
-            }
-        }
-
-        foreach (var page in _pages.Values)
-        {
-            if (page is IAnimationHost host)
-            {
-                host.SetAnimationsEnabled(enabled);
-            }
-        }
-    }
-
-    // ────────────────────────────── 材质 / 启动参数 ──────────────────────────────
-
-    /// <summary>
-    /// 启动参数（验证/开发用）：
-    ///   --demo                                             纯 UI 演示（假数据、不碰文件、点击不启动）
-    ///   --backdrop=none|mica|micaAlt|acrylic|acrylicThin   指定初始材质
-    ///   --pos=x,y                                          指定窗口位置
-    ///   --size=WxH                                         指定窗口尺寸
-    ///   --tab=N                                            指定初始选中的标签页下标
+    ///   --demo                                纯 UI 演示（假数据、不碰文件、点击不启动）
+    ///   --backdrop=mica|micaAlt|acrylic|acrylicThin|none   临时覆盖窗口材质（不落盘）
+    ///   --tab-icons=text|always|hover         临时覆盖标签图标形态（不落盘）
+    ///   --pos=x,y / --size=WxH / --tab=N      窗口位置、尺寸、初始标签页
+    ///   --open-settings                       启动即打开设置面板
     /// </summary>
     private void ApplyStartupArguments()
     {
-        string backdrop = "mica";
         SizeInt32? size = null;
 
         foreach (var argument in Environment.GetCommandLineArgs())
@@ -340,9 +89,17 @@ public sealed partial class MainWindow : Window
             {
                 _isDemo = true;
             }
+            else if (argument.Equals("--open-settings", StringComparison.OrdinalIgnoreCase))
+            {
+                _openSettingsAtStartup = true;
+            }
             else if (argument.StartsWith("--backdrop=", StringComparison.OrdinalIgnoreCase))
             {
-                backdrop = argument["--backdrop=".Length..];
+                _backdropOverride = argument["--backdrop=".Length..];
+            }
+            else if (argument.StartsWith("--tab-icons=", StringComparison.OrdinalIgnoreCase))
+            {
+                _tabIconOverride = AppSettings.ParseTabIconMode(argument["--tab-icons=".Length..]);
             }
             else if (argument.StartsWith("--size=", StringComparison.OrdinalIgnoreCase))
             {
@@ -351,10 +108,6 @@ public sealed partial class MainWindow : Window
                 {
                     size = new SizeInt32(Math.Max(360, w), Math.Max(320, h));
                 }
-            }
-            else if (argument.StartsWith("--tab-icons=", StringComparison.OrdinalIgnoreCase))
-            {
-                _tabIconModeOverride = AppSettings.ParseTabIconMode(argument["--tab-icons=".Length..]);
             }
             else if (argument.StartsWith("--tab=", StringComparison.OrdinalIgnoreCase)
                      && int.TryParse(argument["--tab=".Length..], out int tabIndex))
@@ -366,31 +119,109 @@ public sealed partial class MainWindow : Window
                 var parts = argument["--pos=".Length..].Split(',');
                 if (parts.Length == 2 && int.TryParse(parts[0], out int x) && int.TryParse(parts[1], out int y))
                 {
-                    try
-                    {
-                        AppWindow.Move(new PointInt32(x, y));
-                    }
-                    catch (Exception ex)
-                    {
-                        App.WriteCrash("ApplyStartupArguments/pos", ex);
-                    }
+                    TryMoveWindow(x, y);
                 }
             }
         }
 
-        // 尺寸：给了 --size 用它；演示模式给一个更紧凑、贴合内容的默认值；否则 1200x800
-        var targetSize = size ?? (_isDemo ? new SizeInt32(880, 560) : new SizeInt32(1200, 800));
+        TryResizeWindow(size ?? (_isDemo ? new SizeInt32(880, 560) : new SizeInt32(1200, 800)));
+    }
+
+    private void TryMoveWindow(int x, int y)
+    {
         try
         {
-            AppWindow.Resize(targetSize);
+            AppWindow.Move(new PointInt32(x, y));
         }
         catch (Exception ex)
         {
-            App.WriteCrash("ApplyStartupArguments/size", ex);
+            App.WriteCrash("TryMoveWindow", ex);
+        }
+    }
+
+    private void TryResizeWindow(SizeInt32 size)
+    {
+        try
+        {
+            AppWindow.Resize(size);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("TryResizeWindow", ex);
+        }
+    }
+
+    // ────────────────────────────── 设置 ──────────────────────────────
+
+    /// <summary>读设置；演示模式把 config.json 写到临时目录，**绝不碰用户真实数据目录**。</summary>
+    private void LoadSettings()
+    {
+        try
+        {
+            _settings = _isDemo
+                ? new SettingsStore(Path.Combine(Path.GetTempPath(), "toolboxpanel-ui-demo"))
+                : SettingsStore.CreateDefault();
+
+            _settingsData = _settings.Load();
+
+            // 命令行临时覆盖（**不落盘**，只在本次运行生效）
+            if (_tabIconOverride is { } iconMode)
+            {
+                _settingsData.TabIconMode = iconMode;
+            }
+
+            if (_backdropOverride is not null)
+            {
+                _settingsData.Backdrop = _backdropOverride;
+            }
+
+            Settings.Bind(_settings, _settingsData);
+            Settings.SettingApplied += (_, _) => ApplyAllSettings();
+            Settings.PreviewRequested += (_, _) => (ContentHost.Content as IAnimatedPage)?.PlayEntrance();
+            Settings.CloseRequested += (_, _) => ShowSettings(false);
+
+            _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
+            _log.AppendLine($"设置 = {DescribeSettings(_settingsData)}");
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.LoadSettings", ex);
+            _settingsData = new AppSettings();
+        }
+    }
+
+    private static string DescribeSettings(AppSettings settings)
+        => $"材质={settings.Backdrop} 标签图标={settings.TabIconModeRaw ?? "默认hover"} "
+           + $"显示数量={settings.ShowTabCounts} 动效={settings.AnimationsEnabled} "
+           + $"{settings.AnimationDurationMs}ms/{settings.AnimationStaggerMs}ms/{AppSettings.ToWire(settings.AnimationEasing)}";
+
+    /// <summary>把当前设置整体套用到界面（幂等：设置一变就整份重套，省掉"改一处忘一处"）。</summary>
+    private void ApplyAllSettings()
+    {
+        var settings = _settingsData ?? new AppSettings();
+
+        ApplyBackdrop(settings.Backdrop);
+        TabStrip.ApplySettings(settings.TabIconMode, settings.ShowTabCounts, settings.ToAnimationSpec());
+
+        foreach (var page in _pages.Values.OfType<IAnimatedPage>())
+        {
+            page.ApplyAnimationSpec(settings.ToAnimationSpec());
         }
 
-        ApplyBackdrop(backdrop);
+        Settings.Refresh();
     }
+
+    private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(SettingsOverlay.Visibility != Visibility.Visible);
+
+    private void ShowSettings(bool open)
+    {
+        SettingsOverlay.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        SettingsButton.Background = open
+            ? new SolidColorBrush(Color.FromArgb(30, 255, 255, 255))
+            : new SolidColorBrush(Colors.Transparent);
+    }
+
+    // ────────────────────────────── 材质 ──────────────────────────────
 
     private void ApplyBackdrop(string kind)
     {
@@ -402,27 +233,27 @@ public sealed partial class MainWindow : Window
         {
             switch (kind)
             {
-                case "none":
+                case BackdropKinds.None:
                     backdrop = null;
                     supported = true;
                     label = "纯色回退";
                     break;
-                case "micaAlt":
+                case BackdropKinds.MicaAlt:
                     backdrop = new MicaBackdrop { Kind = MicaKind.BaseAlt };
                     supported = MicaController.IsSupported();
                     label = "Mica (BaseAlt)";
                     break;
-                case "acrylic":
+                case BackdropKinds.Acrylic:
                     backdrop = new DesktopAcrylicBackdrop();
                     supported = DesktopAcrylicController.IsSupported();
                     label = "Desktop Acrylic (Base)";
                     break;
-                case "acrylicThin":
+                case BackdropKinds.AcrylicThin:
                     backdrop = new AcrylicThinBackdrop();
                     supported = DesktopAcrylicController.IsSupported();
                     label = "Desktop Acrylic (Thin)";
                     break;
-                default:   // mica —— 用户已定「只支持 Win11，用 Mica」
+                default:
                     backdrop = new MicaBackdrop { Kind = MicaKind.Base };
                     supported = MicaController.IsSupported();
                     label = "Mica (Base)";
@@ -452,11 +283,7 @@ public sealed partial class MainWindow : Window
             : new SolidColorBrush(Color.FromArgb(255, 32, 32, 37));
 
         _backdropLine = $"窗口材质 = {label}；本机支持 = {supported}；启用 = {glass}";
-        if (BackdropLabel is not null)
-        {
-            BackdropLabel.Text = label;
-        }
-
+        BackdropLabel.Text = label;
         UpdateStatusBar();
     }
 
@@ -499,26 +326,20 @@ public sealed partial class MainWindow : Window
             }
 
             TabStrip.ItemsSource = _viewModel.Tabs;
+            TabStrip.TabSelected += OnTabSelected;
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");
             _log.AppendLine(_viewModel.StatusText);
-
             foreach (var tab in _viewModel.Tabs)
             {
-                _log.AppendLine($"  - [{tab.Kind}] {tab.Name} :: {tab.Summary}");
+                _log.AppendLine($"  - [{tab.Kind}] {tab.Name} :: {tab.CountLabel}");
             }
 
-            if (TabStrip.Items.Count > 0)
+            if (TabStrip.ItemCount > 0)
             {
-                // 触发 OnTabSelectionChanged → 显示对应页
-                TabStrip.SelectedIndex = Math.Clamp(_startupTabIndex, 0, TabStrip.Items.Count - 1);
-
-                // 兜底：SelectedIndex 本来就是 0 时不会触发 SelectionChanged，这里主动同步一次
-                SyncSelection();
-            }
-            else
-            {
-                ContentHost.Content = null;
+                TabStrip.SelectedIndex = Math.Clamp(_startupTabIndex, 0, TabStrip.ItemCount - 1);
+                TabStrip.SyncSelection();
+                ShowTab(TabStrip.SelectedTab);   // SelectedIndex 未变化时不会触发 SelectionChanged，这里兜底
             }
         }
         catch (Exception ex)
@@ -531,56 +352,47 @@ public sealed partial class MainWindow : Window
         FlushLog();
     }
 
-    private void OnTabSelectionChanged(object sender, SelectionChangedEventArgs e) => SyncSelection();
+    private void OnTabSelected(object? sender, TabItemViewModel tab) => ShowTab(tab);
 
-    /// <summary>同步"哪个标签被选中"：更新强调条标记 + 切换内容区。</summary>
-    private void SyncSelection()
+    /// <summary>切换内容区；页面只建一次，但**每次切页都重放一次入场动效**。</summary>
+    private void ShowTab(TabItemViewModel? tab)
     {
-        if (_viewModel is not null)
+        if (tab is null)
         {
-            foreach (var tab in _viewModel.Tabs)
-            {
-                tab.IsSelected = ReferenceEquals(tab, TabStrip.SelectedItem);
-            }
+            return;
         }
 
-        if (TabStrip.SelectedItem is TabItemViewModel selected)
-        {
-            ShowTab(selected);
-        }
-    }
-
-    /// <summary>切换内容区；每个标签页的页面只建一次（保留滚动位置等状态）。</summary>
-    private void ShowTab(TabItemViewModel tab)
-    {
         if (!_pages.TryGetValue(tab.Id, out var page))
         {
-            if (tab.IsList)
-            {
-                var listPage = new ListViewPage(tab);
-                listPage.ItemActivated += OnListItemActivated;
-                page = listPage;
-            }
-            else
-            {
-                var gridPage = new GridPage(tab);
-                gridPage.IconActivated += OnIconActivated;
-                page = gridPage;
-            }
-
+            page = CreatePage(tab);
             _pages[tab.Id] = page;
             _log.AppendLine($"首次创建页面 = [{tab.Kind}] {tab.Name}（{page.GetType().Name}）");
-
-            // 新页面要立刻服从"动效总开关"（默认已在 XAML 里声明，这里按设置覆盖）
-            if (page is IAnimationHost animationHost)
-            {
-                animationHost.SetAnimationsEnabled(_settingsData?.AnimationsEnabled ?? true);
-            }
         }
 
         ContentHost.Content = page;
         _transientStatus = null;
+
+        if (page is IAnimatedPage animated)
+        {
+            animated.ApplyAnimationSpec((_settingsData ?? new AppSettings()).ToAnimationSpec());
+            animated.PlayEntrance();
+        }
+
         UpdateStatusBar();
+    }
+
+    private UIElement CreatePage(TabItemViewModel tab)
+    {
+        if (tab.IsList)
+        {
+            var listPage = new ListViewPage(tab);
+            listPage.ItemActivated += OnListItemActivated;
+            return listPage;
+        }
+
+        var gridPage = new GridPage(tab);
+        gridPage.IconActivated += OnIconActivated;
+        return gridPage;
     }
 
     // ────────────────────────────── 打开动作 ──────────────────────────────
@@ -623,7 +435,6 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // 状态栏单行：材质已经显示在标题栏上，这里不再重复（省出横向空间）
         var parts = new List<string>();
         if (_viewModel is not null)
         {
@@ -656,7 +467,7 @@ public sealed partial class MainWindow : Window
 
             File.WriteAllText(
                 VerifyLogPath,
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ToolboxPanel W3 自检（pid={Environment.ProcessId}）{Environment.NewLine}"
+                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] ToolboxPanel 自检（pid={Environment.ProcessId}）{Environment.NewLine}"
                 + $"窗口矩形 = {rect}{Environment.NewLine}"
                 + _backdropLine + Environment.NewLine
                 + _log

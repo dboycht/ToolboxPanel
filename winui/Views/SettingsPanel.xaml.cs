@@ -1,0 +1,162 @@
+// SettingsPanel.xaml.cs —— 设置面板
+//
+// 职责边界：
+//   · 面板负责「控件 ↔ AppSettings」的双向同步 + 立刻落盘；
+//   · 主窗口负责「把设置套用到界面」（材质、标签栏、页面动效）——通过 SettingApplied 事件。
+// 这样设置项增多时只改这一个文件，主窗口不必知道每个控件的存在。
+
+using System;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using ToolboxPanel.Core.Storage;
+
+namespace ToolboxPanel.Views;
+
+public sealed partial class SettingsPanel : UserControl
+{
+    private SettingsStore? _store;
+    private AppSettings? _settings;
+    private bool _syncingUi;
+
+    public SettingsPanel()
+    {
+        InitializeComponent();
+    }
+
+    /// <summary>某项设置已改并落盘 —— 宿主据此重新套用界面。</summary>
+    public event EventHandler? SettingApplied;
+
+    /// <summary>点「预览动效」—— 宿主重放当前页的入场动效。</summary>
+    public event EventHandler? PreviewRequested;
+
+    /// <summary>点关闭 —— 宿主收起面板。</summary>
+    public event EventHandler? CloseRequested;
+
+    /// <summary>绑定设置与存储（面板只读这两者的引用，不接管生命周期）。</summary>
+    public void Bind(SettingsStore store, AppSettings settings)
+    {
+        _store = store;
+        _settings = settings;
+        SyncUiFromModel();
+    }
+
+    /// <summary>外部（如命令行的临时覆盖）改了模型后，让面板重新显示一次。</summary>
+    public void Refresh() => SyncUiFromModel();
+
+    // ────────────────────────────── 模型 → 控件 ──────────────────────────────
+
+    private void SyncUiFromModel()
+    {
+        if (_settings is null)
+        {
+            return;
+        }
+
+        _syncingUi = true;
+        try
+        {
+            BackdropBox.SelectedIndex = Array.IndexOf(
+                BackdropKinds.All, _settings.Backdrop) is var backdropIndex && backdropIndex >= 0
+                ? backdropIndex
+                : 0;
+
+            TabIconModeChoices.SelectedIndex = _settings.TabIconMode switch
+            {
+                TabIconMode.Text => 0,
+                TabIconMode.Always => 1,
+                _ => 2,
+            };
+
+            ShowCountsSwitch.IsOn = _settings.ShowTabCounts;
+            AnimationSwitch.IsOn = _settings.AnimationsEnabled;
+            DurationSlider.Value = _settings.AnimationDurationMs;
+            StaggerSlider.Value = _settings.AnimationStaggerMs;
+            EasingBox.SelectedIndex = _settings.AnimationEasing switch
+            {
+                AnimationEasing.Soft => 0,
+                AnimationEasing.Snappy => 2,
+                _ => 1,
+            };
+        }
+        finally
+        {
+            _syncingUi = false;
+        }
+
+        // StackPanel 不是 Control，没有 IsEnabled —— 用"不吃命中 + 变淡"表达禁用
+        AnimationDetails.IsHitTestVisible = _settings.AnimationsEnabled;
+        AnimationDetails.Opacity = _settings.AnimationsEnabled ? 1 : 0.45;
+    }
+
+    // ────────────────────────────── 控件 → 模型 ──────────────────────────────
+
+    private void Apply(Action<AppSettings> change)
+    {
+        if (_syncingUi || _store is null || _settings is null)
+        {
+            return;
+        }
+
+        change(_settings);
+        _store.Save(_settings);          // 改完即存（与原版"设置即时持久化"一致）
+        // StackPanel 不是 Control，没有 IsEnabled —— 用"不吃命中 + 变淡"表达禁用
+        AnimationDetails.IsHitTestVisible = _settings.AnimationsEnabled;
+        AnimationDetails.Opacity = _settings.AnimationsEnabled ? 1 : 0.45;
+        SettingApplied?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnBackdropChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (BackdropBox.SelectedItem is ComboBoxItem { Tag: string kind })
+        {
+            Apply(s => s.Backdrop = kind);
+        }
+    }
+
+    private void OnTabIconModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (TabIconModeChoices.SelectedItem is RadioButton { Tag: string wire })
+        {
+            Apply(s => s.TabIconMode = AppSettings.ParseTabIconMode(wire));
+        }
+    }
+
+    private void OnShowCountsToggled(object sender, RoutedEventArgs e)
+        => Apply(s => s.ShowTabCounts = ShowCountsSwitch.IsOn);
+
+    private void OnAnimationsToggled(object sender, RoutedEventArgs e)
+        => Apply(s => s.AnimationsEnabled = AnimationSwitch.IsOn);
+
+    private void OnDurationChanged(object sender, RangeBaseValueChangedEventArgs e)
+        => Apply(s => s.AnimationDurationMs = (int)Math.Round(e.NewValue));
+
+    private void OnStaggerChanged(object sender, RangeBaseValueChangedEventArgs e)
+        => Apply(s => s.AnimationStaggerMs = (int)Math.Round(e.NewValue));
+
+    private void OnEasingChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (EasingBox.SelectedItem is ComboBoxItem { Tag: string wire })
+        {
+            Apply(s => s.AnimationEasing = AppSettings.ParseEasing(wire));
+        }
+    }
+
+    private void OnPreviewClick(object sender, RoutedEventArgs e) => PreviewRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnCloseClick(object sender, RoutedEventArgs e) => CloseRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>恢复默认：就地重置当前设置对象（保持引用有效），并立刻落盘。</summary>
+    private void OnResetClick(object sender, RoutedEventArgs e)
+    {
+        if (_store is null || _settings is null)
+        {
+            return;
+        }
+
+        _settings.ResetToDefaults();
+        _store.Save(_settings);
+        SyncUiFromModel();
+        SettingApplied?.Invoke(this, EventArgs.Empty);
+    }
+}

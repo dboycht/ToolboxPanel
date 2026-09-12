@@ -33,6 +33,58 @@ public enum TabIconMode
     Hover,
 }
 
+/// <summary>动效曲线（只暴露三种观感，避免把缓动函数名暴露成设置项）。</summary>
+public enum AnimationEasing
+{
+    /// <summary>柔和：SineEase / EaseOut。</summary>
+    Soft,
+
+    /// <summary>标准：CubicEase / EaseOut（默认）。</summary>
+    Standard,
+
+    /// <summary>干脆：QuadraticEase / EaseOut（起步快、收尾快）。</summary>
+    Snappy,
+}
+
+/// <summary>交给界面用的动效参数（由设置换算而来，界面不再关心取值合法性）。</summary>
+public readonly record struct AnimationSpec(
+    bool Enabled,
+    int DurationMs,
+    int StaggerMs,
+    AnimationEasing Easing)
+{
+    /// <summary>入场位移的下落距离（DIP）：跟时长挂钩，慢动画配大位移，观感更一致。</summary>
+    public double FromOffset => Math.Clamp(DurationMs / 14.0, 4, 24);
+
+    /// <summary>关掉动效时的"直给"参数。</summary>
+    public static AnimationSpec Disabled => new(false, 0, 0, AnimationEasing.Standard);
+}
+
+/// <summary>可选的窗口材质名（与启动参数 <c>--backdrop=</c> 同一套取值）。</summary>
+public static class BackdropKinds
+{
+    public const string Mica = "mica";
+    public const string MicaAlt = "micaAlt";
+    public const string Acrylic = "acrylic";
+    public const string AcrylicThin = "acrylicThin";
+    public const string None = "none";
+
+    public static readonly string[] All = { Mica, MicaAlt, Acrylic, AcrylicThin, None };
+
+    public static string Normalize(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return Mica;
+        }
+
+        var match = All.FirstOrDefault(
+            kind => string.Equals(kind, value.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        return match ?? Mica;
+    }
+}
+
 /// <summary>config.json 的线上表示（字段名与原版一致）。</summary>
 public sealed class AppSettings
 {
@@ -71,9 +123,38 @@ public sealed class AppSettings
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? AnimationsEnabledRaw { get; set; }
 
+    /// <summary>窗口材质（mica | micaAlt | acrylic | acrylicThin | none；null = 默认 mica）。</summary>
+    [JsonPropertyName("backdrop")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BackdropRaw { get; set; }
+
+    /// <summary>是否显示标签栏上的数量（如「20 个图标」；null = 默认显示）。</summary>
+    [JsonPropertyName("show_tab_counts")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? ShowTabCountsRaw { get; set; }
+
+    /// <summary>动效时长（毫秒；null = 默认 220）。</summary>
+    [JsonPropertyName("animation_duration_ms")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? AnimationDurationMsRaw { get; set; }
+
+    /// <summary>动效交错间隔（毫秒；null = 默认 24）。</summary>
+    [JsonPropertyName("animation_stagger_ms")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? AnimationStaggerMsRaw { get; set; }
+
+    /// <summary>动效曲线（soft | standard | snappy；null = 默认 standard）。</summary>
+    [JsonPropertyName("animation_easing")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? AnimationEasingRaw { get; set; }
+
     /// <summary>未知字段原样保留（旧版/未来版本的键都不该被 C# 线吃掉）。</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtraFields { get; set; }
+
+    public const int DefaultAnimationDurationMs = 220;
+
+    public const int DefaultAnimationStaggerMs = 24;
 
     /// <summary>标签栏图标形态（未设置时默认 <see cref="TabIconMode.Hover"/>）。</summary>
     [JsonIgnore]
@@ -90,6 +171,85 @@ public sealed class AppSettings
         get => AnimationsEnabledRaw ?? true;
         set => AnimationsEnabledRaw = value;
     }
+
+    /// <summary>窗口材质（未设置时默认 Mica）。</summary>
+    [JsonIgnore]
+    public string Backdrop
+    {
+        get => BackdropKinds.Normalize(BackdropRaw);
+        set => BackdropRaw = BackdropKinds.Normalize(value);
+    }
+
+    /// <summary>是否显示标签栏数量（未设置时默认显示）。</summary>
+    [JsonIgnore]
+    public bool ShowTabCounts
+    {
+        get => ShowTabCountsRaw ?? true;
+        set => ShowTabCountsRaw = value;
+    }
+
+    /// <summary>动效时长（毫秒，已夹到 60~1200）。</summary>
+    [JsonIgnore]
+    public int AnimationDurationMs
+    {
+        get => Math.Clamp(AnimationDurationMsRaw ?? DefaultAnimationDurationMs, 60, 1200);
+        set => AnimationDurationMsRaw = Math.Clamp(value, 60, 1200);
+    }
+
+    /// <summary>交错间隔（毫秒，已夹到 0~120）。</summary>
+    [JsonIgnore]
+    public int AnimationStaggerMs
+    {
+        get => Math.Clamp(AnimationStaggerMsRaw ?? DefaultAnimationStaggerMs, 0, 120);
+        set => AnimationStaggerMsRaw = Math.Clamp(value, 0, 120);
+    }
+
+    /// <summary>动效曲线（无法识别时回落 Standard）。</summary>
+    [JsonIgnore]
+    public AnimationEasing AnimationEasing
+    {
+        get => ParseEasing(AnimationEasingRaw);
+        set => AnimationEasingRaw = ToWire(value);
+    }
+
+    /// <summary>换算成界面直接可用的动效参数。</summary>
+    public AnimationSpec ToAnimationSpec() => AnimationsEnabled
+        ? new AnimationSpec(true, AnimationDurationMs, AnimationStaggerMs, AnimationEasing)
+        : AnimationSpec.Disabled;
+
+    /// <summary>
+    /// 就地恢复默认值（**不新建实例**：调用方持有的引用必须继续有效，
+    /// 否则"面板换了个新对象、主窗口还拿着旧对象"就会两边不一致）。
+    /// </summary>
+    public void ResetToDefaults()
+    {
+        Language = DefaultLanguage;
+        IconSize = DefaultIconSize;
+        Theme = DefaultTheme;
+        ThemeOverrides = new Dictionary<string, JsonElement>();
+        TabIconModeRaw = null;
+        AnimationsEnabledRaw = null;
+        BackdropRaw = null;
+        ShowTabCountsRaw = null;
+        AnimationDurationMsRaw = null;
+        AnimationStaggerMsRaw = null;
+        AnimationEasingRaw = null;
+        ExtraFields = null;
+    }
+
+    public static AnimationEasing ParseEasing(string? wire) => wire?.Trim().ToLowerInvariant() switch
+    {
+        "soft" or "sine" => AnimationEasing.Soft,
+        "snappy" or "fast" or "quad" => AnimationEasing.Snappy,
+        _ => AnimationEasing.Standard,
+    };
+
+    public static string ToWire(AnimationEasing easing) => easing switch
+    {
+        AnimationEasing.Soft => "soft",
+        AnimationEasing.Snappy => "snappy",
+        _ => "standard",
+    };
 
     public static string ToWire(TabIconMode mode) => mode switch
     {
@@ -223,6 +383,26 @@ public sealed class SettingsStore
         if (settings.TabIconModeRaw is not null)
         {
             settings.TabIconModeRaw = AppSettings.ToWire(AppSettings.ParseTabIconMode(settings.TabIconModeRaw));
+        }
+
+        if (settings.BackdropRaw is not null)
+        {
+            settings.BackdropRaw = BackdropKinds.Normalize(settings.BackdropRaw);
+        }
+
+        if (settings.AnimationEasingRaw is not null)
+        {
+            settings.AnimationEasingRaw = AppSettings.ToWire(AppSettings.ParseEasing(settings.AnimationEasingRaw));
+        }
+
+        if (settings.AnimationDurationMsRaw is not null)
+        {
+            settings.AnimationDurationMsRaw = settings.AnimationDurationMs;   // 夹到合法区间
+        }
+
+        if (settings.AnimationStaggerMsRaw is not null)
+        {
+            settings.AnimationStaggerMsRaw = settings.AnimationStaggerMs;
         }
     }
 }

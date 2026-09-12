@@ -191,8 +191,88 @@ public class SettingsStoreTests
 
         var settings = new SettingsStore(temp.Path).Load();
 
-        // 旧配置没有 tab_icon_mode / animations → 用新增字段的默认值
+        // 旧配置没有 tab_icon_mode / animations 等 → 用新增字段的默认值
         Assert.Equal(TabIconMode.Hover, settings.TabIconMode);
         Assert.True(settings.AnimationsEnabled);
+        Assert.Equal("mica", settings.Backdrop);
+        Assert.True(settings.ShowTabCounts);
+        Assert.Equal(220, settings.AnimationDurationMs);
+        Assert.Equal(24, settings.AnimationStaggerMs);
+        Assert.Equal(AnimationEasing.Standard, settings.AnimationEasing);
+    }
+
+    [Theory]
+    [InlineData("soft", AnimationEasing.Soft)]
+    [InlineData("SNAPPY", AnimationEasing.Snappy)]
+    [InlineData("standard", AnimationEasing.Standard)]
+    [InlineData("bogus", AnimationEasing.Standard)]
+    [InlineData(null, AnimationEasing.Standard)]
+    public void 动效曲线解析与容错(string? wire, AnimationEasing expected)
+    {
+        Assert.Equal(expected, AppSettings.ParseEasing(wire));
+    }
+
+    [Theory]
+    [InlineData("mica", "mica")]
+    [InlineData("ACRYLICTHIN", "acrylicThin")]
+    [InlineData("none", "none")]
+    [InlineData("bogus", "mica")]
+    [InlineData(null, "mica")]
+    public void 材质名归一化(string? input, string expected)
+    {
+        Assert.Equal(expected, ToolboxPanel.Core.Storage.BackdropKinds.Normalize(input));
+    }
+
+    [Fact]
+    public void 动效参数换算与夹取()
+    {
+        using var temp = new TempDataDirectory();
+        var store = new SettingsStore(temp.Path);
+        var settings = store.Load();
+
+        // 关掉动效 → Disabled
+        settings.AnimationsEnabled = false;
+        Assert.False(settings.ToAnimationSpec().Enabled);
+
+        // 打开并给超范围的值 → 夹到合法区间
+        settings.AnimationsEnabled = true;
+        settings.AnimationDurationMs = 99999;
+        settings.AnimationStaggerMs = -5;
+        settings.AnimationEasing = AnimationEasing.Snappy;
+
+        var spec = settings.ToAnimationSpec();
+        Assert.True(spec.Enabled);
+        Assert.Equal(1200, spec.DurationMs);
+        Assert.Equal(0, spec.StaggerMs);
+        Assert.Equal(AnimationEasing.Snappy, spec.Easing);
+        Assert.InRange(spec.FromOffset, 4, 24);
+    }
+
+    [Fact]
+    public void 新增设置项往返不变()
+    {
+        using var temp = new TempDataDirectory();
+        var store = new SettingsStore(temp.Path);
+        var settings = store.Load();
+
+        store.Update(s =>
+        {
+            s.Backdrop = "acrylicThin";
+            s.TabIconMode = TabIconMode.Always;
+            s.ShowTabCounts = false;
+            s.AnimationsEnabled = true;
+            s.AnimationDurationMs = 320;
+            s.AnimationStaggerMs = 40;
+            s.AnimationEasing = AnimationEasing.Soft;
+        });
+
+        var reloaded = new SettingsStore(temp.Path).Load();
+
+        Assert.Equal("acrylicThin", reloaded.Backdrop);
+        Assert.Equal(TabIconMode.Always, reloaded.TabIconMode);
+        Assert.False(reloaded.ShowTabCounts);
+        Assert.Equal(320, reloaded.AnimationDurationMs);
+        Assert.Equal(40, reloaded.AnimationStaggerMs);
+        Assert.Equal(AnimationEasing.Soft, reloaded.AnimationEasing);
     }
 }

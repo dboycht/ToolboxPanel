@@ -1,16 +1,13 @@
-// TabItemViewModel.cs —— W3 主界面的视图模型
+// TabItemViewModel.cs —— 标签栏一项的展示模型
 //
 // 只负责「把 Core 的模型翻译成界面要显示的东西」：
-//   · TabModel  → TabItemViewModel（标题栏标签 + 该页的图标/列表项集合）
+//   · TabModel  → TabItemViewModel（标签栏标签 + 该页的图标/列表项集合）
 //   · IconModel → IconTileViewModel（网格图块：图标图 + 名称）
 //   · ListItemModel → ListRowViewModel（列表行：说明 + 路径）
-//
-// ⚠️ 视图模型不反向依赖 UI 之外的逻辑：数据来自 ToolboxPanel.Core，UI 只读它。
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using ToolboxPanel.Core.Models;
 
 namespace ToolboxPanel.ViewModels;
@@ -19,6 +16,7 @@ namespace ToolboxPanel.ViewModels;
 public sealed class TabItemViewModel : INotifyPropertyChanged
 {
     private bool _isSelected;
+    private bool _showCount = true;
 
     public TabItemViewModel(TabModel model)
     {
@@ -30,22 +28,6 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    /// <summary>是否选中（标签栏用它显示底部强调条；由窗口在 SelectionChanged 里维护）。</summary>
-    public bool IsSelected
-    {
-        get => _isSelected;
-        set
-        {
-            if (_isSelected == value)
-            {
-                return;
-            }
-
-            _isSelected = value;
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
-        }
-    }
-
     public TabModel Model { get; }
 
     public string Id { get; }
@@ -54,8 +36,27 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     public bool IsList { get; }
 
-    /// <summary>标签栏图标字形：网格页 / 列表页（Segoe Fluent Icons）。</summary>
-    public string Glyph => IsList ? "\uE8FD" : "\uE71D";
+    /// <summary>
+    /// 标签类型字形。
+    /// ⚠️ 选字形**必须实际渲染出来看**：`\uE71D`（名字叫 AllApps）实际画出来是「缩略图列表」，
+    /// 跟 `\uE8FD`(List) 几乎分不出来（用户实测反馈"两种标签图标一样"）。
+    /// 现在改用 `\uE80A`（密集方格 = 网格页）与 `\uE8FD`（项目符号列表 = 列表页），区分明显。
+    /// </summary>
+    public string Glyph => IsList ? "\uE8FD" : "\uE80A";
+
+    /// <summary>是否选中（标签栏用它显示底部强调条）。</summary>
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set => SetField(ref _isSelected, value, nameof(IsSelected));
+    }
+
+    /// <summary>是否显示数量文字（设置项；由标签栏统一设置）。</summary>
+    public bool ShowCount
+    {
+        get => _showCount;
+        set => SetField(ref _showCount, value, nameof(ShowCount));
+    }
 
     public string Kind => Model.TabType;
 
@@ -63,9 +64,19 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     public ObservableCollection<ListRowViewModel> ListItems { get; } = new();
 
-    public string Summary => IsList
-        ? $"{ListItems.Count} 项"
-        : $"{Icons.Count} 个图标";
+    /// <summary>标签栏上的数量文字（如「20 个图标」）。</summary>
+    public string CountLabel => IsList ? $"{ListItems.Count} 项" : $"{Icons.Count} 个图标";
+
+    private void SetField<T>(ref T field, T value, string propertyName)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+        {
+            return;
+        }
+
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 }
 
 /// <summary>网格页里的一个图块。</summary>

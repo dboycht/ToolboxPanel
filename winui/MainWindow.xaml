@@ -1,81 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    MainWindow.xaml —— W3 主界面（紧凑版）
+    MainWindow.xaml —— 主窗口（编排层，尽量薄）
 
-    结构：自绘标题栏（拖动区） / 标签栏 / 内容区（网格页或列表页） / 状态栏
-    密度（2026-09-12 按用户"不够紧凑"的反馈收紧过一次，单位 px）：
-      标题栏 34 · 标签栏项 26 高 / 图块 76×84 · 状态栏单项 10.5 号字单行 · 外围留白 8
+    结构：自绘标题栏 / 标签栏 / 内容区 / 状态栏 / 设置面板遮罩
+      · 标签栏的交互与三种图标形态在 `Views/TabStripView.xaml`
+      · 设置项与分节在 `Views/SettingsPanel.xaml`
+      · 页面入场动效在 `Views/EntranceAnimator.cs`
+    主窗口只负责：窗口 chrome、玻璃材质、装配、以及"把设置套用到界面"。
 
-    ⚠️ 两条玻璃纪律（见 memory/01-玻璃与窗口材质.md）：
-      · 根 Grid 必须 Transparent，**任何高不透明度深色底都会把系统材质盖住**；
-      · 材质不生效时才由代码补纯色兜底。
+    ⚠️ 玻璃纪律（见 memory/01-玻璃与窗口材质.md）：根 Grid 必须 Transparent，
+       **任何高不透明度深色底都会把系统材质盖住**；只有"材质不生效"时才由代码补纯色兜底。
     ⚠️ 拖动用 WinUI 原生的 `Window.SetTitleBar(AppTitleBar)` + 系统标题栏按钮（保住缩放/贴边/圆角）。
 -->
 <Window
     x:Class="ToolboxPanel.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    xmlns:vm="using:ToolboxPanel.ViewModels">
+    xmlns:views="using:ToolboxPanel.Views">
 
     <Grid x:Name="RootGrid" Background="Transparent">
-        <Grid.Resources>
-            <!--
-                轻量样式覆盖（WinUI 的 "lightweight styling"）：只改颜色，不动模板。
-                目的：把标签项的**默认选中胶囊 + 焦点框**换成"更亮的底 + 底部强调条"（像手机桌面）。
-            -->
-            <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#1FFFFFFF" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#29FFFFFF" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#33FFFFFF" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#14FFFFFF" />
-            <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="#22FFFFFF" />
-            <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#FFFFFFFF" />
-            <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent" />
-            <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="Transparent" />
-            <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="Transparent" />
-
-            <!-- 标签栏项：图标槽 + 名称 + 数量 + 选中强调条 -->
-            <DataTemplate x:Key="TabStripItemTemplate" x:DataType="vm:TabItemViewModel">
-                <Grid PointerEntered="OnTabPointerEntered" PointerExited="OnTabPointerExited">
-                    <StackPanel Orientation="Horizontal" Spacing="6"
-                                VerticalAlignment="Center" Margin="0,0,0,2">
-                        <!--
-                            图标槽：宽度在 0↔16 之间动画。
-                            "整体拉伸"就是从这里来的：标签宽度由内容决定，槽变宽 → 标签跟着变宽。
-                            三种模式（只保留文字 / 常驻 / 悬停）由代码在 Loaded 与设置变化时套用。
-                        -->
-                        <Border x:Name="TabGlyphHost" Width="0" Opacity="0"
-                                VerticalAlignment="Center"
-                                Loaded="OnTabGlyphHostLoaded">
-                            <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
-                        </Border>
-
-                        <TextBlock Text="{x:Bind Name}" FontSize="12" VerticalAlignment="Center" />
-                        <TextBlock Text="{x:Bind Summary}" FontSize="10" Opacity="0.5" VerticalAlignment="Center" />
-                    </StackPanel>
-
-                    <!--
-                        选中态：底部一条 2px 强调条（OneWay 绑定，随 IsSelected 变化）。
-                        ⚠️ 这里先用**写死的强调色**：WinUI 3 里 `SystemAccentColorLight2Brush` 这种键
-                        并不存在（实测抛 XamlParseException「Cannot find a Resource with the Name/Key」）。
-                        等 W4 主题引擎落地后换成主题令牌。
-                    -->
-                    <Border Height="2" Width="16" CornerRadius="1"
-                            VerticalAlignment="Bottom" HorizontalAlignment="Center"
-                            Background="#FF6CC6FF"
-                            Visibility="{x:Bind IsSelected, Mode=OneWay}" />
-                </Grid>
-            </DataTemplate>
-
-            <!-- 紧凑的标签项容器（去掉 WinUI 默认的大内边距） -->
-            <Style x:Key="CompactTabItemStyle" TargetType="ListViewItem">
-                <Setter Property="MinHeight" Value="0" />
-                <Setter Property="MinWidth" Value="0" />
-                <Setter Property="Padding" Value="9,3" />
-                <Setter Property="Margin" Value="0,0,3,0" />
-                <Setter Property="CornerRadius" Value="5" />
-            </Style>
-        </Grid.Resources>
-
         <Grid.RowDefinitions>
             <RowDefinition Height="34" />
             <RowDefinition Height="Auto" />
@@ -90,67 +33,16 @@
                 <FontIcon Glyph="&#xE71D;" FontSize="12" />
                 <TextBlock Text="ToolboxPanel" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock x:Name="BackdropLabel" FontSize="10.5" Opacity="0.5" VerticalAlignment="Center" />
-
-                <!-- 设置入口（放在左侧组里，避开右上角系统按钮区） -->
-                <Button x:Name="SettingsButton" Padding="6,2" Margin="4,0,0,0"
+                <Button x:Name="SettingsButton" Padding="6,2" Margin="2,0,0,0"
                         Background="Transparent" BorderThickness="0"
-                        ToolTipService.ToolTip="设置">
+                        Click="OnSettingsButtonClick" ToolTipService.ToolTip="设置">
                     <FontIcon Glyph="&#xE713;" FontSize="12" />
-                    <Button.Flyout>
-                        <Flyout Placement="BottomEdgeAlignedLeft">
-                            <StackPanel Width="248" Spacing="10" Padding="4">
-                                <TextBlock Text="标签图标" FontSize="12" FontWeight="SemiBold" />
-                                <RadioButtons x:Name="TabIconModeChoices"
-                                              SelectionChanged="OnTabIconModeChanged">
-                                    <RadioButton Content="只保留文字" Tag="text" />
-                                    <RadioButton Content="常驻显示图标" Tag="always" />
-                                    <RadioButton Content="悬停时显示（图标浮现 + 拉伸）" Tag="hover" />
-                                </RadioButtons>
-
-                                <TextBlock Text="动效" FontSize="12" FontWeight="SemiBold" Margin="0,6,0,0" />
-                                <ToggleSwitch x:Name="AnimationSwitch"
-                                              Header="界面动效（入场交错 / 悬停）"
-                                              OnContent="开" OffContent="关"
-                                              Toggled="OnAnimationsToggled" />
-                            </StackPanel>
-                        </Flyout>
-                    </Button.Flyout>
                 </Button>
             </StackPanel>
         </Grid>
 
-        <!-- ② 标签栏（矮、横向可滚动） -->
-        <Border Grid.Row="1" Margin="8,0,8,6" CornerRadius="6"
-                Background="#14FFFFFF" BorderThickness="1" BorderBrush="#1AFFFFFF">
-            <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                          HorizontalScrollMode="Auto"
-                          VerticalScrollBarVisibility="Disabled"
-                          VerticalScrollMode="Disabled"
-                          Padding="3,2">
-                <ListView x:Name="TabStrip"
-                          ItemTemplate="{StaticResource TabStripItemTemplate}"
-                          ItemContainerStyle="{StaticResource CompactTabItemStyle}"
-                          SelectionMode="Single"
-                          SelectionChanged="OnTabSelectionChanged"
-                          ScrollViewer.VerticalScrollMode="Disabled"
-                          ScrollViewer.HorizontalScrollMode="Disabled"
-                          Background="Transparent"
-                          BorderThickness="0">
-                    <ListView.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" Spacing="3" />
-                        </ItemsPanelTemplate>
-                    </ListView.ItemsPanel>
-
-                    <!-- 入场：交错浮现（WinUI 内置过渡，不用自己写动画） -->
-                    <ListView.ItemContainerTransitions>
-                        <TransitionCollection>
-                            <EntranceThemeTransition FromVerticalOffset="8" IsStaggeringEnabled="True" />
-                        </TransitionCollection>
-                    </ListView.ItemContainerTransitions>
-                </ListView>
-            </ScrollViewer>
-        </Border>
+        <!-- ② 标签栏 -->
+        <views:TabStripView x:Name="TabStrip" Grid.Row="1" />
 
         <!-- ③ 内容区：网格页 / 列表页在这里切换 -->
         <ContentControl x:Name="ContentHost" Grid.Row="2"
@@ -164,5 +56,15 @@
                        TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        Text="正在载入…" />
         </Border>
+
+        <!-- ⑤ 设置面板（单独面板，右侧滑出；只在打开时占位） -->
+        <Grid x:Name="SettingsOverlay" Grid.RowSpan="4" Visibility="Collapsed"
+              Background="#59000000" Canvas.ZIndex="10">
+            <Border x:Name="SettingsPanelHost" Width="392"
+                    HorizontalAlignment="Right" Background="#F21B1B1F"
+                    BorderThickness="1,0,0,0" BorderBrush="#1FFFFFFF">
+                <views:SettingsPanel x:Name="Settings" />
+            </Border>
+        </Grid>
     </Grid>
 </Window>

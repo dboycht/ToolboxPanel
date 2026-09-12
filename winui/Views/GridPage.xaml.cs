@@ -1,19 +1,20 @@
-// GridPage.xaml.cs —— W3 网格页
+// GridPage.xaml.cs —— 网格页
 //
-// 只做「把该标签页的图标集合铺出来 + 点一下打开」；
-// 创建/编辑/拖拽排序/批量管理属于 W5（右键菜单与对话框）。
+// 只做三件事：铺出该标签页的图标集合、点击打开、入场动效。
+// 创建/编辑/拖拽排序/批量管理属于 W5。
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 
 namespace ToolboxPanel.Views;
 
-public sealed partial class GridPage : UserControl, IAnimationHost
+public sealed partial class GridPage : UserControl, IAnimatedPage
 {
     private readonly TabItemViewModel _tab;
+    private readonly EntranceAnimator _entrance;
 
     public GridPage(TabItemViewModel tab)
     {
@@ -23,29 +24,18 @@ public sealed partial class GridPage : UserControl, IAnimationHost
 
         TileGrid.ItemsSource = tab.Icons;
         EmptyHint.Visibility = tab.Icons.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        _entrance = new EntranceAnimator(TileGrid);
     }
 
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>
     public event EventHandler<IconModel>? IconActivated;
 
-    /// <summary>动效总开关：清掉 / 装回入场交错与重排过渡。</summary>
-    public void SetAnimationsEnabled(bool enabled)
-    {
-        TileGrid.ItemContainerTransitions.Clear();
+    public void ApplyAnimationSpec(AnimationSpec spec) => _entrance.ApplySpec(spec);
 
-        if (enabled)
-        {
-            TileGrid.ItemContainerTransitions.Add(new EntranceThemeTransition
-            {
-                FromVerticalOffset = 14,
-                IsStaggeringEnabled = true,
-            });
-            TileGrid.ItemContainerTransitions.Add(new RepositionThemeTransition
-            {
-                IsStaggeringEnabled = true,
-            });
-        }
-    }
+    public void PlayEntrance() => _entrance.Play();
+
+    public TabItemViewModel Tab => _tab;
 
     private void OnTileClick(object sender, ItemClickEventArgs e)
     {
@@ -54,7 +44,4 @@ public sealed partial class GridPage : UserControl, IAnimationHost
             IconActivated?.Invoke(this, tile.Model);
         }
     }
-
-    /// <summary>当前页的标签页视图模型（宿主窗口切页/刷新时用）。</summary>
-    public TabItemViewModel Tab => _tab;
 }
