@@ -12,6 +12,11 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
+    <!-- Esc 关闭（面板打开时会拿到焦点，见 MainWindow.ShowSettings） -->
+    <UserControl.KeyboardAccelerators>
+        <KeyboardAccelerator Key="Escape" Invoked="OnEscapeInvoked" />
+    </UserControl.KeyboardAccelerators>
+
     <UserControl.Resources>
         <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
             <Setter Property="FontSize" Value="12" />
@@ -31,12 +36,16 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- 标题栏 -->
-        <Grid Grid.Row="0" Padding="16,14,10,10">
+        <!--
+            标题栏：⚠️ 顶部留 44 DIP —— 窗口是 ExtendsContentIntoTitleBar，
+            系统的最小化/最大化/关闭按钮就压在右上角（y 0~34），
+            panel 自己的 ✕ 若贴在最上面会被它盖住且点不到（用户实测反馈）。
+        -->
+        <Grid Grid.Row="0" Padding="16,44,10,8">
             <TextBlock Text="设置" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
             <Button HorizontalAlignment="Right" Padding="6,2"
                     Background="Transparent" BorderThickness="0"
-                    Click="OnCloseClick" ToolTipService.ToolTip="关闭">
+                    Click="OnCloseClick" ToolTipService.ToolTip="关闭（Esc / 点空白处也可以）">
                 <FontIcon Glyph="&#xE711;" FontSize="12" />
             </Button>
         </Grid>

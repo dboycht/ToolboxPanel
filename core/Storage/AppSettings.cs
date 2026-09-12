@@ -148,6 +148,15 @@ public sealed class AppSettings
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? AnimationEasingRaw { get; set; }
 
+    /// <summary>上次退出时的窗口宽/高（**物理像素**；null = 还没记录过）。</summary>
+    [JsonPropertyName("window_width")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? WindowWidthRaw { get; set; }
+
+    [JsonPropertyName("window_height")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? WindowHeightRaw { get; set; }
+
     /// <summary>未知字段原样保留（旧版/未来版本的键都不该被 C# 线吃掉）。</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtraFields { get; set; }
@@ -212,6 +221,48 @@ public sealed class AppSettings
         set => AnimationEasingRaw = ToWire(value);
     }
 
+    /// <summary>窗口尺寸的合法区间（物理像素）—— 防止手改配置把窗口设成 0 或大到点不到。</summary>
+    public const int MinWindowWidth = 400;
+
+    public const int MinWindowHeight = 300;
+
+    public const int MaxWindowWidth = 10000;
+
+    public const int MaxWindowHeight = 10000;
+
+    /// <summary>上次的窗口尺寸；没记录过 / 不合法时返回 null（调用方用默认值）。</summary>
+    [JsonIgnore]
+    public (int Width, int Height)? WindowSize
+    {
+        get
+        {
+            if (WindowWidthRaw is not { } width || WindowHeightRaw is not { } height)
+            {
+                return null;
+            }
+
+            if (width < MinWindowWidth || height < MinWindowHeight)
+            {
+                return null;
+            }
+
+            return (Math.Min(width, MaxWindowWidth), Math.Min(height, MaxWindowHeight));
+        }
+        set
+        {
+            if (value is { } size)
+            {
+                WindowWidthRaw = Math.Clamp(size.Width, MinWindowWidth, MaxWindowWidth);
+                WindowHeightRaw = Math.Clamp(size.Height, MinWindowHeight, MaxWindowHeight);
+            }
+            else
+            {
+                WindowWidthRaw = null;
+                WindowHeightRaw = null;
+            }
+        }
+    }
+
     /// <summary>换算成界面直接可用的动效参数。</summary>
     public AnimationSpec ToAnimationSpec() => AnimationsEnabled
         ? new AnimationSpec(true, AnimationDurationMs, AnimationStaggerMs, AnimationEasing)
@@ -234,6 +285,8 @@ public sealed class AppSettings
         AnimationDurationMsRaw = null;
         AnimationStaggerMsRaw = null;
         AnimationEasingRaw = null;
+        WindowWidthRaw = null;
+        WindowHeightRaw = null;
         ExtraFields = null;
     }
 
@@ -403,6 +456,12 @@ public sealed class SettingsStore
         if (settings.AnimationStaggerMsRaw is not null)
         {
             settings.AnimationStaggerMsRaw = settings.AnimationStaggerMs;
+        }
+
+        // 窗口尺寸：只在记录过时才夹取（不合法 → 当作没记录，回落默认尺寸）
+        if (settings.WindowSize is { } windowSize)
+        {
+            settings.WindowSize = windowSize;
         }
     }
 }

@@ -58,8 +58,10 @@
         </Border>
 
         <!-- ⑤ 设置面板（单独面板，右侧滑出；只在打开时占位） -->
-        <Grid x:Name="SettingsOverlay" Grid.RowSpan="4" Visibility="Collapsed"
-              Background="#59000000" Canvas.ZIndex="10">
+        <Grid x:Name="SettingsOverlay" Grid.RowSpan="4" Visibility="Collapsed" Canvas.ZIndex="10">
+            <!-- 点空白处关闭：这层在面板"下面"，点面板本身不会命中它 -->
+            <Grid Background="#59000000" Tapped="OnSettingsBackdropTapped" />
+
             <Border x:Name="SettingsPanelHost" Width="392"
                     HorizontalAlignment="Right" Background="#F21B1B1F"
                     BorderThickness="1,0,0,0" BorderBrush="#1FFFFFFF">

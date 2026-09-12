@@ -9,6 +9,7 @@ using System;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
 using ToolboxPanel.Core.Storage;
 
 namespace ToolboxPanel.Views;
@@ -145,6 +146,12 @@ public sealed partial class SettingsPanel : UserControl
     private void OnPreviewClick(object sender, RoutedEventArgs e) => PreviewRequested?.Invoke(this, EventArgs.Empty);
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => CloseRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnEscapeInvoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        CloseRequested?.Invoke(this, EventArgs.Empty);
+    }
 
     /// <summary>恢复默认：就地重置当前设置对象（保持引用有效），并立刻落盘。</summary>
     private void OnResetClick(object sender, RoutedEventArgs e)

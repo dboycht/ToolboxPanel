@@ -41,7 +41,7 @@ internal sealed class EntranceAnimator
         }
     }
 
-    /// <summary>播放一次入场（每次切到该页都可以调用）。</summary>
+    /// <summary>播放一次入场（每次切到该页都会调用）。</summary>
     public void Play()
     {
         _played.Clear();
@@ -54,27 +54,45 @@ internal sealed class EntranceAnimator
 
         _pending = true;
 
-        // 容器可能还没实现（首次显示时）：排到布局之后再对"已实现的容器"补播一次，
-        // 之后才实现的容器由 ContainerContentChanging 兜住。
-        _list.DispatcherQueue?.TryEnqueue(DispatcherQueuePriority.Low, PlayRealized);
+        // ⚠️ 关键（用户实测反馈的不协调）：**同步**把已实现的容器置为起始态，再起动画。
+        //    否则页面会先以"最终态"渲染一帧，随后动画又把它拉回 0 重新播一遍 ——
+        //    看起来就是"先显示出来、然后才播动画"。设 Opacity / Transform 不需要布局，同一帧即可完成。
+        HideRealized();
+        PlayRealized();
+    }
+
+    /// <summary>把已实现的容器同步置为起始态（不可见 + 位移）。</summary>
+    private void HideRealized()
+    {
+        for (int index = 0; index < _list.Items.Count; index++)
+        {
+            if (_list.ContainerFromIndex(index) is not UIElement container)
+            {
+                continue;
+            }
+
+            container.Opacity = 0;
+            EnsureTransform(container).TranslateY = _spec.FromOffset;
+        }
     }
 
     private void PlayRealized()
     {
-        if (!_pending)
-        {
-            return;
-        }
+        bool playedAny = false;
 
         for (int index = 0; index < _list.Items.Count; index++)
         {
             if (_list.ContainerFromIndex(index) is UIElement container)
             {
-                AnimateContainer(container, index);
+                playedAny |= AnimateContainer(container, index);
             }
         }
 
-        _pending = false;
+        // 一个容器都还没实现（首次显示）：保持 pending，由 ContainerContentChanging 兜住
+        if (playedAny)
+        {
+            _pending = false;
+        }
     }
 
     private void OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
@@ -91,19 +109,15 @@ internal sealed class EntranceAnimator
         }
     }
 
-    private void AnimateContainer(UIElement container, int index)
+    /// <summary>给一个容器起动画；返回是否真的播了（已播过的返回 false）。</summary>
+    private bool AnimateContainer(UIElement container, int index)
     {
         if (!_played.Add(container))
         {
-            return;   // 这一轮已经播过，别重播（重播会看起来"闪一下"）
+            return false;   // 这一轮已经播过，别重播（重播会看起来"闪一下"）
         }
 
-        var transform = container.RenderTransform as CompositeTransform;
-        if (transform is null)
-        {
-            transform = new CompositeTransform();
-            container.RenderTransform = transform;
-        }
+        var transform = EnsureTransform(container);
 
         container.Opacity = 0;
         transform.TranslateY = _spec.FromOffset;
@@ -116,6 +130,19 @@ internal sealed class EntranceAnimator
         storyboard.Children.Add(CreateAnimation(container, "Opacity", 1, duration, beginTime, easing));
         storyboard.Children.Add(CreateAnimation(transform, "TranslateY", 0, duration, beginTime, easing));
         storyboard.Begin();
+        return true;
+    }
+
+    private static CompositeTransform EnsureTransform(UIElement container)
+    {
+        if (container.RenderTransform is CompositeTransform existing)
+        {
+            return existing;
+        }
+
+        var transform = new CompositeTransform();
+        container.RenderTransform = transform;
+        return transform;
     }
 
     private void ResetAll()

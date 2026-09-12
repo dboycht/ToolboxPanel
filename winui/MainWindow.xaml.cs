@@ -16,6 +16,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -42,9 +43,15 @@ public sealed partial class MainWindow : Window
 
     private string? _backdropOverride;      // --backdrop=
     private TabIconMode? _tabIconOverride;  // --tab-icons=
+    private SizeInt32? _sizeOverride;       // --size=
     private int _startupTabIndex;           // --tab=
     private bool _isDemo;                   // --demo
     private bool _openSettingsAtStartup;    // --open-settings
+
+    /// <summary>窗口尺寸就绪之前不把 Changed 事件当"用户改尺寸"（启动时我们自己会 Resize 一次）。</summary>
+    private bool _windowSizeReady;
+
+    private DispatcherQueueTimer? _sizeSaveTimer;
     private string _backdropLine = "窗口材质：未初始化";
     private string? _transientStatus;
 
@@ -53,7 +60,6 @@ public sealed partial class MainWindow : Window
         InitializeComponent();
 
         Title = "ToolboxPanel";
-        AppWindow.Resize(new SizeInt32(1200, 800));
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -61,8 +67,12 @@ public sealed partial class MainWindow : Window
 
         ApplyStartupArguments();
         LoadSettings();
+        ApplyInitialWindowSize();
         LoadData();
         ApplyAllSettings();
+
+        // 记住窗口大小：用户拖完尺寸后（去抖）写进 config.json
+        AppWindow.Changed += OnAppWindowChanged;
 
         if (_openSettingsAtStartup)
         {
@@ -81,8 +91,6 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private void ApplyStartupArguments()
     {
-        SizeInt32? size = null;
-
         foreach (var argument in Environment.GetCommandLineArgs())
         {
             if (argument.Equals("--demo", StringComparison.OrdinalIgnoreCase))
@@ -106,7 +114,7 @@ public sealed partial class MainWindow : Window
                 var parts = argument["--size=".Length..].Split('x', 'X');
                 if (parts.Length == 2 && int.TryParse(parts[0], out int w) && int.TryParse(parts[1], out int h))
                 {
-                    size = new SizeInt32(Math.Max(360, w), Math.Max(320, h));
+                    _sizeOverride = new SizeInt32(Math.Max(360, w), Math.Max(320, h));
                 }
             }
             else if (argument.StartsWith("--tab=", StringComparison.OrdinalIgnoreCase)
@@ -123,8 +131,107 @@ public sealed partial class MainWindow : Window
                 }
             }
         }
+    }
 
-        TryResizeWindow(size ?? (_isDemo ? new SizeInt32(880, 560) : new SizeInt32(1200, 800)));
+    /// <summary>窗口尺寸优先级：--size= &gt; 上次记录的尺寸 &gt; 默认（演示模式更小）。</summary>
+    private void ApplyInitialWindowSize()
+    {
+        SizeInt32 size;
+
+        if (_sizeOverride is { } overridden)
+        {
+            size = overridden;
+        }
+        else if (_settingsData?.WindowSize is { } saved)
+        {
+            size = new SizeInt32(saved.Width, saved.Height);
+        }
+        else
+        {
+            size = _isDemo ? new SizeInt32(880, 560) : new SizeInt32(1200, 800);
+        }
+
+        TryResizeWindow(ClampToWorkArea(size));
+        _windowSizeReady = true;
+    }
+
+    /// <summary>夹到当前显示器的可用区域，避免换了显示器/手改配置后窗口大到点不到。</summary>
+    private SizeInt32 ClampToWorkArea(SizeInt32 size)
+    {
+        try
+        {
+            var area = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+                AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest);
+            var work = area.WorkArea;
+
+            return new SizeInt32(
+                Math.Clamp(size.Width, AppSettings.MinWindowWidth, Math.Max(AppSettings.MinWindowWidth, work.Width)),
+                Math.Clamp(size.Height, AppSettings.MinWindowHeight, Math.Max(AppSettings.MinWindowHeight, work.Height)));
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("ClampToWorkArea", ex);
+            return size;
+        }
+    }
+
+    /// <summary>窗口尺寸变化 → 去抖 400ms 后写进设置（拖拽过程中不刷盘）。</summary>
+    private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
+    {
+        if (!_windowSizeReady || !args.DidSizeChange || _settings is null || _settingsData is null)
+        {
+            return;
+        }
+
+        var size = sender.Size;
+        if (size.Width <= 0 || size.Height <= 0)
+        {
+            return;
+        }
+
+        _sizeSaveTimer ??= CreateSizeSaveTimer();
+        _sizeSaveTimer.Stop();
+        _sizeSaveTimer.Start();
+    }
+
+    private DispatcherQueueTimer CreateSizeSaveTimer()
+    {
+        var timer = DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(400);
+        timer.IsRepeating = false;
+        timer.Tick += (_, _) => SaveWindowSize();
+        return timer;
+    }
+
+    private void SaveWindowSize()
+    {
+        if (_settings is null || _settingsData is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var size = AppWindow.Size;
+            if (size.Width <= 0 || size.Height <= 0)
+            {
+                return;
+            }
+
+            if (_settingsData.WindowSize == (size.Width, size.Height))
+            {
+                return;   // 没变化就不写文件
+            }
+
+            _settingsData.WindowSize = (size.Width, size.Height);
+            _settings.Save(_settingsData);
+            _log.AppendLine($"记住窗口尺寸 = {size.Width}x{size.Height}");
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("SaveWindowSize", ex);
+        }
     }
 
     private void TryMoveWindow(int x, int y)
@@ -213,12 +320,22 @@ public sealed partial class MainWindow : Window
 
     private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(SettingsOverlay.Visibility != Visibility.Visible);
 
+    /// <summary>点面板外的空白处关闭（这一层在面板"下面"，点面板本身不会触发）。</summary>
+    private void OnSettingsBackdropTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+        => ShowSettings(false);
+
     private void ShowSettings(bool open)
     {
         SettingsOverlay.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         SettingsButton.Background = open
             ? new SolidColorBrush(Color.FromArgb(30, 255, 255, 255))
             : new SolidColorBrush(Colors.Transparent);
+
+        if (open)
+        {
+            // 让面板拿到焦点：Esc 关闭的键盘加速器才生效
+            Settings.Focus(FocusState.Programmatic);
+        }
     }
 
     // ────────────────────────────── 材质 ──────────────────────────────

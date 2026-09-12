@@ -264,6 +264,7 @@ public class SettingsStoreTests
             s.AnimationDurationMs = 320;
             s.AnimationStaggerMs = 40;
             s.AnimationEasing = AnimationEasing.Soft;
+            s.WindowSize = (1024, 768);
         });
 
         var reloaded = new SettingsStore(temp.Path).Load();
@@ -274,5 +275,65 @@ public class SettingsStoreTests
         Assert.Equal(320, reloaded.AnimationDurationMs);
         Assert.Equal(40, reloaded.AnimationStaggerMs);
         Assert.Equal(AnimationEasing.Soft, reloaded.AnimationEasing);
+        Assert.Equal((1024, 768), reloaded.WindowSize);
+    }
+
+    [Fact]
+    public void 窗口尺寸_没记录过时返回null()
+    {
+        using var temp = new TempDataDirectory();
+        var settings = new SettingsStore(temp.Path).Load();
+
+        Assert.Null(settings.WindowSize);
+    }
+
+    [Theory]
+    [InlineData(0, 0)]          // 手改成 0：写入时夹到下限
+    [InlineData(100, 80)]       // 太小：夹到下限
+    [InlineData(-5, 600)]       // 负数：夹到下限
+    public void 窗口尺寸_写入时夹取到合法区间(int width, int height)
+    {
+        using var temp = new TempDataDirectory();
+        var store = new SettingsStore(temp.Path);
+        var settings = store.Load();
+
+        settings.WindowSize = (width, height);
+        store.Save(settings);                    // 落盘后再读回来核对
+
+        var size = new SettingsStore(temp.Path).Load().WindowSize!.Value;
+        Assert.InRange(size.Width, AppSettings.MinWindowWidth, AppSettings.MaxWindowWidth);
+        Assert.InRange(size.Height, AppSettings.MinWindowHeight, AppSettings.MaxWindowHeight);
+    }
+
+    [Fact]
+    public void 窗口尺寸_清空后不再写进文件()
+    {
+        using var temp = new TempDataDirectory();
+        var store = new SettingsStore(temp.Path);
+        var settings = store.Load();
+
+        settings.WindowSize = (1000, 700);
+        store.Save(settings);
+        Assert.NotNull(new SettingsStore(temp.Path).Load().WindowSize);
+
+        settings.WindowSize = null;
+        store.Save(settings);
+
+        Assert.Null(new SettingsStore(temp.Path).Load().WindowSize);
+        Assert.DoesNotContain("window_width", File.ReadAllText(store.SettingsFile, Encoding.UTF8));
+    }
+
+    [Fact]
+    public void 窗口尺寸_手改配置成非法值时不崩且回落默认()
+    {
+        using var temp = new TempDataDirectory();
+        File.WriteAllText(
+            Path.Combine(temp.Path, "config.json"),
+            """{ "language": "zh", "window_width": 10, "window_height": 10 }""",
+            new UTF8Encoding(false));
+
+        var settings = new SettingsStore(temp.Path).Load();
+
+        Assert.Null(settings.WindowSize);   // 调用方据此用默认尺寸
     }
 }
