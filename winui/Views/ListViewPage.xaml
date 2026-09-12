@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ListViewPage.xaml —— W3 列表页（tab_type == "list"）
+
+    对应 v1.11.6 的 ListTabPage：两列（说明 / 路径），点一行打开该路径。
+    行内编辑、右键菜单、拖拽排序属于 W5。
+-->
+<UserControl
+    x:Class="ToolboxPanel.Views.ListViewPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:ToolboxPanel.ViewModels">
+
+    <UserControl.Resources>
+        <DataTemplate x:Key="ListRowTemplate" x:DataType="vm:ListRowViewModel">
+            <Grid Padding="8,6" ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="3*" />
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" Text="{x:Bind Description}"
+                           FontSize="13" TextTrimming="CharacterEllipsis" />
+
+                <TextBlock Grid.Column="1" Text="{x:Bind Path}"
+                           FontSize="12" Opacity="0.7"
+                           TextTrimming="CharacterEllipsis" />
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <ListView x:Name="Rows"
+                  ItemTemplate="{StaticResource ListRowTemplate}"
+                  SelectionMode="None"
+                  IsItemClickEnabled="True"
+                  ItemClick="OnRowClick"
+                  Padding="8,4"
+                  Background="Transparent" />
+
+        <StackPanel x:Name="EmptyHint"
+                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Spacing="8" Visibility="Collapsed">
+            <FontIcon Glyph="&#xE8FD;" FontSize="40" Opacity="0.5" />
+            <TextBlock Text="这一页还没有列表项" Opacity="0.7" FontSize="13" />
+            <TextBlock Text="（新建 / 编辑在 W5 实现）" Opacity="0.45" FontSize="11" />
+        </StackPanel>
+    </Grid>
+</UserControl>

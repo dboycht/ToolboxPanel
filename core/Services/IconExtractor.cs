@@ -75,14 +75,23 @@ public sealed class IconExtractor
     }
 
     /// <summary>
-    /// 给一个图标模型提取图标：**快捷方式带自定义图标**时用「文件 + 索引」，
-    /// 否则按类型取路径（FILE/FOLDER/SHORTCUT 用 source_path，URL/COMMAND 没有图标可提取 → 兜底）。
+    /// 给一个图标模型提取图标：
+    ///   · **URL / COMMAND → 直接用该类型的标准图标**（与原版一致：原版是
+    ///     <c>get_fallback(IconType.URL/COMMAND)</c>，**从不按路径提取** —— 这两类的
+    ///     source_path 是网址/命令行，拿去当文件名查图标只会得到毫无意义的图）；
+    ///   · 快捷方式带自定义图标 → 用「文件 + 索引」；
+    ///   · 其余（文件/文件夹/快捷方式） → 按路径取系统图标。
     /// </summary>
     /// <param name="icon">目标图标。</param>
     /// <param name="shortcut">该快捷方式的解析结果（可为 null；有自定义图标时会被优先使用）。</param>
     public string ExtractAndCacheForIcon(IconModel icon, ShortcutInfo? shortcut = null)
     {
         ArgumentNullException.ThrowIfNull(icon);
+
+        if (icon.Type is IconType.Url or IconType.Command)
+        {
+            return CreateFallbackCache(icon.Type);
+        }
 
         if (shortcut is not null && !string.IsNullOrWhiteSpace(shortcut.IconPath))
         {

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    GridPage.xaml —— W3 网格页（一个 grid 型标签页的内容）
+
+    ⚠️ WinUI 的 GridView **自己管 delegate 的 x/y**：模板里不要绑 y、不要给 y 加动画
+       （QML 时代踩过同一类坑，见 ERROR.md E6）。要做入场/悬停动效就放在内层容器或 transform 上。
+-->
+<UserControl
+    x:Class="ToolboxPanel.Views.GridPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:vm="using:ToolboxPanel.ViewModels">
+
+    <UserControl.Resources>
+        <DataTemplate x:Key="IconTileTemplate" x:DataType="vm:IconTileViewModel">
+            <Grid Width="104" Height="112" Padding="4">
+                <StackPanel VerticalAlignment="Center" Spacing="6">
+
+                    <!-- 真图标（从 data/icons/*.png 缓存来的） -->
+                    <Image Source="{x:Bind IconSource}"
+                           Width="48" Height="48"
+                           VerticalAlignment="Center"
+                           Visibility="{x:Bind HasIcon}" />
+
+                    <!-- 拿不到图标时的字形兜底 -->
+                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="38"
+                              HorizontalAlignment="Center"
+                              Visibility="{x:Bind HasNoIcon}" />
+
+                    <TextBlock Text="{x:Bind DisplayName}"
+                               FontSize="12"
+                               MaxLines="2"
+                               TextTrimming="CharacterEllipsis"
+                               TextWrapping="Wrap"
+                               TextAlignment="Center"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <Grid>
+        <GridView x:Name="TileGrid"
+                  ItemTemplate="{StaticResource IconTileTemplate}"
+                  SelectionMode="None"
+                  IsItemClickEnabled="True"
+                  ItemClick="OnTileClick"
+                  Padding="16,12"
+                  Background="Transparent" />
+
+        <!-- 空页提示（没有图标时显示） -->
+        <StackPanel x:Name="EmptyHint"
+                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Spacing="8" Visibility="Collapsed">
+            <FontIcon Glyph="&#xE8A5;" FontSize="40" Opacity="0.5" />
+            <TextBlock Text="这一页还没有图标" Opacity="0.7" FontSize="13" />
+            <TextBlock Text="（新建 / 拖入图标在 W5 实现）" Opacity="0.45" FontSize="11" />
+        </StackPanel>
+    </Grid>
+</UserControl>

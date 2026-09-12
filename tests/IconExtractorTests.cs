@@ -191,6 +191,27 @@ public class IconExtractorTests
         AssertImage(Path.Combine(temp.IconsDirectory, cacheName), IconExtractor.DefaultIconSize, 0.01);
     }
 
+    [Theory]
+    [InlineData(IconType.Url)]
+    [InlineData(IconType.Command)]
+    public void URL与命令用类型标准图标_不按路径提取(IconType type)
+    {
+        using var temp = new TempDataDirectory();
+        var extractor = new IconExtractor(temp.IconsDirectory);
+
+        // 原版语义：这两类走 get_fallback(type)，source_path 是网址/命令行，不参与图标提取
+        var icon = type == IconType.Url
+            ? new IconModel { Type = type, SourcePath = "https://example.com/path?q=1" }
+            : new IconModel { Type = type, SourcePath = "cmd.exe /c echo hi", TargetPath = "cmd.exe" };
+
+        var viaModel = extractor.ExtractAndCacheForIcon(icon);
+        var directFallback = extractor.CreateFallbackCache(type);
+
+        Assert.Equal(
+            File.ReadAllBytes(Path.Combine(temp.IconsDirectory, directFallback)),
+            File.ReadAllBytes(Path.Combine(temp.IconsDirectory, viaModel)));
+    }
+
     [Fact]
     public void 兜底图标映射与原版语义一致()
     {
