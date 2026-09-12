@@ -33,12 +33,22 @@
             <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="Transparent" />
             <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="Transparent" />
 
-            <!-- 标签栏项：图标 + 名称 + 数量 + 选中强调条 -->
+            <!-- 标签栏项：图标槽 + 名称 + 数量 + 选中强调条 -->
             <DataTemplate x:Key="TabStripItemTemplate" x:DataType="vm:TabItemViewModel">
-                <Grid>
+                <Grid PointerEntered="OnTabPointerEntered" PointerExited="OnTabPointerExited">
                     <StackPanel Orientation="Horizontal" Spacing="6"
                                 VerticalAlignment="Center" Margin="0,0,0,2">
-                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
+                        <!--
+                            图标槽：宽度在 0↔16 之间动画。
+                            "整体拉伸"就是从这里来的：标签宽度由内容决定，槽变宽 → 标签跟着变宽。
+                            三种模式（只保留文字 / 常驻 / 悬停）由代码在 Loaded 与设置变化时套用。
+                        -->
+                        <Border x:Name="TabGlyphHost" Width="0" Opacity="0"
+                                VerticalAlignment="Center"
+                                Loaded="OnTabGlyphHostLoaded">
+                            <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
+                        </Border>
+
                         <TextBlock Text="{x:Bind Name}" FontSize="12" VerticalAlignment="Center" />
                         <TextBlock Text="{x:Bind Summary}" FontSize="10" Opacity="0.5" VerticalAlignment="Center" />
                     </StackPanel>
@@ -80,6 +90,32 @@
                 <FontIcon Glyph="&#xE71D;" FontSize="12" />
                 <TextBlock Text="ToolboxPanel" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock x:Name="BackdropLabel" FontSize="10.5" Opacity="0.5" VerticalAlignment="Center" />
+
+                <!-- 设置入口（放在左侧组里，避开右上角系统按钮区） -->
+                <Button x:Name="SettingsButton" Padding="6,2" Margin="4,0,0,0"
+                        Background="Transparent" BorderThickness="0"
+                        ToolTipService.ToolTip="设置">
+                    <FontIcon Glyph="&#xE713;" FontSize="12" />
+                    <Button.Flyout>
+                        <Flyout Placement="BottomEdgeAlignedLeft">
+                            <StackPanel Width="248" Spacing="10" Padding="4">
+                                <TextBlock Text="标签图标" FontSize="12" FontWeight="SemiBold" />
+                                <RadioButtons x:Name="TabIconModeChoices"
+                                              SelectionChanged="OnTabIconModeChanged">
+                                    <RadioButton Content="只保留文字" Tag="text" />
+                                    <RadioButton Content="常驻显示图标" Tag="always" />
+                                    <RadioButton Content="悬停时显示（图标浮现 + 拉伸）" Tag="hover" />
+                                </RadioButtons>
+
+                                <TextBlock Text="动效" FontSize="12" FontWeight="SemiBold" Margin="0,6,0,0" />
+                                <ToggleSwitch x:Name="AnimationSwitch"
+                                              Header="界面动效（入场交错 / 悬停）"
+                                              OnContent="开" OffContent="关"
+                                              Toggled="OnAnimationsToggled" />
+                            </StackPanel>
+                        </Flyout>
+                    </Button.Flyout>
+                </Button>
             </StackPanel>
         </Grid>
 

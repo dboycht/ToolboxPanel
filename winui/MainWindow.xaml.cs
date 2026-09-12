@@ -15,13 +15,17 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using Microsoft.UI;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 using ToolboxPanel.Views;
 using Windows.Graphics;
@@ -31,13 +35,21 @@ namespace ToolboxPanel;
 
 public sealed partial class MainWindow : Window
 {
+    /// <summary>标签图标槽展开后的宽度（DIP）。"整体拉伸"就是标签宽度跟着这个值变化。</summary>
+    private const double TabGlyphWidth = 16;
+
     private static readonly string VerifyLogPath =
         Path.Combine(Path.GetTempPath(), "toolboxpanel-verify.txt");
 
     private readonly StringBuilder _log = new();
     private readonly Dictionary<string, UIElement> _pages = new(StringComparer.Ordinal);
+    private readonly Dictionary<TabItemViewModel, Border> _tabGlyphHosts = new();
+    private readonly Dictionary<TabItemViewModel, Storyboard> _tabGlyphAnimations = new();
 
     private MainViewModel? _viewModel;
+    private SettingsStore? _settings;
+    private AppSettings? _settingsData;
+    private bool _syncingSettingsUi;
     private string _backdropLine = "窗口材质：未初始化";
     private string? _transientStatus;
 
@@ -46,6 +58,9 @@ public sealed partial class MainWindow : Window
 
     /// <summary>纯 UI 演示模式（--demo）：假数据、不读写任何数据文件、点击不启动程序。</summary>
     private bool _isDemo;
+
+    /// <summary>--tab-icons=text|always|hover：本次运行临时覆盖标签图标形态（不写配置文件，供验证用）。</summary>
+    private TabIconMode? _tabIconModeOverride;
 
     public MainWindow()
     {
@@ -61,7 +76,247 @@ public sealed partial class MainWindow : Window
         CustomizeCaptionButtons();
 
         ApplyStartupArguments();   // --demo / --backdrop= / --pos= / --size= / --tab=
+        LoadSettings();
         LoadData();
+        ApplyAnimationSetting();
+    }
+
+    // ────────────────────────────── 设置（config.json）──────────────────────────────
+
+    /// <summary>
+    /// 读设置。演示模式把 config.json 写到临时目录，**绝不碰用户真实数据目录**。
+    /// </summary>
+    private void LoadSettings()
+    {
+        try
+        {
+            _settings = _isDemo
+                ? new SettingsStore(Path.Combine(Path.GetTempPath(), "toolboxpanel-ui-demo"))
+                : SettingsStore.CreateDefault();
+
+            _settingsData = _settings.Load();
+
+            // 验证用：本次运行临时覆盖（**不落盘**，配置文件的真实值不受影响）
+            if (_tabIconModeOverride is { } overridden)
+            {
+                _settingsData.TabIconMode = overridden;
+            }
+
+            _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
+            _log.AppendLine($"标签图标形态 = {_settingsData.TabIconModeRaw ?? "(未设置→默认 hover)"}"
+                            + $"；动效 = {_settingsData.AnimationsEnabled}");
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.LoadSettings", ex);
+            _settingsData = new AppSettings();
+        }
+
+        SyncSettingsUi();
+    }
+
+    /// <summary>把设置值刷到设置面板控件上（加锁标志避免触发变更回调）。</summary>
+    private void SyncSettingsUi()
+    {
+        if (TabIconModeChoices is null || AnimationSwitch is null)
+        {
+            return;
+        }
+
+        _syncingSettingsUi = true;
+        try
+        {
+            TabIconModeChoices.SelectedIndex = (_settingsData?.TabIconMode ?? TabIconMode.Hover) switch
+            {
+                TabIconMode.Text => 0,
+                TabIconMode.Always => 1,
+                _ => 2,
+            };
+
+            AnimationSwitch.IsOn = _settingsData?.AnimationsEnabled ?? true;
+        }
+        finally
+        {
+            _syncingSettingsUi = false;
+        }
+    }
+
+    private void OnTabIconModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingSettingsUi || _settings is null || _settingsData is null)
+        {
+            return;
+        }
+
+        if (TabIconModeChoices.SelectedItem is not RadioButton { Tag: string wire })
+        {
+            return;
+        }
+
+        try
+        {
+            _settingsData.TabIconMode = AppSettings.ParseTabIconMode(wire);
+            _settings.Save(_settingsData);          // 立刻落盘（与原版"改完即存"一致）
+            ApplyTabIconMode();
+            _log.AppendLine($"设置变更：标签图标形态 = {_settingsData.TabIconModeRaw}");
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnTabIconModeChanged", ex);
+        }
+    }
+
+    private void OnAnimationsToggled(object sender, RoutedEventArgs e)
+    {
+        if (_syncingSettingsUi || _settings is null || _settingsData is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _settingsData.AnimationsEnabled = AnimationSwitch.IsOn;
+            _settings.Save(_settingsData);
+            ApplyAnimationSetting();
+            _log.AppendLine($"设置变更：动效 = {_settingsData.AnimationsEnabled}");
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnAnimationsToggled", ex);
+        }
+    }
+
+    // ────────────────────────────── 标签图标三种形态 ──────────────────────────────
+
+    /// <summary>标签图标槽被加载出来时记下它（模式变化时要直接改这些实例）。</summary>
+    private void OnTabGlyphHostLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is Border host && host.DataContext is TabItemViewModel tab)
+        {
+            _tabGlyphHosts[tab] = host;
+            ApplyTabIconModeToHost(host, expand: (_settingsData?.TabIconMode ?? TabIconMode.Hover) == TabIconMode.Always);
+        }
+    }
+
+    private void OnTabPointerEntered(object sender, PointerRoutedEventArgs e)
+        => AnimateTabGlyph(sender, show: true);
+
+    private void OnTabPointerExited(object sender, PointerRoutedEventArgs e)
+        => AnimateTabGlyph(sender, show: false);
+
+    /// <summary>按当前设置重新套用三种形态（设置变化 / 载入完成时调用）。</summary>
+    private void ApplyTabIconMode()
+    {
+        bool expand = (_settingsData?.TabIconMode ?? TabIconMode.Hover) == TabIconMode.Always;
+
+        foreach (var (tab, host) in _tabGlyphHosts)
+        {
+            StopTabGlyphAnimation(tab);
+            ApplyTabIconModeToHost(host, expand);
+        }
+    }
+
+    private static void ApplyTabIconModeToHost(Border host, bool expand)
+    {
+        host.Width = expand ? TabGlyphWidth : 0;
+        host.Opacity = expand ? 1 : 0;
+    }
+
+    /// <summary>
+    /// 悬停动效：图标槽 0↔16 宽度 + 透明度渐变，标签随之"整体拉伸"。
+    /// 只有 <see cref="TabIconMode.Hover"/> 模式才响应；动效总开关关闭时直接落值不动画。
+    /// </summary>
+    private void AnimateTabGlyph(object sender, bool show)
+    {
+        if (_settingsData?.TabIconMode != TabIconMode.Hover)
+        {
+            return;
+        }
+
+        if (sender is not FrameworkElement root || root.DataContext is not TabItemViewModel tab)
+        {
+            return;
+        }
+
+        if (!_tabGlyphHosts.TryGetValue(tab, out var host))
+        {
+            return;
+        }
+
+        StopTabGlyphAnimation(tab);
+
+        var targetWidth = show ? TabGlyphWidth : 0d;
+        var targetOpacity = show ? 1d : 0d;
+
+        if (!(_settingsData?.AnimationsEnabled ?? true))
+        {
+            ApplyTabIconModeToHost(host, show);
+            return;
+        }
+
+        var widthAnimation = new DoubleAnimation
+        {
+            To = targetWidth,
+            Duration = new Duration(TimeSpan.FromMilliseconds(170)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+
+            // 动画宽度会触发布局（"拉伸"就是要它发生），必须显式允许
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(widthAnimation, host);
+        Storyboard.SetTargetProperty(widthAnimation, "Width");
+
+        var opacityAnimation = new DoubleAnimation
+        {
+            To = targetOpacity,
+            Duration = new Duration(TimeSpan.FromMilliseconds(140)),
+            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+        };
+        Storyboard.SetTarget(opacityAnimation, host);
+        Storyboard.SetTargetProperty(opacityAnimation, "Opacity");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(widthAnimation);
+        storyboard.Children.Add(opacityAnimation);
+        _tabGlyphAnimations[tab] = storyboard;
+        storyboard.Begin();
+    }
+
+    private void StopTabGlyphAnimation(TabItemViewModel tab)
+    {
+        if (_tabGlyphAnimations.Remove(tab, out var running))
+        {
+            running.Stop();
+        }
+    }
+
+    /// <summary>动效总开关：控制标签栏与各页面的入场/重排过渡。</summary>
+    private void ApplyAnimationSetting()
+    {
+        bool enabled = _settingsData?.AnimationsEnabled ?? true;
+
+        if (TabStrip is not null)
+        {
+            TabStrip.ItemContainerTransitions.Clear();
+            if (enabled)
+            {
+                TabStrip.ItemContainerTransitions.Add(new EntranceThemeTransition
+                {
+                    FromVerticalOffset = 8,
+                    IsStaggeringEnabled = true,
+                });
+            }
+        }
+
+        foreach (var page in _pages.Values)
+        {
+            if (page is IAnimationHost host)
+            {
+                host.SetAnimationsEnabled(enabled);
+            }
+        }
     }
 
     // ────────────────────────────── 材质 / 启动参数 ──────────────────────────────
@@ -96,6 +351,10 @@ public sealed partial class MainWindow : Window
                 {
                     size = new SizeInt32(Math.Max(360, w), Math.Max(320, h));
                 }
+            }
+            else if (argument.StartsWith("--tab-icons=", StringComparison.OrdinalIgnoreCase))
+            {
+                _tabIconModeOverride = AppSettings.ParseTabIconMode(argument["--tab-icons=".Length..]);
             }
             else if (argument.StartsWith("--tab=", StringComparison.OrdinalIgnoreCase)
                      && int.TryParse(argument["--tab=".Length..], out int tabIndex))
@@ -311,6 +570,12 @@ public sealed partial class MainWindow : Window
 
             _pages[tab.Id] = page;
             _log.AppendLine($"首次创建页面 = [{tab.Kind}] {tab.Name}（{page.GetType().Name}）");
+
+            // 新页面要立刻服从"动效总开关"（默认已在 XAML 里声明，这里按设置覆盖）
+            if (page is IAnimationHost animationHost)
+            {
+                animationHost.SetAnimationsEnabled(_settingsData?.AnimationsEnabled ?? true);
+            }
         }
 
         ContentHost.Content = page;
