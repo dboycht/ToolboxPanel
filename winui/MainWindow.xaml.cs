@@ -60,16 +60,25 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
+        // ⚠️ 必须在 InitializeComponent() **之前**把主题令牌灌进资源字典：
+        //    XAML 里的 {ThemeResource 令牌名} 是在加载那一刻解析的，晚一步就会找不到键。
+        EnsureThemeResources();
+
         InitializeComponent();
 
         Title = "ToolboxPanel";
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
-        CustomizeCaptionButtons();
 
         ApplyStartupArguments();
         LoadSettings();
+
+        // 主题要早于其它界面套用：它决定"深色下的前景色"等基础观感，
+        // 也让下面的 CustomizeCaptionButtons 能取到正确的标题栏按钮颜色。
+        ApplyTheme();
+
+        CustomizeCaptionButtons();
         ApplyInitialWindowSize();
         LoadData();
         ApplyAllSettings();
@@ -82,6 +91,174 @@ public sealed partial class MainWindow : Window
             ShowSettings(true);
         }
     }
+
+    // ────────────────────────────── 主题（最小全局主题，W4 第一步）──────────────────────────────
+    //
+    // 目标："主题是全局的" —— 主窗口、标签栏、状态栏、**设置面板**都用同一套令牌。
+    // 做法分三件：
+    //   ① 令牌表在 Core（`core/Storage/ThemeTokens.cs`，浅/深两张、可单测）；
+    //   ② 这里把令牌灌成**应用级资源**（Brush），XAML 用 {StaticResource 名字} 引用 ——
+    //      设置面板是独立 UserControl，只能用应用级资源才拿得到同一套颜色；
+    //   ③ 根 Grid 的 RequestedTheme 跟着设置走，让 WinUI 原生控件的默认配色也一起变
+    //      （否则浅色主题下 ComboBox/Slider 还是深色的）。
+    //
+    // ⚠️ 资源名就是 XAML 里用的键，改名字要两边一起改。
+
+    /// <summary>当前生效的主题令牌（换主题时整体替换）。</summary>
+    private ThemePalette _themePalette = ThemeTokens.Dark;
+
+    /// <summary>把令牌灌进应用级资源（**幂等**：XAML 每次加载都会重新解析资源引用，字典只需建一次）。</summary>
+    private static void EnsureThemeResources()
+    {
+        var resources = Application.Current.Resources;
+        if (resources.ContainsKey("PanelSurfaceBrush"))
+        {
+            return;
+        }
+
+        void Add(string key, ThemePalette palette, Func<ThemePalette, (byte A, byte R, byte G, byte B)> pick)
+        {
+            var (a, r, g, b) = pick(palette);
+            resources[key] = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+        }
+
+        foreach (var palette in new[] { ThemeTokens.Dark, ThemeTokens.Light })
+        {
+            var suffix = palette.IsDark ? "Dark" : "Light";
+
+            // 令牌名 → Brush。键名与 XAML 里的 {StaticResource} 一一对应。
+            Add($"PanelSurface{suffix}", palette, p => p.PanelSurface);
+            Add($"PanelBorder{suffix}", palette, p => p.PanelBorder);
+            Add($"OverlaySurface{suffix}", palette, p => p.Overlay);
+            Add($"StatusSurface{suffix}", palette, p => p.StatusSurface);
+            Add($"TabStripSurface{suffix}", palette, p => p.TabStripSurface);
+            Add($"TabStripBorder{suffix}", palette, p => p.TabStripBorder);
+            Add($"CardSurface{suffix}", palette, p => p.CardSurface);
+            Add($"HoverSurface{suffix}", palette, p => p.HoverSurface);
+            Add($"PressedSurface{suffix}", palette, p => p.PressedSurface);
+            Add($"SelectedSurface{suffix}", palette, p => p.SelectedSurface);
+            Add($"AccentBrush{suffix}", palette, p => p.Accent);
+            Add($"DividerBrush{suffix}", palette, p => p.Divider);
+            Add($"TitleBarButtonForeground{suffix}", palette, p => p.TitleBarButtonForeground);
+            Add($"TitleBarButtonInactiveForeground{suffix}", palette, p => p.TitleBarButtonInactiveForeground);
+            Add($"TitleBarButtonHover{suffix}", palette, p => p.TitleBarButtonHoverBackground);
+            Add($"TitleBarButtonPressed{suffix}", palette, p => p.TitleBarButtonPressedBackground);
+        }
+    }
+
+    /// <summary>按 `--theme=` 临时覆盖（开发/验证用，**不落盘**）。</summary>
+    private string? _themeOverride;
+
+    /// <summary>套用界面主题：换令牌 + 跟根 Grid 的 RequestedTheme，并刷新标题栏按钮与手写的画刷。</summary>
+    private void ApplyTheme()
+    {
+        var mode = _themeOverride is null
+            ? (_settingsData?.UiTheme ?? ThemeMode.System)
+            : ThemeTokens.ParseMode(_themeOverride);
+
+        // "跟随系统"要让根元素回到 Default（= 跟随系统），否则一旦被强制过就再也回不去系统了。
+        // 具体生效的深浅由 ApplyThemeToHandWrittenBrushes 里读 RootGrid.ActualTheme 决定 ——
+        // ⚠️ ElementTheme 与 ApplicationTheme 是两个不同的类型，不能直接比较（会 CS0019）。
+        if (RootGrid is not null)
+        {
+            var requested = mode switch
+            {
+                ThemeMode.Light => ElementTheme.Light,
+                ThemeMode.Dark => ElementTheme.Dark,
+                _ => ElementTheme.Default,
+            };
+
+            if (RootGrid.RequestedTheme != requested)
+            {
+                RootGrid.RequestedTheme = requested;
+            }
+        }
+
+        // 真正的深浅：强制模式直接定；"跟随系统"读根元素的生效主题
+        // （刚把 RequestedTheme 设成 Default 后，ActualTheme 就是系统的深浅）。
+        bool isDark = mode switch
+        {
+            ThemeMode.Light => false,
+            ThemeMode.Dark => true,
+            _ => RootGrid is null || RootGrid.ActualTheme == ElementTheme.Dark,
+        };
+
+        var palette = ThemeTokens.Resolve(mode, systemIsDark: isDark);
+        _themePalette = palette;
+
+        ApplyThemeToHandWrittenBrushes();
+        TabStrip.ApplyTheme(palette);
+        Settings.Refresh();
+        RefreshSettingsButtonBackground();
+        _log.AppendLine($"主题 = {ThemeTokens.ToWire(mode)}（生效：{(palette.IsDark ? "深色" : "浅色")}）");
+    }
+
+    /// <summary>当前是否真的用上了系统材质（由 <see cref="ApplyBackdrop"/> 更新）。</summary>
+    private bool _glassActive;
+
+    /// <summary>
+    /// 代码里手写的画刷（XAML 里那几处资源键换不动的）跟着主题走。
+    /// 之所以有"手写的"，是因为它们要么是**运行时切换**（设置按钮的打开态底色），
+    /// 要么是系统 API（标题栏按钮）、要么依赖"材质是否生效"—— 这几类用资源键表达不了。
+    /// </summary>
+    private void ApplyThemeToHandWrittenBrushes()
+    {
+        var palette = _themePalette;
+
+        // 材质不生效时的兜底底色（材质生效时必须透明，否则盖住玻璃 —— ERROR.md E9）
+        RootGrid.Background = _glassActive
+            ? new SolidColorBrush(Colors.Transparent)
+            : new SolidColorBrush(ToColor(palette.WindowFallback));
+
+        // 设置按钮的"打开中"底色：深色下用白、浅色下用黑
+        RefreshSettingsButtonBackground();
+
+        // 设置面板的玻璃表面：元素级 Acrylic，让面板后面的应用内内容也糊开
+        SettingsPanelHost.Background = CreatePanelGlass(palette);
+    }
+
+    /// <summary>
+    /// 设置面板的表面：**低不透明度令牌 + 元素级 AcrylicBrush**。
+    ///
+    /// <para>⚠️ `TintLuminosityOpacity` 必须显式设 0：它默认 0.8，会在模糊之上再叠一层很亮的
+    /// 亮度层，把模糊"洗"成实心感（ERROR.md E11 的实测结论）。</para>
+    /// <para>FallbackColor 用不透明令牌色：材质被系统回退时也不至于变成透明玻璃片看不清字。</para>
+    /// </summary>
+    private static AcrylicBrush CreatePanelGlass(ThemePalette palette)
+    {
+        var tint = ToColor(palette.PanelSurface);
+        var fallback = Color.FromArgb(
+            255, tint.R, tint.G, tint.B);
+
+        return new AcrylicBrush
+        {
+            TintColor = tint,
+            TintOpacity = 0.0,        // 不额外加色调层，浓度完全交给 tint 的 alpha
+            TintLuminosityOpacity = 0.0,
+            FallbackColor = fallback,
+        };
+    }
+
+    /// <summary>设置按钮"打开中"的底色（选中态）—— 深色用白、浅色用黑。</summary>
+    private void RefreshSettingsButtonBackground()
+    {
+        if (SettingsButton is null)
+        {
+            return;
+        }
+
+        if (!_settingsPanelOpen)
+        {
+            SettingsButton.Background = new SolidColorBrush(Colors.Transparent);
+            return;
+        }
+
+        var (a, r, g, b) = _themePalette.SelectedSurface;
+        SettingsButton.Background = new SolidColorBrush(Color.FromArgb(a, r, g, b));
+    }
+
+    private static Color ToColor((byte A, byte R, byte G, byte B) value)
+        => Color.FromArgb(value.A, value.R, value.G, value.B);
 
     // ────────────────────────────── 启动参数（开发/验证用）──────────────────────────────
 
@@ -111,6 +288,11 @@ public sealed partial class MainWindow : Window
             else if (argument.StartsWith("--tab-icons=", StringComparison.OrdinalIgnoreCase))
             {
                 _tabIconOverride = AppSettings.ParseTabIconMode(argument["--tab-icons=".Length..]);
+            }
+            else if (argument.StartsWith("--theme=", StringComparison.OrdinalIgnoreCase))
+            {
+                // 开发/验证用：临时覆盖界面主题（**不落盘**）
+                _themeOverride = argument["--theme=".Length..];
             }
             else if (argument.StartsWith("--size=", StringComparison.OrdinalIgnoreCase))
             {
@@ -310,6 +492,8 @@ public sealed partial class MainWindow : Window
     {
         var settings = _settingsData ?? new AppSettings();
 
+        // 主题放在最前：它决定兜底底色/面板玻璃等基础观感，后面几项都在它之上叠加。
+        ApplyTheme();
         ApplyBackdrop(settings.Backdrop);
         TabStrip.ApplySettings(settings.TabIconMode, settings.ShowTabCounts, settings.ToAnimationSpec());
 
@@ -340,9 +524,8 @@ public sealed partial class MainWindow : Window
         var duration = new Duration(TimeSpan.FromMilliseconds(
             Math.Clamp((_settingsData?.AnimationDurationMs ?? 220) * 1.2, 120, 420)));
 
-        SettingsButton.Background = open
-            ? new SolidColorBrush(Color.FromArgb(30, 255, 255, 255))
-            : new SolidColorBrush(Colors.Transparent);
+        // 设置按钮的"打开中"底色：随主题令牌走（深色用白、浅色用黑）
+        RefreshSettingsButtonBackground();
 
         if (open)
         {
@@ -478,18 +661,19 @@ public sealed partial class MainWindow : Window
             App.WriteCrash("SetSystemBackdrop/" + kind, ex);
         }
 
-        // 材质生效时根容器必须完全透明；否则补一层不透明兜底底色（ERROR.md E9）
+        // 材质生效时根容器必须完全透明；否则补一层主题兜底底色（ERROR.md E9）
+        // ⚠️ 这一行**交给主题统一处理**（ApplyThemeToHandWrittenBrushes 会按"材质是否生效 + 当前主题"决定），
+        //    避免"改材质把主题底色冲掉"这类两边打架的问题。
         bool glass = backdrop is not null && supported;
-        RootGrid.Background = glass
-            ? new SolidColorBrush(Colors.Transparent)
-            : new SolidColorBrush(Color.FromArgb(255, 32, 32, 37));
+        _glassActive = glass;
+        ApplyThemeToHandWrittenBrushes();
 
         _backdropLine = $"窗口材质 = {label}；本机支持 = {supported}；启用 = {glass}";
         BackdropLabel.Text = label;
         UpdateStatusBar();
     }
 
-    /// <summary>标题栏按钮也透出材质（否则右上角是一块实心主题色）。</summary>
+    /// <summary>标题栏按钮也透出材质（否则右上角是一块实心主题色）；颜色随主题走。</summary>
     private void CustomizeCaptionButtons()
     {
         try
@@ -499,13 +683,14 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
+            var palette = _themePalette;
             var bar = AppWindow.TitleBar;
             bar.ButtonBackgroundColor = Colors.Transparent;
             bar.ButtonInactiveBackgroundColor = Colors.Transparent;
-            bar.ButtonForegroundColor = Colors.White;
-            bar.ButtonInactiveForegroundColor = Color.FromArgb(255, 160, 160, 160);
-            bar.ButtonHoverBackgroundColor = Color.FromArgb(40, 255, 255, 255);
-            bar.ButtonPressedBackgroundColor = Color.FromArgb(60, 255, 255, 255);
+            bar.ButtonForegroundColor = ToColor(palette.TitleBarButtonForeground);
+            bar.ButtonInactiveForegroundColor = ToColor(palette.TitleBarButtonInactiveForeground);
+            bar.ButtonHoverBackgroundColor = ToColor(palette.TitleBarButtonHoverBackground);
+            bar.ButtonPressedBackgroundColor = ToColor(palette.TitleBarButtonPressedBackground);
         }
         catch (Exception ex)
         {

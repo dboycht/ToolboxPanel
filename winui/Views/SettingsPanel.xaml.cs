@@ -57,6 +57,13 @@ public sealed partial class SettingsPanel : UserControl
         _syncingUi = true;
         try
         {
+            UiThemeChoices.SelectedIndex = _settings.UiTheme switch
+            {
+                ThemeMode.Light => 1,
+                ThemeMode.Dark => 2,
+                _ => 0,
+            };
+
             BackdropBox.SelectedIndex = Array.IndexOf(
                 BackdropKinds.All, _settings.Backdrop) is var backdropIndex && backdropIndex >= 0
                 ? backdropIndex
@@ -112,6 +119,14 @@ public sealed partial class SettingsPanel : UserControl
         if (BackdropBox.SelectedItem is ComboBoxItem { Tag: string kind })
         {
             Apply(s => s.Backdrop = kind);
+        }
+    }
+
+    private void OnUiThemeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (UiThemeChoices.SelectedItem is RadioButton { Tag: string wire })
+        {
+            Apply(s => s.UiTheme = ThemeTokens.ParseMode(wire));
         }
     }
 

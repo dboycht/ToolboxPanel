@@ -21,6 +21,8 @@
         <!--
             轻量样式覆盖（lightweight styling）：只改颜色、不动模板，
             把标签项的默认选中胶囊与焦点框换成"更亮的底 + 底部强调条"。
+            ⚠️ 这些是**深色**的初值；浅色主题下由代码换掉（TabStripView.ApplyTheme），
+            否则浅色主题会"白字白底"看不见（WinUI 的轻量样式覆盖键不会自己跟着 RequestedTheme 变）。
         -->
         <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#1FFFFFFF" />
         <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#29FFFFFF" />
@@ -57,10 +59,10 @@
                                Visibility="{x:Bind ShowCount, Mode=OneWay}" />
                 </StackPanel>
 
-                <!-- 选中态：底部 2px 强调条（W4 主题引擎落地后换成主题令牌） -->
-                <Border Height="2" Width="16" CornerRadius="1"
+                <!-- 选中态：底部 2px 强调条（颜色走主题令牌，见 TabStripView.ApplyTheme） -->
+                <Border x:Name="SelectionBar" Height="2" Width="16" CornerRadius="1"
                         VerticalAlignment="Bottom" HorizontalAlignment="Center"
-                        Background="#FF6CC6FF"
+                        Background="{ThemeResource AccentBrushDark}"
                         Visibility="{x:Bind IsSelected, Mode=OneWay}" />
             </Grid>
         </DataTemplate>
@@ -74,8 +76,9 @@
         </Style>
     </UserControl.Resources>
 
-    <Border Margin="8,0,8,6" CornerRadius="6"
-            Background="#14FFFFFF" BorderThickness="1" BorderBrush="#1AFFFFFF">
+    <Border x:Name="StripSurface" Margin="8,0,8,6" CornerRadius="6"
+            Background="{ThemeResource TabStripSurfaceDark}"
+            BorderThickness="1" BorderBrush="{ThemeResource TabStripBorderDark}">
         <ScrollViewer HorizontalScrollBarVisibility="Auto"
                       HorizontalScrollMode="Auto"
                       VerticalScrollBarVisibility="Disabled"

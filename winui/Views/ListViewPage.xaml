@@ -72,7 +72,7 @@
         -->
         <Border x:Name="DropIndicator"
                 Height="2" CornerRadius="1"
-                Background="#FF6CC6FF"
+                Background="{ThemeResource AccentBrushDark}"
                 IsHitTestVisible="False"
                 HorizontalAlignment="Left" VerticalAlignment="Top"
                 Visibility="Collapsed" />

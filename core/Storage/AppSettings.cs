@@ -157,6 +157,18 @@ public sealed class AppSettings
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public int? WindowHeightRaw { get; set; }
 
+    /// <summary>
+    /// **界面**主题（system | light | dark；null = 默认跟随系统）。
+    ///
+    /// <para>⚠️ 为什么另起一个字段而不复用既有的 <see cref="Theme"/>：
+    /// 那个 <c>theme</c> 是老线/QML 线的**主题名**（非空字符串、配合 <c>theme_overrides</c> 做细调），
+    /// 动它会直接破坏旧版兼容。这里新增 <c>ui_theme</c>，
+    /// 旧版读得懂多余键、会原样保留，所以**降级回去也不丢**。</para>
+    /// </summary>
+    [JsonPropertyName("ui_theme")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? UiThemeRaw { get; set; }
+
     /// <summary>未知字段原样保留（旧版/未来版本的键都不该被 C# 线吃掉）。</summary>
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtraFields { get; set; }
@@ -187,6 +199,14 @@ public sealed class AppSettings
     {
         get => BackdropKinds.Normalize(BackdropRaw);
         set => BackdropRaw = BackdropKinds.Normalize(value);
+    }
+
+    /// <summary>界面主题（未设置时默认跟随系统）。</summary>
+    [JsonIgnore]
+    public ThemeMode UiTheme
+    {
+        get => ThemeTokens.ParseMode(UiThemeRaw);
+        set => UiThemeRaw = ThemeTokens.ToWire(value);
     }
 
     /// <summary>是否显示标签栏数量（未设置时默认显示）。</summary>
@@ -287,6 +307,7 @@ public sealed class AppSettings
         AnimationEasingRaw = null;
         WindowWidthRaw = null;
         WindowHeightRaw = null;
+        UiThemeRaw = null;
         ExtraFields = null;
     }
 
@@ -456,6 +477,12 @@ public sealed class SettingsStore
         if (settings.AnimationStaggerMsRaw is not null)
         {
             settings.AnimationStaggerMsRaw = settings.AnimationStaggerMs;
+        }
+
+        // 界面主题：只在文件里已经写了值时才归一化（null 保持 null，避免无谓改动用户的文件）
+        if (settings.UiThemeRaw is not null)
+        {
+            settings.UiThemeRaw = ThemeTokens.ToWire(ThemeTokens.ParseMode(settings.UiThemeRaw));
         }
 
         // 窗口尺寸：只在记录过时才夹取（不合法 → 当作没记录，回落默认尺寸）

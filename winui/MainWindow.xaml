@@ -61,9 +61,9 @@
                         HorizontalContentAlignment="Stretch"
                         VerticalContentAlignment="Stretch" />
 
-        <!-- ④ 状态栏（单行、矮） -->
+        <!-- ④ 状态栏（单行、矮）——底色/描边全部走主题令牌 -->
         <Border Grid.Row="3" Margin="8,5,8,8" Padding="8,4"
-                CornerRadius="5" Background="#26000000">
+                CornerRadius="5" Background="{ThemeResource StatusSurfaceDark}">
             <TextBlock x:Name="StatusText" FontSize="10.5"
                        TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
                        Text="正在载入…" />
@@ -72,11 +72,18 @@
         <!-- ⑤ 设置面板（单独面板，右侧滑出；有滑入/滑出动画） -->
         <Grid x:Name="SettingsOverlay" Grid.RowSpan="4" Visibility="Collapsed" Canvas.ZIndex="10">
             <!-- 点空白处关闭：这层在面板"下面"，点面板本身不会命中它 -->
-            <Grid x:Name="SettingsBackdrop" Background="#59000000" Tapped="OnSettingsBackdropTapped" />
+            <Grid x:Name="SettingsBackdrop" Background="{ThemeResource OverlaySurfaceDark}"
+                  Tapped="OnSettingsBackdropTapped" />
 
+            <!--
+                ⚠️ 面板底色**不能写死**（原来是 #F21B1B1F 的近实心黑）：
+                那既盖住了窗口材质（玻璃观感没了），也不跟随主题。
+                现在交给主题：XAML 只给深色兜底，真正的画刷由 MainWindow.ApplyTheme 按当前令牌换
+                （浅色/深色各一套；面板表面用元素级 Acrylic 保住可读性）。
+            -->
             <Border x:Name="SettingsPanelHost" Width="392"
-                    HorizontalAlignment="Right" Background="#F21B1B1F"
-                    BorderThickness="1,0,0,0" BorderBrush="#1FFFFFFF">
+                    HorizontalAlignment="Right" Background="{ThemeResource PanelSurfaceDark}"
+                    BorderThickness="1,0,0,0" BorderBrush="{ThemeResource PanelBorderDark}">
                 <Border.RenderTransform>
                     <CompositeTransform x:Name="SettingsPanelTransform" TranslateX="392" />
                 </Border.RenderTransform>

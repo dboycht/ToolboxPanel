@@ -15,10 +15,12 @@
 //   4. 图标槽 `IsHitTestVisible=False`：槽的增长不参与命中测试。
 
 using System;
+using Microsoft.UI;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
@@ -121,6 +123,35 @@ public sealed partial class TabStripView : UserControl
         }
 
         ApplyIconModeToAll();
+    }
+
+    /// <summary>
+    /// 套用主题令牌。
+    ///
+    /// <para>为什么标签栏要单独处理：WinUI 的**轻量样式覆盖**（同名资源键）**不会**跟着
+    /// <c>RequestedTheme</c> 自动变色 —— 我们覆盖的那几个键是本控件的资源，
+    /// 浅色主题下不换就会"选中标签白字白底"看不见。</para>
+    /// </summary>
+    public void ApplyTheme(ThemePalette palette)
+    {
+        void Set(string key, (byte A, byte R, byte G, byte B) value)
+            => Resources[key] = new SolidColorBrush(
+                Windows.UI.Color.FromArgb(value.A, value.R, value.G, value.B));
+
+        Set("ListViewItemBackgroundSelected", palette.SelectedSurface);
+        Set("ListViewItemBackgroundSelectedPointerOver", palette.SelectedSurface);
+        Set("ListViewItemBackgroundSelectedPressed", palette.PressedSurface);
+        Set("ListViewItemBackgroundPointerOver", palette.HoverSurface);
+        Set("ListViewItemBackgroundPressed", palette.PressedSurface);
+
+        // 选中标签的文字/图标前景：深色下是白、浅色下必须是黑，否则看不见
+        Set("ListViewItemForegroundSelected", palette.TitleBarButtonForeground);
+
+        // 标签栏外框的底与描边
+        Set("StripSurfaceBrush", palette.TabStripSurface);
+        Set("StripBorderBrush", palette.TabStripBorder);
+        StripSurface.Background = Resources["StripSurfaceBrush"] as Brush;
+        StripSurface.BorderBrush = Resources["StripBorderBrush"] as Brush;
     }
 
     /// <summary>主窗口在切换选中项后调用，用于同步强调条。</summary>

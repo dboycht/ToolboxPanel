@@ -58,6 +58,16 @@
             <StackPanel Spacing="8">
 
                 <!-- ── 窗口 ── -->
+                <TextBlock Text="主题" Style="{StaticResource SectionHeaderStyle}" />
+                <RadioButtons x:Name="UiThemeChoices" Header="界面主题"
+                              SelectionChanged="OnUiThemeChanged">
+                    <RadioButton Content="跟随系统" Tag="system" />
+                    <RadioButton Content="浅色" Tag="light" />
+                    <RadioButton Content="深色" Tag="dark" />
+                </RadioButtons>
+                <TextBlock Style="{StaticResource SectionHintStyle}"
+                           Text="主题是全局的：主窗口、标签栏、状态栏与这个设置面板用同一套颜色令牌。" />
+
                 <TextBlock Text="窗口" Style="{StaticResource SectionHeaderStyle}" />
                 <ComboBox x:Name="BackdropBox" Header="窗口材质" HorizontalAlignment="Stretch"
                           SelectionChanged="OnBackdropChanged">
