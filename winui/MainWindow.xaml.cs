@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window
     private int _startupTabIndex;           // --tab=
     private bool _isDemo;                   // --demo
     private bool _openSettingsAtStartup;    // --open-settings
+    private bool _diagSwitch;               // ⚠️ 临时诊断（定位完删）
 
     /// <summary>窗口尺寸就绪之前不把 Changed 事件当"用户改尺寸"（启动时我们自己会 Resize 一次）。</summary>
     private bool _windowSizeReady;
@@ -89,6 +90,39 @@ public sealed partial class MainWindow : Window
         if (_openSettingsAtStartup)
         {
             ShowSettings(true);
+        }
+
+        if (_diagSwitch)
+        {
+            StartDiagSwitch();   // ⚠️ 临时诊断：程序自己切页（不注入任何输入）
+        }
+    }
+
+    /// <summary>
+    /// ⚠️ 临时诊断：用程序自己的切页把"主页 → 常用 → 主页 → 工具 → 主页"跑一遍，
+    /// 好在探针日志里看到"切回已打开过的页面"时的真实时间线。定位完删掉。
+    /// </summary>
+    private void StartDiagSwitch()
+    {
+        var plan = new (int DelayMs, int TabIndex)[] { (2500, 1), (3000, 0), (3000, 2), (3000, 0), (3000, 1) };
+        int cumulative = 0;
+
+        foreach (var (delayMs, tabIndex) in plan)
+        {
+            cumulative += delayMs;
+            var timer = DispatcherQueue.CreateTimer();
+            timer.Interval = TimeSpan.FromMilliseconds(cumulative);
+            timer.IsRepeating = false;
+            timer.Tick += (_, _) =>
+            {
+                if (_viewModel is not null && tabIndex < _viewModel.Tabs.Count)
+                {
+                    TabStrip.SelectedTab = _viewModel.Tabs[tabIndex];
+                    ShowTab(_viewModel.Tabs[tabIndex]);
+                }
+            };
+
+            timer.Start();
         }
     }
 
@@ -294,6 +328,13 @@ public sealed partial class MainWindow : Window
                 // 开发/验证用：临时覆盖界面主题（**不落盘**）
                 _themeOverride = argument["--theme=".Length..];
             }
+            else if (argument.Equals("--diag", StringComparison.OrdinalIgnoreCase)
+                     || argument.Equals("--probe-switch", StringComparison.OrdinalIgnoreCase))
+            {
+                // ⚠️ 临时诊断：逐毫秒记录入场动效的容器状态（定位"切页先亮一下"）
+                EntranceAnimator.DiagnosticsEnabled = true;
+                _diagSwitch = true;
+            }
             else if (argument.StartsWith("--size=", StringComparison.OrdinalIgnoreCase))
             {
                 var parts = argument["--size=".Length..].Split('x', 'X');
@@ -469,7 +510,7 @@ public sealed partial class MainWindow : Window
 
             Settings.Bind(_settings, _settingsData);
             Settings.SettingApplied += (_, _) => ApplyAllSettings();
-            Settings.PreviewRequested += (_, _) => (ContentHost.Content as IAnimatedPage)?.PlayEntrance();
+            Settings.PreviewRequested += (_, _) => CurrentPage()?.PlayEntrance();
             Settings.CloseRequested += (_, _) => ShowSettings(false);
 
             _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
@@ -743,7 +784,17 @@ public sealed partial class MainWindow : Window
 
     private void OnTabSelected(object? sender, TabItemViewModel tab) => ShowTab(tab);
 
-    /// <summary>切换内容区；页面只建一次，但**每次切页都重放一次入场动效**。</summary>
+    /// <summary>
+    /// 切换内容区：**页面只建一次并常驻**（切页只切 <c>Visibility</c>），每次切页重放一次入场动效。
+    ///
+    /// <para>⚠️ 为什么"常驻"是必须的（这是用户反复反馈"不像从无到有"的最终根因）：
+    /// 原来用 `ContentHost.Content = page` 换页 —— 被换出的页面会被从内容宿主里摘掉，
+    /// 它的 item 容器随即被**回收销毁**（探针实测：切回来时"已实现容器=0"）。
+    /// 再切回来时容器要**重新实现**，而"重新实现"发生在渲染之后 ⇒
+    /// 那一帧会以最终态被画出来（`Prepare 进入：范围=[1.00..1.00]`，窗口 1.1ms），
+    /// 用户看到的就是"先亮一下、再重播"。
+    /// 现在页面常驻，容器不再被销毁，配合页面级不透明度兜住**首次**展示，入场就永远是"从无到有"。</para>
+    /// </summary>
     private void ShowTab(TabItemViewModel? tab)
     {
         if (tab is null)
@@ -755,28 +806,143 @@ public sealed partial class MainWindow : Window
         {
             page = CreatePage(tab);
             _pages[tab.Id] = page;
+
+            // 常驻：页面建好就放进 PageHost，并且**始终保持可见**
+            // （靠页面级不透明度区分谁在前台 —— 用 Visibility=Collapsed 会让 GridView 不布局、
+            //   容器一直不被实现，动画就没对象可播；探针实测过这个坑）。
+            var pageWrapper = new Grid { Visibility = Visibility.Collapsed };
+            pageWrapper.Children.Add(page);
+            _pageWrappers[tab.Id] = pageWrapper;
+            PageHost.Children.Add(pageWrapper);
             _log.AppendLine($"首次创建页面 = [{tab.DraggableKind}] {tab.Name}（{page.GetType().Name}）");
         }
 
-        // ⚠️ 顺序是**故意的，别调换**（用户实测反馈"重播像 PPT 强调动画"）：
-        //    切回已打开过的标签页时，页面里的容器早已实现、且停在最终态；
-        //    如果先把页面挂进可视树再置起始态，中间会有一帧以最终态被渲染出来 ——
-        //    看上去就是"先亮一下、再重播一遍"。
-        //    正确顺序：先准备起始态（页面还没显示）→ 挂进可视树 → 再起动画。
+        if (_currentPageId != tab.Id)
+        {
+            CollapsePage(_currentPageId);
+            _currentPageId = tab.Id;
+        }
+
         if (page is IAnimatedPage animated)
         {
             animated.ApplyAnimationSpec((_settingsData ?? new AppSettings()).ToAnimationSpec());
-            animated.PrepareEntrance();      // 先置起始态（页面还没显示）
-            ContentHost.Content = page;      // 再挂上去
-            animated.PlayEntrance();         // 最后起动画
-        }
-        else
-        {
-            ContentHost.Content = page;
+
+            if (EntranceAnimator.DiagnosticsEnabled)
+            {
+                EntranceAnimator.BeginDiagnostics();
+                App.ProbeLog($"===== 切到「{tab.Name}」 =====");
+                ProbePage("切页前", tab);
+            }
+
+            // ⚠️ 入场动效的正确时序（三条一起成立才"从无到有"，少一条就会闪）：
+            //   ① 先置起始态：整页不透明度 = 0 —— 它是"总闸门"，从这一刻起到动画开始，
+            //      中间渲染出的任何一帧都看不到内容；
+            //   ② 让页面可见并**隔一次布局**（延迟一帧）—— 容器要在这一帧被实现出来；
+            //   ③ 再开始动画：此时容器已实现、且整页仍是不透明的 0，
+            //      于是放行整页的那一帧"什么都没有"，随后才逐格浮现。
+            //   为什么必须延迟一帧：容器在切页时会被回收，未实现的容器是"渲染之后才出现"的，
+            //   若不等这一帧，动画就没有对象可播 → 整页直接亮起来（这正是反复反馈的现象）。
+            animated.PrepareEntrance();
+            ShowPage(tab.Id);
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_currentPageId == tab.Id)
+                {
+                    animated.PlayEntrance();
+                    if (EntranceAnimator.DiagnosticsEnabled)
+                    {
+                        ProbePage("Play 后", tab);
+                    }
+                }
+            });
         }
 
         _transientStatus = null;
         UpdateStatusBar();
+    }
+
+    /// <summary>页面已建一次后常驻：每个页面外面套一个 Grid，切页只改它的 Visibility。</summary>
+    private readonly Dictionary<string, Grid> _pageWrappers = new(StringComparer.Ordinal);
+
+    private string? _currentPageId;
+
+    private void ShowPage(string tabId)
+    {
+        if (_pageWrappers.TryGetValue(tabId, out var wrapper))
+        {
+            wrapper.Visibility = Visibility.Visible;
+        }
+        // ⚠️ 这里**故意不把页面不透明度改回 1**：起始态（0）已由 PrepareEntrance 设好，
+        //    放行整页是 PlayEntrance 的职责（延迟一帧、等容器实现之后再放）。
+    }
+
+    private void CollapsePage(string? tabId)
+    {
+        if (tabId is not null && _pageWrappers.TryGetValue(tabId, out var wrapper))
+        {
+            wrapper.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>当前显示的内容页（"预览动效"要用）。</summary>
+    private IAnimatedPage? CurrentPage()
+        => _currentPageId is not null && _pages.TryGetValue(_currentPageId, out var page)
+            ? page as IAnimatedPage
+            : null;
+
+    /// <summary>
+    /// ⚠️ 临时诊断：打"页面级不透明度 + 容器实现情况"。
+    /// 定位"切页先亮一下"用：页面级不透明度必须在页面可见之前就是 0。定位完删掉。
+    /// </summary>
+    private void ProbePage(string stage, TabItemViewModel tab)
+    {
+        var page = _pages.TryGetValue(tab.Id, out var p) ? p : null;
+        var list = page is null ? null : FindFirstChild<ListViewBase>(page);
+        bool wrapperVisible = _pageWrappers.TryGetValue(tab.Id, out var wrapper)
+                              && wrapper.Visibility == Visibility.Visible;
+
+        int realized = 0;
+        int atOne = 0;
+        if (list is not null)
+        {
+            for (int i = 0; i < list.Items.Count; i++)
+            {
+                if (list.ContainerFromIndex(i) is UIElement container)
+                {
+                    realized++;
+                    if (container.Opacity >= 0.999) atOne++;
+                }
+            }
+        }
+
+        App.ProbeLog($"[页面] {stage}：页面={page?.GetType().Name} Opacity={(page?.Opacity ?? -1):0.00} "
+                     + $"常驻可见={wrapperVisible} "
+                     + $"页面尺寸={(page as FrameworkElement)?.ActualWidth:0}x{(page as FrameworkElement)?.ActualHeight:0} "
+                     + $"列表={list?.GetType().Name} 尺寸={list?.ActualWidth:0}x{list?.ActualHeight:0} IsLoaded={list?.IsLoaded} "
+                     + $"PageHost尺寸={PageHost.ActualWidth:0}x{PageHost.ActualHeight:0} PageHost子项={PageHost.Children.Count} "
+                     + $"已实现容器={realized}（其中全1的={atOne}）");
+    }
+
+    private static T? FindFirstChild<T>(DependencyObject root) where T : DependencyObject
+    {
+        int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T match)
+            {
+                return match;
+            }
+
+            var found = FindFirstChild<T>(child);
+            if (found is not null)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     private UIElement CreatePage(TabItemViewModel tab)

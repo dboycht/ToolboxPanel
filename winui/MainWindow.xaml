@@ -56,10 +56,18 @@
         <!-- ② 标签栏 -->
         <views:TabStripView x:Name="TabStrip" Grid.Row="1" />
 
-        <!-- ③ 内容区：网格页 / 列表页在这里切换 -->
-        <ContentControl x:Name="ContentHost" Grid.Row="2"
-                        HorizontalContentAlignment="Stretch"
-                        VerticalContentAlignment="Stretch" />
+        <!--
+            ③ 内容区：网格页 / 列表页在这里切换。
+
+            ⚠️ 这里**故意用 ContentControl + 常驻页面**，而不是"换一次页就替换 Content**：
+            · 页面一旦被换出，它的 item 容器会被**回收销毁**（探针实测：切回时"已实现=0"），
+              再切回来时容器是"重新实现"的 —— 重新实现发生在渲染之后，于是那一帧会以最终态闪一下，
+              用户看到的就是"先亮一下、再重播"（这就是反复反馈的"不像从无到有"）。
+            · 现在做法：每个页面建一次、**常驻**在这个 Grid 里，切页只切 `Visibility`；
+              **首次**展示（容器还没实现）时页面级不透明度=0 兜住，
+              之后容器不再被销毁，入场动效必然是"从无到有"。
+        -->
+        <Grid x:Name="PageHost" Grid.Row="2" Background="Transparent" />
 
         <!-- ④ 状态栏（单行、矮）——底色/描边全部走主题令牌 -->
         <Border Grid.Row="3" Margin="8,5,8,8" Padding="8,4"
