@@ -79,7 +79,6 @@ public sealed partial class SettingsPanel : UserControl
             ShowCountsSwitch.IsOn = _settings.ShowTabCounts;
             AnimationSwitch.IsOn = _settings.AnimationsEnabled;
             DurationSlider.Value = _settings.AnimationDurationMs;
-            StaggerSlider.Value = _settings.AnimationStaggerMs;
             EasingBox.SelectedIndex = _settings.AnimationEasing switch
             {
                 AnimationEasing.Soft => 0,
@@ -146,9 +145,6 @@ public sealed partial class SettingsPanel : UserControl
 
     private void OnDurationChanged(object sender, RangeBaseValueChangedEventArgs e)
         => Apply(s => s.AnimationDurationMs = (int)Math.Round(e.NewValue));
-
-    private void OnStaggerChanged(object sender, RangeBaseValueChangedEventArgs e)
-        => Apply(s => s.AnimationStaggerMs = (int)Math.Round(e.NewValue));
 
     private void OnEasingChanged(object sender, SelectionChangedEventArgs e)
     {

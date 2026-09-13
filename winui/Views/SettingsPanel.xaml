@@ -104,9 +104,6 @@
                     <Slider x:Name="DurationSlider" Header="动画时长（毫秒）"
                             Minimum="60" Maximum="600" StepFrequency="20"
                             ValueChanged="OnDurationChanged" />
-                    <Slider x:Name="StaggerSlider" Header="交错间隔（毫秒）"
-                            Minimum="0" Maximum="120" StepFrequency="4"
-                            ValueChanged="OnStaggerChanged" />
                     <ComboBox x:Name="EasingBox" Header="动画曲线" HorizontalAlignment="Stretch"
                               SelectionChanged="OnEasingChanged">
                         <ComboBoxItem Content="柔和（起步快、收尾很慢）" Tag="soft" />
@@ -115,7 +112,7 @@
                     </ComboBox>
                     <Button x:Name="PreviewButton" Content="预览动效" Click="OnPreviewClick" />
                     <TextBlock Style="{StaticResource SectionHintStyle}"
-                               Text="预览会重放当前标签页的入场动效；悬停标签可看图标浮现的速度。" />
+                               Text="入场是**整页一起淡入**（图标/列表项同时从无到有），没有逐个浮现的交错。" />
                 </StackPanel>
 
                 <!-- ── 底部 ── -->

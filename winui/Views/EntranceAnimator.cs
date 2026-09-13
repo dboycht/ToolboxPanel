@@ -1,11 +1,15 @@
-// EntranceAnimator.cs —— 页面入场动效（可配置时长/交错/曲线，可重复播放）
+// EntranceAnimator.cs —— 内容页的入场动效（**整片一起从无到有**，可配置时长/曲线，可重复播放）
+//
+// 用户明确要求（2026-09-13）：**不要逐个浮现的交错动画**，要"所有图标/列表项一起从无到有地出现"。
+// 所以现在只做**一次整片淡入**：把列表整体从 0 淡到 1，里面的内容同时出现。
 //
 // 为什么不用内置的 `EntranceThemeTransition`：
 //   1. 它**没有时长/曲线参数**，做不到"设置里调动画速度"；
-//   2. 它**只在容器第一次实现时播放**，切回已缓存的标签页不会再播（用户实测反馈的第 4 条）。
+//   2. 它**只在容器第一次实现时播放**，切回已缓存的标签页不会再播。
 //
-// 这里自己管：容器实现时（ContainerContentChanging）与"每次切页"（Play）两个时机都套用同一套参数，
-// 并用 `_played` 去重，避免同一次入场被播两遍。
+// ⚠️ 安全底线（踩过一次"整页空白"，见 ERROR.md E15）：
+//   凡是"把东西置成不可见、再等动画放行"的写法，都可能因为放行没跑到而永久不可见。
+//   所以这里除了 try/catch，还挂了一道**超时兜底**（见 StartSafetyWatchdog）。
 
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
@@ -17,42 +21,30 @@ using ToolboxPanel.Core.Storage;
 namespace ToolboxPanel.Views;
 
 /// <summary>
-/// 负责一个列表/网格页面的入场动效。
+/// 负责一个列表/网格页面的入场动效：**整片一次淡入**。
 ///
-/// <para><b>核心机制（这三条一起才成立，别拆）</b>：</para>
+/// <para>时序：</para>
 /// <list type="number">
-/// <item><b>延迟一帧</b>：<see cref="Prepare"/> 与 <see cref="Play"/> 之间必须隔一次布局。
-/// 因为切页时 item 容器会被回收，未实现的容器"渲染之后才出现" ——
-/// 不等这一帧，动画就没有对象可播，整页会直接亮起来。</item>
-/// <item><b>页面级不透明度当闸门</b>：Prepare 把整页置 0、Play 在**起完动画之后**才放行；
-/// 于是放行那一帧页面上"什么都没有"，随后才逐格浮现。</item>
-/// <item><b>容器级起始态 + 交错</b>：每个容器在起动画前同步置 0（同帧完成，不会渲染出 1）。</item>
+/// <item><b>关闸门</b>：把列表整体不透明度置 0（内容此刻不可见）；</item>
+/// <item><b>等布局</b>：页面要可见才会布局（折叠状态下 GridView 不实现容器）；</item>
+/// <item><b>放行</b>：起一条"整片 0 → 1"的动画。因为容器此刻都被置成了 0，
+/// 即便动画因为某种原因没跑，末尾的兜底也会把它们恢复可见。</item>
 /// </list>
-///
-/// <para>⚠️ 页面级闸门只能在页面**还没显示**（折叠）或**已经置 0** 时关闭 ——
-/// 反过来说：如果先让页面以最终态可见、再置 0，中间那一帧就会被渲染出来（用户看到的"先亮一下"）。
-/// 本项目由 <c>MainWindow.ShowTab</c> 保证顺序：折叠切换 → Prepare → 延迟一帧 → Play。</para>
 /// </summary>
 internal sealed class EntranceAnimator
 {
     /// <summary>
-    /// 诊断开关（`--diag` / `--probe-switch`）：把入场动效的时序细节写进
-    /// <c>%TEMP%\toolboxpanel-probe.log</c>。
-    ///
-    /// <para>默认关闭、零开销 —— 这类"看不见的观感问题"（闪一帧、顺序错位）
-    /// 只能靠这种逐毫秒证据定位，所以留着这个入口，别删
-    /// （排查详录见 ERROR.md E15）。</para>
+    /// 诊断开关（`--diag` / `--probe-switch`）：把入场时序写进 `%TEMP%\toolboxpanel-probe.log`。
+    /// 默认关闭、零开销 —— "闪一帧 / 空白"这类看不见的问题只能靠它定位（ERROR.md E15）。
     /// </summary>
     internal static bool DiagnosticsEnabled { get; set; }
 
     private readonly ListViewBase _list;
-    private readonly HashSet<object> _played = new();
 
     /// <summary>本轮起过的 Storyboard —— 下次播放前必须 Stop，否则它 HoldEnd 的值会压住我们设的起始态。</summary>
     private readonly List<Storyboard> _running = new();
 
     private AnimationSpec _spec = AnimationSpec.Disabled;
-    private bool _pending;
 
     /// <summary>诊断：用于给日志加上"距本次切页多少毫秒"。</summary>
     private static System.Diagnostics.Stopwatch? _diagnosticClock;
@@ -60,7 +52,6 @@ internal sealed class EntranceAnimator
     public EntranceAnimator(ListViewBase list)
     {
         _list = list;
-        _list.ContainerContentChanging += OnContainerContentChanging;
     }
 
     /// <summary>诊断：开始一次采样窗口（切页那一刻调用）。</summary>
@@ -81,36 +72,10 @@ internal sealed class EntranceAnimator
             return;
         }
 
-        var ms = _diagnosticClock?.Elapsed.TotalMilliseconds ?? -1;
-        App.ProbeLog($"[{ms,7:F1}ms] {message}");
+        App.ProbeLog($"[{(_diagnosticClock?.Elapsed.TotalMilliseconds ?? -1),7:F1}ms] {message}");
     }
 
-    /// <summary>
-    /// 诊断：把"已实现容器的不透明度分布"打成一行。
-    /// 判据：动画期间**不应该**有容器已经停在最终态（那说明它没走入场、会直接亮着出现）。
-    /// </summary>
-    internal void DiagFrame(string stage)
-    {
-        if (!DiagnosticsEnabled)
-        {
-            return;
-        }
-
-        int realized = 0;
-        int atOne = 0;
-        for (int index = 0; index < _list.Items.Count; index++)
-        {
-            if (_list.ContainerFromIndex(index) is UIElement container)
-            {
-                realized++;
-                if (container.Opacity >= 0.999) atOne++;
-            }
-        }
-
-        Diag($"{stage}：已实现={realized} 其中已到最终态的={atOne}");
-    }
-
-    /// <summary>诊断：把"当前已实现容器的数量 + 不透明度分布"打成一行。</summary>
+    /// <summary>诊断：把"列表整体不透明度 + 容器可见情况"打成一行。</summary>
     internal void DiagSnapshot(string stage)
     {
         if (!DiagnosticsEnabled)
@@ -119,28 +84,21 @@ internal sealed class EntranceAnimator
         }
 
         int realized = 0;
-        int atZero = 0;
-        int atOne = 0;
-        double min = double.MaxValue;
-        double max = double.MinValue;
-
+        int hidden = 0;
         for (int index = 0; index < _list.Items.Count; index++)
         {
             if (_list.ContainerFromIndex(index) is UIElement container)
             {
                 realized++;
-                double o = container.Opacity;
-                if (o <= 0.001) atZero++;
-                if (o >= 0.999) atOne++;
-                min = Math.Min(min, o);
-                max = Math.Max(max, o);
+                if (container.Opacity < 0.999)
+                {
+                    hidden++;
+                }
             }
         }
 
-        double shown = realized == 0 ? -1 : min;
-        Diag($"{stage}：items={_list.Items.Count} 已实现={realized} 全0={atZero} 全1={atOne} "
-             + $"范围=[{(realized == 0 ? "n/a" : min.ToString("0.00"))}..{(realized == 0 ? "n/a" : max.ToString("0.00"))}] "
-             + $"pending={_pending} played={_played.Count}");
+        Diag($"{stage}：items={_list.Items.Count} 已实现={realized} 仍不可见={hidden} "
+             + $"列表Opacity={_list.Opacity:0.00}");
     }
 
     /// <summary>套用新的动效参数（关掉动效时把已动画过的项恢复成常态）。</summary>
@@ -154,15 +112,8 @@ internal sealed class EntranceAnimator
     }
 
     /// <summary>
-    /// 准备入场起始态：把已实现的容器**同步置为不可见 + 起始位移**，但**不起动画**。
-    /// 主窗口在把页面挂进可视树**之前**调用它 —— 这样"最终态那一帧"根本没机会被渲染出来。
-    /// </summary>
-    /// <summary>
-    /// 准备入场：登记"这一轮要播"，并把**已实现**的容器同步置为起始态。
-    ///
-    /// <para>⚠️ 这里**刻意不碰页面级不透明度**（上一版用它当"总闸门"，结果一旦放行没跑到，
-    /// 整页就永久不可见 —— 用户看到空白）。现在只做容器级起始态：
-    /// 没有容器时什么都不用做，页面本来就是可见的，**不可能出现整页空白**。</para>
+    /// 准备入场：把**列表整体**置为不可见（整片一起的起始态）。
+    /// 主窗口会在页面可见之后、起动画之前调用它。
     /// </summary>
     public void Prepare()
     {
@@ -175,21 +126,16 @@ internal sealed class EntranceAnimator
         }
 
         StopRunning();
-        _pending = true;
-        _played.Clear();
-        HideRealized();         // 已实现的容器给上起始态（未实现的交给 ContainerContentChanging）
+        HideRealized();          // 整片置 0（含已实现的容器）
         DiagSnapshot("Prepare 结束");
     }
 
     /// <summary>
-    /// 在"可以开始动画"时放行：等到容器就位（或确认这一页没有内容）之后再起交错动画。
-    ///
-    /// <para>轮询而不是"延迟一帧"：延迟一帧只保证调度器转了一圈，**不保证布局跑过**；
-    /// 布局没跑就没有容器，动画建不出来。轮询能让这两种情况都收敛，
-    /// 并且**最多等 <paramref name="maxAttempts"/> 个周期**，绝不会把界面卡住。</para>
+    /// 开始入场。因为动画只有"整片一次淡入"、不依赖容器是否已实现，
+    /// 所以这里**不再需要轮询等容器**：把页面显示出来、下一帧起动画即可
+    /// （名字保留，是为了让主窗口那边的调用语义保持"准备好就放行"）。
     /// </summary>
-    /// <param name="maxAttempts">最多等多少个调度器周期（每个周期 ≈ 一帧）。</param>
-    public void RevealWhenReady(int maxAttempts = 4)
+    public void RevealWhenReady()
     {
         if (!_spec.Enabled)
         {
@@ -197,71 +143,87 @@ internal sealed class EntranceAnimator
             return;
         }
 
-        AttemptReveal(attempt: 0, maxAttempts);
+        Play();
     }
 
-    private void AttemptReveal(int attempt, int maxAttempts)
-    {
-        if (!_spec.Enabled)
-        {
-            ResetAll();
-            return;
-        }
-
-        int realized = RealizedCount();
-        bool layoutHasRun = _list.ActualWidth > 0 && _list.ActualHeight > 0;
-
-        Diag($"RevealWhenReady 尝试#{attempt}：已实现容器={realized} 列表尺寸={_list.ActualWidth:0}x{_list.ActualHeight:0}");
-
-        // 有容器可播，或布局已经跑过（说明这一页确实没有可播的东西），就开始
-        if (realized > 0 || layoutHasRun || attempt >= maxAttempts)
-        {
-            Play();
-            return;
-        }
-
-        _list.DispatcherQueue.TryEnqueue(() => AttemptReveal(attempt + 1, maxAttempts));
-    }
-
-    /// <summary>开始入场：把已实现的容器置起始态并起交错动画。</summary>
+    /// <summary>
+    /// 开始入场：**整片一次淡入**（0 → 1）。
+    ///
+    /// <para>结构上刻意做得极简（用户明确要求"所有图标/列表项一起从无到有"）：
+    /// 只有**一条**动画，作用在列表整体上，**不再逐个容器做动画**（也就没有"交错"）。
+    /// 容器自己保持常态不透明度，被列表整体带着一起淡入。</para>
+    ///
+    /// <para>⚠️ 真正保证"绝不空白"的是动画自身的 <c>FillBehavior=HoldEnd</c>：
+    /// 动画结束（或被中断）时保持的是**最终值 1**，而不是回落到本地 0（那正是上一版变空白的机制）。
+    /// 末尾那条超时兜底只是最后一道保险。</para>
+    /// </summary>
     private void Play()
     {
         DiagSnapshot("Play 进入");
 
         try
         {
-            // 停止上一轮：HoldEnd 的动画值优先级高于本地赋值，不停掉就会"先闪最终态再重播"
             StopRunning();
 
-            // 容器此刻可能已是最终态 → 同步置 0（同帧完成，不会渲染出 1）
-            HideRealized();
+            var storyboard = new Storyboard();
+            var fade = new DoubleAnimation
+            {
+                From = 0,
+                To = 1,
+                Duration = new Duration(TimeSpan.FromMilliseconds(_spec.DurationMs)),
+                EasingFunction = CreateEasing(_spec.Easing),
 
-            // 起交错动画（已实现的容器）。未实现的容器由 ContainerContentChanging 兜住。
-            PlayRealized();
+                // ⚠️ 关键：动画结束后**保持最终值 1**。
+                //    Storyboard 默认就是 HoldEnd，但这里显式写出来 —— 因为一旦有人把它改成 Stop，
+                //    不透明度就会回落到本地值 0，页面立刻变不可见（这正是"整片空白"的成因）。
+                FillBehavior = FillBehavior.HoldEnd,
+            };
+            Storyboard.SetTarget(fade, _list);
+            Storyboard.SetTargetProperty(fade, "Opacity");
+            storyboard.Children.Add(fade);
 
-            DiagFrame("Play 结束（判据：不应有容器停在最终态）");
-            DiagSnapshot("Play 结束");
+            storyboard.Begin();
+            _running.Add(storyboard);
+
+            DiagSnapshot("Play 结束（整片淡入已启动）");
         }
         catch (Exception ex)
         {
             // 外观类失败必须是"软"的：出错也绝不能把界面留在不可见状态
             App.WriteCrash("EntranceAnimator.Play", ex);
             ResetAll();
+            return;
         }
+
+        StartSafetyWatchdog();
     }
 
-    private int RealizedCount()
+    /// <summary>
+    /// 兜底保险：动画应当在这之前结束并把不透明度保持在 1。
+    /// 如果到点还不可见，就停掉动画、把不透明度**永久写成 1**。
+    ///
+    /// <para>⚠️ 与上一版的区别（上一版就是在这里翻车的）：兜底**不再在动画进行中触发**，
+    /// 而是等动画时长过去之后才检查 —— 否则它会在动画播到一半时打断它，
+    /// 视觉上就是"淡到一半突然消失"（实测日志：`兜底触发：列表Opacity=0.43`）。</para>
+    /// </summary>
+    private void StartSafetyWatchdog()
     {
-        int count = 0;
-        for (int index = 0; index < _list.Items.Count; index++)
-        {
-            if (_list.ContainerFromIndex(index) is not null)
-            {
-                count++;
-            }
-        }
+        var timer = _list.DispatcherQueue.CreateTimer();
+        timer.Interval = TimeSpan.FromMilliseconds(_spec.DurationMs + 700);
+        timer.IsRepeating = false;
 
-        return count;
+        timer.Tick += (_, _) =>
+        {
+            if (_list.Opacity >= 0.999)
+            {
+                return;   // 正常结束，什么都不用做
+            }
+
+            Diag($"兜底触发：动画时间已过但列表仍不可见（Opacity={_list.Opacity:0.00}）→ 强制显示");
+            ResetAll();
+        };
+
+        timer.Start();
     }
 
     private void StopRunning()
@@ -274,133 +236,24 @@ internal sealed class EntranceAnimator
         _running.Clear();
     }
 
-    /// <summary>把已实现的容器同步置为起始态（不可见 + 位移）。</summary>
-    private void HideRealized()
-    {
-        for (int index = 0; index < _list.Items.Count; index++)
-        {
-            if (_list.ContainerFromIndex(index) is not UIElement container)
-            {
-                continue;
-            }
+    /// <summary>入场起始态：把**整片**置为不可见（列表整体不透明度 = 0）。</summary>
+    private void HideRealized() => _list.Opacity = 0;
 
-            container.Opacity = 0;
-            EnsureTransform(container).TranslateY = _spec.FromOffset;
-        }
-    }
-
-    private void PlayRealized()
+    private void ResetAll()
     {
-        bool playedAny = false;
+        StopRunning();
+
+        // 恢复常态：整片可见。这是唯一"放行"的地方 —— 只要它跑到，界面就一定是可见的。
+        _list.Opacity = 1;
 
         for (int index = 0; index < _list.Items.Count; index++)
         {
             if (_list.ContainerFromIndex(index) is UIElement container)
             {
-                playedAny |= AnimateContainer(container, index);
+                // 容器本身不再参与动画，恢复常态以防上一版残留（升级运行的极端情况）
+                container.Opacity = 1;
             }
         }
-
-        // 一个容器都还没实现（首次显示）：保持 pending，由 ContainerContentChanging 兜住
-        if (playedAny)
-        {
-            _pending = false;
-        }
-    }
-
-    private void OnContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
-    {
-        if (args.InRecycleQueue)
-        {
-            _played.Remove(args.Item);
-            return;
-        }
-
-        if (_pending && args.ItemContainer is UIElement container)
-        {
-            AnimateContainer(container, args.ItemIndex);
-        }
-    }
-
-    /// <summary>给一个容器起动画；返回是否真的播了（已播过的返回 false）。</summary>
-    private bool AnimateContainer(UIElement container, int index)
-    {
-        if (!_played.Add(container))
-        {
-            return false;   // 这一轮已经播过，别重播（重播会看起来"闪一下"）
-        }
-
-        var transform = EnsureTransform(container);
-
-        container.Opacity = 0;
-        transform.TranslateY = _spec.FromOffset;
-
-        var beginTime = TimeSpan.FromMilliseconds(index * _spec.StaggerMs);
-        var duration = new Duration(TimeSpan.FromMilliseconds(_spec.DurationMs));
-        var easing = CreateEasing(_spec.Easing);
-
-        var storyboard = new Storyboard();
-        storyboard.Children.Add(CreateAnimation(container, "Opacity", from: 0, to: 1, duration, beginTime, easing));
-
-        // ⚠️ 显式给 From：动画起始值不再依赖"当前值"，切页重播时不会先停一拍最终态
-        storyboard.Children.Add(CreateAnimation(transform, "TranslateY", from: _spec.FromOffset, to: 0, duration, beginTime, easing));
-        storyboard.Begin();
-        _running.Add(storyboard);
-        return true;
-    }
-
-    private static CompositeTransform EnsureTransform(UIElement container)
-    {
-        if (container.RenderTransform is CompositeTransform existing)
-        {
-            return existing;
-        }
-
-        var transform = new CompositeTransform();
-        container.RenderTransform = transform;
-        return transform;
-    }
-
-    private void ResetAll()
-    {
-        StopRunning();
-        _pending = false;
-        _played.Clear();
-
-        // 恢复所有已实现容器的常态（不透明度 1、位移 0）。
-        // ⚠️ 这里**只碰容器**，不碰页面级不透明度 —— 现在的设计里页面从不被隐藏，
-        //    所以"界面空白"在设计上就不可能发生（这也是上一版整页闸门被撤掉的原因）。
-        for (int index = 0; index < _list.Items.Count; index++)
-        {
-            if (_list.ContainerFromIndex(index) is not UIElement container)
-            {
-                continue;
-            }
-
-            container.Opacity = 1;
-            if (container.RenderTransform is CompositeTransform transform)
-            {
-                transform.TranslateY = 0;
-            }
-        }
-    }
-
-    private static DoubleAnimation CreateAnimation(
-        DependencyObject target, string property, double from, double to,
-        Duration duration, TimeSpan beginTime, EasingFunctionBase easing)
-    {
-        var animation = new DoubleAnimation
-        {
-            From = from,           // 显式起始值：不依赖"当前值/上一轮残留值"
-            To = to,
-            Duration = duration,
-            BeginTime = beginTime,
-            EasingFunction = easing,
-        };
-
-        Storyboard.SetTarget(animation, target);
-        Storyboard.SetTargetProperty(animation, property);
-        return animation;
     }
 
     /// <summary>三种观感的曲线（设置里只暴露这三种，不把缓动函数名暴露给用户）。</summary>
