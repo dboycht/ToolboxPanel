@@ -573,15 +573,24 @@ public sealed partial class MainWindow : Window
             _log.AppendLine($"首次创建页面 = [{tab.DraggableKind}] {tab.Name}（{page.GetType().Name}）");
         }
 
-        ContentHost.Content = page;
-        _transientStatus = null;
-
+        // ⚠️ 顺序是**故意的，别调换**（用户实测反馈"重播像 PPT 强调动画"）：
+        //    切回已打开过的标签页时，页面里的容器早已实现、且停在最终态；
+        //    如果先把页面挂进可视树再置起始态，中间会有一帧以最终态被渲染出来 ——
+        //    看上去就是"先亮一下、再重播一遍"。
+        //    正确顺序：先准备起始态（页面还没显示）→ 挂进可视树 → 再起动画。
         if (page is IAnimatedPage animated)
         {
             animated.ApplyAnimationSpec((_settingsData ?? new AppSettings()).ToAnimationSpec());
-            animated.PlayEntrance();
+            animated.PrepareEntrance();      // 先置起始态（页面还没显示）
+            ContentHost.Content = page;      // 再挂上去
+            animated.PlayEntrance();         // 最后起动画
+        }
+        else
+        {
+            ContentHost.Content = page;
         }
 
+        _transientStatus = null;
         UpdateStatusBar();
     }
 

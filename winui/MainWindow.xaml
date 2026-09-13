@@ -33,8 +33,20 @@
                 <FontIcon Glyph="&#xE71D;" FontSize="12" />
                 <TextBlock Text="ToolboxPanel" FontSize="12" FontWeight="SemiBold" />
                 <TextBlock x:Name="BackdropLabel" FontSize="10.5" Opacity="0.5" VerticalAlignment="Center" />
+                <!--
+                    ⚠️ 设置按钮**必须关掉焦点视觉 + 不进 Tab 序列**（用户实测反馈："启动时这个按钮是选中状态"）。
+                    根因：它是窗口树里第一个可获焦的控件，窗口激活时 WinUI 会自动把焦点给它，
+                    于是默认的焦点框/焦点底就被画出来了 —— 看起来像"被选中"。
+                    · `IsTabStop=False` + `UseSystemFocusVisuals=False` + 两处 FocusVisual*Thickness=0 一起关掉；
+                    · 键盘可达性**不受影响**：Esc 关面板由 SettingsPanel 自己的 KeyboardAccelerator 负责。
+                    （同一套修法在本工作区 learn-helper 项目里已用过 → 跨项目通用经验，见 memory/03。）
+                -->
                 <Button x:Name="SettingsButton" Padding="6,2" Margin="2,0,0,0"
                         Background="Transparent" BorderThickness="0"
+                        IsTabStop="False"
+                        UseSystemFocusVisuals="False"
+                        FocusVisualPrimaryThickness="0"
+                        FocusVisualSecondaryThickness="0"
                         Click="OnSettingsButtonClick" ToolTipService.ToolTip="设置">
                     <FontIcon Glyph="&#xE713;" FontSize="12" />
                 </Button>

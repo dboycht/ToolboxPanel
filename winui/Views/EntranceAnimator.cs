@@ -44,6 +44,24 @@ internal sealed class EntranceAnimator
         }
     }
 
+    /// <summary>
+    /// 准备入场起始态：把已实现的容器**同步置为不可见 + 起始位移**，但**不起动画**。
+    /// 主窗口在把页面挂进可视树**之前**调用它 —— 这样"最终态那一帧"根本没机会被渲染出来。
+    /// </summary>
+    public void Prepare()
+    {
+        StopRunning();
+
+        if (!_spec.Enabled)
+        {
+            ResetAll();
+            return;
+        }
+
+        _pending = true;
+        HideRealized();
+    }
+
     /// <summary>播放一次入场（每次切到该页都会调用）。</summary>
     public void Play()
     {
@@ -63,6 +81,8 @@ internal sealed class EntranceAnimator
         _pending = true;
 
         // ② 同步置起始态（Opacity / RenderTransform 不触发布局，同一帧内完成，渲染在之后 ⇒ 不闪）
+        //    ⚠️ 主窗口已经先调过 Prepare()（挂载前），这里再置一次是**幂等兜底**：
+        //    万一有容器在两个调用之间才被实现，也不会以最终态闪一帧。
         HideRealized();
         PlayRealized();
     }

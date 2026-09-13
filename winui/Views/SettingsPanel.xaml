@@ -43,8 +43,12 @@
         -->
         <Grid Grid.Row="0" Padding="16,44,10,8">
             <TextBlock Text="设置" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <!-- ⚠️ 同 ⚙：关掉焦点视觉，避免"看起来像被选中"（见 MainWindow.xaml 的说明） -->
             <Button HorizontalAlignment="Right" Padding="6,2"
                     Background="Transparent" BorderThickness="0"
+                    UseSystemFocusVisuals="False"
+                    FocusVisualPrimaryThickness="0"
+                    FocusVisualSecondaryThickness="0"
                     Click="OnCloseClick" ToolTipService.ToolTip="关闭（Esc / 点空白处也可以）">
                 <FontIcon Glyph="&#xE711;" FontSize="12" />
             </Button>

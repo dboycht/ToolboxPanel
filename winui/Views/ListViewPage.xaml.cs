@@ -54,6 +54,9 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     public void ApplyAnimationSpec(AnimationSpec spec) => _entrance.ApplySpec(spec);
 
+    /// <summary>挂进可视树**之前**准备入场起始态（否则会先以最终态闪一帧，见 IAnimatedPage 的说明）。</summary>
+    public void PrepareEntrance() => _entrance.Prepare();
+
     public void PlayEntrance() => _entrance.Play();
 
     public TabItemViewModel Tab => _tab;
