@@ -748,6 +748,18 @@ public sealed partial class MainWindow : Window
             _viewModel = _isDemo ? MainViewModel.CreateDemo() : new MainViewModel();
             _viewModel.Load();
 
+            // 内容为空时补一批示例图标（系统自带程序），否则用户面对的是空页面 ——
+            // "新建图标"的界面属于 W5，这一版先用示例让他有东西可看、可点。
+            // ⚠️ 判定很克制：**所有内容页一个图标都没有**才动手，且只新增一个「示例」页，不动已有页。
+            if (!_isDemo && !_viewModel.HasAnyIcon && _viewModel.Store is { } store)
+            {
+                if (SampleIcons.EnsureSampleIcons(store))
+                {
+                    _log.AppendLine($"内容为空 → 已补充示例图标（新建「{SampleIcons.SampleTabName}」页）");
+                    _viewModel.Load();   // 重新装配：示例图标也要走"提取并缓存"的既有流程
+                }
+            }
+
             if (_isDemo)
             {
                 Title = "ToolboxPanel · 纯 UI 演示";

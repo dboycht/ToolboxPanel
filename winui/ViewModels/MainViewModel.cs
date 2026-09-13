@@ -131,6 +131,15 @@ public sealed class MainViewModel
     /// <summary>图标缓存目录（界面上要显示"图标从哪来"时用）。</summary>
     public string IconsDirectory => _iconExtractor?.CacheDirectory ?? string.Empty;
 
+    /// <summary>
+    /// 底层的 <see cref="DataStore"/>（演示模式下为 null）。
+    /// 给"补充示例图标"这类**数据层操作**用；界面仍然只通过本 ViewModel 的方法改数据。
+    /// </summary>
+    internal DataStore? Store => _store;
+
+    /// <summary>数据里有没有可显示的内容（所有内容页加起来至少一个图标）。</summary>
+    public bool HasAnyIcon => Tabs.Any(tab => tab.Icons.Count > 0);
+
     // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
 
     /// <summary>
