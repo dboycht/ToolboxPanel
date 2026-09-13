@@ -917,11 +917,9 @@ public sealed partial class MainWindow : Window
         }
 
         App.ProbeLog($"[页面] {stage}：页面={page?.GetType().Name} Opacity={(page?.Opacity ?? -1):0.00} "
-                     + $"常驻可见={wrapperVisible} "
-                     + $"页面尺寸={(page as FrameworkElement)?.ActualWidth:0}x{(page as FrameworkElement)?.ActualHeight:0} "
-                     + $"列表={list?.GetType().Name} 尺寸={list?.ActualWidth:0}x{list?.ActualHeight:0} IsLoaded={list?.IsLoaded} "
-                     + $"PageHost尺寸={PageHost.ActualWidth:0}x{PageHost.ActualHeight:0} PageHost子项={PageHost.Children.Count} "
-                     + $"已实现容器={realized}（其中全1的={atOne}）");
+                     + $"尺寸={(page as FrameworkElement)?.ActualWidth:0}x{(page as FrameworkElement)?.ActualHeight:0} "
+                     + $"列表IsLoaded={list?.IsLoaded} "
+                     + $"已实现容器={realized}（其中全1的={atOne}）  ← 判据：Play 放行时「全1的」必须是 0");
     }
 
     private static T? FindFirstChild<T>(DependencyObject root) where T : DependencyObject

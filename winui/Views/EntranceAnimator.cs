@@ -254,6 +254,9 @@ internal sealed class EntranceAnimator
         // 放行整页：此刻各容器都在起始态，所以这一帧看到的是"什么都没有"
         SetPageOpacity(1);
 
+        // 判据日志：放行之后若还有容器停在最终态（其中全1的 > 0），它们就会"已经亮着"地出现
+        DiagFrame("Play 放行后（判据：其中全1的应为 0）");
+
         // ⚠️ 这里**不**清 _playRequested / _pending：
         //    本帧之后才被实现的容器（滚动进视野、虚拟化补实现）也要按入场态出现，
         //    由 ContainerContentChanging 兜住；下次切页时 Prepare() 才重置。
