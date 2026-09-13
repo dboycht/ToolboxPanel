@@ -1,18 +1,21 @@
-// TabStripView.xaml.cs —— 标签栏的交互与三种图标形态
+// TabStripView.xaml.cs —— 标签栏的交互与"隐藏项"（图标 + 数量文字）三态
 //
-// ⚠️ 这里修掉了一个真实 bug（用户实测）：
-//   "把鼠标悬停在标签文字上并移动时，会反复拉伸缩小往复，但鼠标并没有离开这个标签"。
+// ────────────────────────── 悬停判定为什么改成"标签栏统一判定" ──────────────────────────
+// 以前是**每个标签各自**判定（模板上挂 PointerEntered/Moved/Exited），用户实测有两个问题：
+//   ① 移到别的标签时，**上一个标签收不回去**（各自的退出事件互相打架，谁也没真正收起谁）；
+//   ② 图标槽变宽会重排内容，WinUI 会在指针**没离开**时抛出 PointerExited → 反复展开/收起。
 //
-// 根因：图标槽变宽 → 标签内容整体平移 + 控件重排 → WinUI 在指针**没有真的离开**的情况下
-//       抛出 PointerExited → 收起动画 → 指针又"回到"里面 → PointerEntered → 展开……
-//       形成 展开/收起 的高频往复；旧实现每次 PointerEntered 都**重启动画**，让抖动更明显。
+// 现在改成：**标签栏自己**在 PointerMoved 时算一次"指针在哪个标签上"
+// （用"平移后的实际文字范围"做命中，而不是拿整个容器矩形），然后
+// **只展开那一个、其余一律收起** —— 于是"同时最多一个标签展开"是结构性保证，不靠事件顺序。
+// 判定只在"悬停目标发生变化"时才动手，避免每移动 1px 就重启动画（那是卡顿的来源）。
 //
-// 修法（四件一起做）：
-//   1. **状态幂等**：用 `_expanded` 记录当前是否已展开，重复的"显示"请求直接返回，
-//      **不重启动画**（重启动画本身就是"很怪"的来源之一）；
-//   2. **范围复核**：PointerExited 时先看指针是否仍在本项范围内（带容差），在里面就忽略这次退出；
-//   3. **去抖**：刚展开后极短时间内的"退出"忽略掉（防止动画期间的假退出）；
-//   4. 图标槽 `IsHitTestVisible=False`：槽的增长不参与命中测试。
+// ────────────────────────── 隐藏项 = 图标 + 数量文字（用户要求） ──────────────────────────
+// 两者在同一个 `TabHiddenHost` 里，一起淡出/淡入、一起横向滑出/滑回。
+// ⚠️ 滑动用**负左边距**而不是改宽度：改宽度会触发布局重排（抖动 + 卡顿），
+//    负边距只影响渲染位置，标签的布局尺寸恒定。
+//
+// ⚠️ 悬停动效本身只能由用户目检（代理不注入鼠标，见 ERROR.md E5）。
 
 using System;
 using Microsoft.UI;
@@ -30,15 +33,13 @@ namespace ToolboxPanel.Views;
 
 public sealed partial class TabStripView : UserControl
 {
-    /// <summary>图标槽展开后的宽度（DIP）。</summary>
-    private const double GlyphSlotWidth = 16;
+    /// <summary>隐藏项滑动到位后占用的额外宽度（DIP）：图标 16 + 与文字的间距 6。</summary>
+    private const double HiddenSlotOffset = 22;
 
     /// <summary>
-    /// 指针范围复核的容差（DIP）：只有指针"明显离开"才算离开。
-    /// ⚠️ 不要用"时间去抖"来忽略退出 —— 那会把**真实退出**一起吞掉，
-    /// 表现就是"鼠标走开了图标还挂着"（用户实测反馈）。退出与否只看坐标。
+    /// 指针范围核对的容差（DIP）。留一点点，避免正好压在边界上时判定跳变。
     /// </summary>
-    private const double ExitTolerance = 2;
+    private const double HitTolerance = 1;
 
     /// <summary>
     /// 拖拽悬停在某个标签上多久才自动切到那一页（毫秒）。
@@ -49,8 +50,19 @@ public sealed partial class TabStripView : UserControl
     /// <summary>拖拽"离开标签栏"的去抖时长：DragLeave 在项之间移动时会误报，用这个兜底取消。</summary>
     private static readonly TimeSpan DragLeaveGrace = TimeSpan.FromMilliseconds(260);
 
-    private readonly Dictionary<TabItemViewModel, Border> _glyphHosts = new();
-    private readonly HashSet<TabItemViewModel> _expanded = new();
+    /// <summary>一个标签的隐藏项宿主（供动画与命中判定使用）。</summary>
+    private sealed class HiddenHost
+    {
+        public required Grid Root { get; init; }
+
+        public required CompositeTransform Transform { get; init; }
+    }
+
+    private readonly Dictionary<TabItemViewModel, HiddenHost> _hosts = new();
+
+    /// <summary>当前展开（显示隐藏项）的那个标签 —— 结构性保证"最多只有一个"。</summary>
+    private TabItemViewModel? _expandedTab;
+
     private readonly Dictionary<TabItemViewModel, Storyboard> _animations = new();
 
     private TabIconMode _iconMode = TabIconMode.Hover;
@@ -64,8 +76,9 @@ public sealed partial class TabStripView : UserControl
     {
         InitializeComponent();
 
-        // 兜底：指针离开整条标签栏时，把所有展开项收起来
-        // （万一某项没收到 PointerExited，也不会留下"图标一直挂着"的状态）
+        // 悬停判定统一在"标签栏"这一层做：容器上收 PointerMoved / PointerExited，
+        // 这样"移到别的标签"和"离开整条标签栏"都由同一条逻辑处理。
+        Tabs.PointerMoved += OnStripPointerMoved;
         Tabs.PointerExited += OnStripPointerExited;
 
         _dragAutoSwitchTimer = DispatcherQueue.CreateTimer();
@@ -82,7 +95,7 @@ public sealed partial class TabStripView : UserControl
     /// <summary>选中项变化（主窗口据此切页）。</summary>
     public event EventHandler<TabItemViewModel>? TabSelected;
 
-    /// <summary>拖拽悬停到某个标签上（主窗口据此切页；拖拽过程中不改变用户自己的点击选择语义）。</summary>
+    /// <summary>拖拽悬停到某个标签上（主窗口据此切页）。</summary>
     public event EventHandler<TabItemViewModel>? TabDraggedOver;
 
     /// <summary>把图标/列表项直接丢在某个标签上 —— 主窗口把它追加到那一页末尾。</summary>
@@ -163,121 +176,53 @@ public sealed partial class TabStripView : UserControl
         }
     }
 
-    // ────────────────────────────── 三种图标形态 ──────────────────────────────
+    // ────────────────────────────── 隐藏项的登记与三态 ──────────────────────────────
 
-    private void OnGlyphHostLoaded(object sender, RoutedEventArgs e)
+    private void OnHiddenHostLoaded(object sender, RoutedEventArgs e)
     {
-        if (sender is Border host && host.DataContext is TabItemViewModel tab)
+        if (sender is not Grid host || host.DataContext is not TabItemViewModel tab)
         {
-            _glyphHosts[tab] = host;
-            SetExpanded(tab, expand: _iconMode == TabIconMode.Always, animate: false);
+            return;
         }
+
+        if (host.RenderTransform is not CompositeTransform transform)
+        {
+            return;
+        }
+
+        _hosts[tab] = new HiddenHost { Root = host, Transform = transform };
+
+        // 初始态：按当前形态（text = 收起；always = 展开）就位，不做动画
+        bool expanded = _iconMode == TabIconMode.Always;
+        ApplyHiddenState(tab, expanded, animate: false);
     }
 
     private void ApplyIconModeToAll()
     {
-        foreach (var (tab, host) in _glyphHosts)
+        foreach (var tab in _hosts.Keys.ToList())
         {
             StopAnimation(tab);
-            bool expand = _iconMode == TabIconMode.Always;
-            host.Width = expand ? GlyphSlotWidth : 0;
-            host.Opacity = expand ? 1 : 0;
-            if (expand)
-            {
-                _expanded.Add(tab);
-            }
-            else
-            {
-                _expanded.Remove(tab);
-            }
+            ApplyHiddenState(tab, _iconMode == TabIconMode.Always, animate: false);
         }
+
+        _expandedTab = _iconMode == TabIconMode.Always
+            ? Tabs.Items.OfType<TabItemViewModel>().FirstOrDefault()
+            : null;
     }
 
-    private void OnItemPointerEntered(object sender, PointerRoutedEventArgs e) => RequestExpand(sender, expand: true);
-
-    /// <summary>移动时也请求展开：幂等，用来补偿动画期间的假退出（自我修复）。</summary>
-    private void OnItemPointerMoved(object sender, PointerRoutedEventArgs e) => RequestExpand(sender, expand: true);
-
-    private void OnItemPointerExited(object sender, PointerRoutedEventArgs e)
+    /// <summary>把某个标签的隐藏项设置为展开/收起（可选动画）。</summary>
+    private void ApplyHiddenState(TabItemViewModel tab, bool expanded, bool animate)
     {
-        if (sender is not FrameworkElement root || root.DataContext is not TabItemViewModel tab)
+        if (!_hosts.TryGetValue(tab, out var host))
         {
             return;
-        }
-
-        if (_iconMode != TabIconMode.Hover || !_expanded.Contains(tab))
-        {
-            return;
-        }
-
-        var position = e.GetCurrentPoint(root).Position;
-        bool stillInside =
-            position.X >= -ExitTolerance && position.X <= root.ActualWidth + ExitTolerance &&
-            position.Y >= -ExitTolerance && position.Y <= root.ActualHeight + ExitTolerance;
-
-        // 指针确实还在项内（多半是展开动画改动布局导致的"假退出"）→ 忽略；
-        // 真的离开了 → 立刻收起（不做时间去抖，否则会把真实退出吞掉）
-        if (stillInside)
-        {
-            return;
-        }
-
-        SetExpanded(tab, expand: false, animate: true);
-    }
-
-    /// <summary>指针离开整条标签栏：把所有展开项收起来（兜底，防止残留展开态）。</summary>
-    private void OnStripPointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        if (_iconMode != TabIconMode.Hover)
-        {
-            return;
-        }
-
-        foreach (var tab in _expanded.ToList())
-        {
-            SetExpanded(tab, expand: false, animate: true);
-        }
-    }
-
-    private void RequestExpand(object sender, bool expand)
-    {
-        if (_iconMode != TabIconMode.Hover)
-        {
-            return;
-        }
-
-        if (sender is FrameworkElement root && root.DataContext is TabItemViewModel tab)
-        {
-            SetExpanded(tab, expand, animate: true);
-        }
-    }
-
-    private void SetExpanded(TabItemViewModel tab, bool expand, bool animate)
-    {
-        if (!_glyphHosts.TryGetValue(tab, out var host))
-        {
-            return;
-        }
-
-        if (expand == _expanded.Contains(tab))
-        {
-            return;   // 状态没变：不重启动画（重启就是"抖动/很怪"的主因）
-        }
-
-        if (expand)
-        {
-            _expanded.Add(tab);
-        }
-        else
-        {
-            _expanded.Remove(tab);
         }
 
         if (!animate || !_spec.Enabled)
         {
             StopAnimation(tab);
-            host.Width = expand ? GlyphSlotWidth : 0;
-            host.Opacity = expand ? 1 : 0;
+            host.Root.Opacity = expanded ? 1 : 0;
+            host.Transform.TranslateX = expanded ? 0 : -HiddenSlotOffset;
             return;
         }
 
@@ -286,32 +231,31 @@ public sealed partial class TabStripView : UserControl
         var duration = new Duration(TimeSpan.FromMilliseconds(_spec.DurationMs));
         var easing = EntranceAnimator.CreateEasing(_spec.Easing);
 
-        var widthAnimation = new DoubleAnimation
+        var fade = new DoubleAnimation
         {
-            From = expand ? 0 : GlyphSlotWidth,       // 显式起始值，别依赖"当前值"
-            To = expand ? GlyphSlotWidth : 0,
-            Duration = duration,
-            EasingFunction = easing,
-
-            // 宽度动画会触发布局（"拉伸"就是要它发生），必须显式允许
-            EnableDependentAnimation = true,
-        };
-        Storyboard.SetTarget(widthAnimation, host);
-        Storyboard.SetTargetProperty(widthAnimation, "Width");
-
-        var opacityAnimation = new DoubleAnimation
-        {
-            From = expand ? 0 : 1,
-            To = expand ? 1 : 0,
+            From = expanded ? 0 : 1,       // 显式起始值，别依赖"当前值"
+            To = expanded ? 1 : 0,
             Duration = duration,
             EasingFunction = easing,
         };
-        Storyboard.SetTarget(opacityAnimation, host);
-        Storyboard.SetTargetProperty(opacityAnimation, "Opacity");
+        Storyboard.SetTarget(fade, host.Root);
+        Storyboard.SetTargetProperty(fade, "Opacity");
+
+        // ⚠️ 只动 TranslateX（渲染层），**不动 Width**：改宽度会触发布局重排，
+        //    既卡顿又会让 WinUI 抛假的指针退出事件（用户反馈的抖动就是这么来的）。
+        var slide = new DoubleAnimation
+        {
+            From = expanded ? -HiddenSlotOffset : 0,
+            To = expanded ? 0 : -HiddenSlotOffset,
+            Duration = duration,
+            EasingFunction = easing,
+        };
+        Storyboard.SetTarget(slide, host.Transform);
+        Storyboard.SetTargetProperty(slide, "TranslateX");
 
         var storyboard = new Storyboard();
-        storyboard.Children.Add(widthAnimation);
-        storyboard.Children.Add(opacityAnimation);
+        storyboard.Children.Add(fade);
+        storyboard.Children.Add(slide);
         _animations[tab] = storyboard;
         storyboard.Begin();
     }
@@ -324,20 +268,126 @@ public sealed partial class TabStripView : UserControl
         }
     }
 
-    private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        SyncSelection();
+    // ────────────────────────────── 悬停判定（标签栏统一） ──────────────────────────────
 
-        if (Tabs.SelectedItem is TabItemViewModel tab)
+    private void OnStripPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (_iconMode != TabIconMode.Hover)
         {
-            TabSelected?.Invoke(this, tab);
+            return;
+        }
+
+        var position = e.GetCurrentPoint(Tabs).Position;
+        var hit = FindTabAt(position);
+
+        if (ReferenceEquals(hit, _expandedTab))
+        {
+            return;   // 悬停目标没变 —— 不动手，避免每移动一点就重启动画（卡顿来源）
+        }
+
+        SetExpandedTab(hit);
+    }
+
+    /// <summary>指针离开整条标签栏：把所有隐藏项收起。</summary>
+    private void OnStripPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (_iconMode != TabIconMode.Hover)
+        {
+            return;
+        }
+
+        SetExpandedTab(null);
+    }
+
+    /// <summary>
+    /// 保证"同时最多只有一个标签展开"：只展开 <paramref name="tab"/>，其余一律收起。
+    /// 这是结构性保证，不依赖任何 pointer 事件的到达顺序。
+    /// </summary>
+    private void SetExpandedTab(TabItemViewModel? tab)
+    {
+        _expandedTab = tab;
+
+        foreach (var candidate in _hosts.Keys.ToList())
+        {
+            bool expanded = ReferenceEquals(candidate, tab);
+            ApplyHiddenState(candidate, expanded, animate: true);
+        }
+    }
+
+    /// <summary>
+    /// 指针落在哪个标签上。
+    ///
+    /// <para>判据用**平移后的实际文字范围**（而不是整个容器矩形）：
+    /// 隐藏项展开后是把文字往右推，此时"文字左侧那块新增区域"并没有真的悬停在标签文字上，
+    /// 用容器矩形会让判定范围越滚越大。</para>
+    /// </summary>
+    private TabItemViewModel? FindTabAt(Windows.Foundation.Point positionInStrip)
+    {
+        TabItemViewModel? hit = null;
+        double bestDistance = double.MaxValue;
+
+        foreach (var tab in Tabs.Items.OfType<TabItemViewModel>())
+        {
+            if (!TryGetTabBounds(tab, out var bounds))
+            {
+                continue;
+            }
+
+            bool insideX = positionInStrip.X >= bounds.Left - HitTolerance
+                           && positionInStrip.X <= bounds.Right + HitTolerance;
+            bool insideY = positionInStrip.Y >= bounds.Top - HitTolerance
+                           && positionInStrip.Y <= bounds.Bottom + HitTolerance;
+
+            if (!insideX || !insideY)
+            {
+                continue;
+            }
+
+            // 命中多项时取离中心最近的（理论上不会重叠，防御性处理）
+            double center = (bounds.Left + bounds.Right) / 2;
+            double distance = Math.Abs(positionInStrip.X - center);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                hit = tab;
+            }
+        }
+
+        return hit;
+    }
+
+    /// <summary>取某个标签项在标签栏坐标系里的实际范围（容器级，含内边距）。</summary>
+    private bool TryGetTabBounds(TabItemViewModel tab, out Windows.Foundation.Rect bounds)
+    {
+        bounds = default;
+
+        try
+        {
+            if (Tabs.ContainerFromItem(tab) is not ListViewItem container
+                || container.ActualWidth <= 0)
+            {
+                return false;
+            }
+
+            var origin = container
+                .TransformToVisual(Tabs)
+                .TransformPoint(new Windows.Foundation.Point(0, 0));
+
+            bounds = new Windows.Foundation.Rect(
+                origin.X, origin.Y, container.ActualWidth, container.ActualHeight);
+            return true;
+        }
+        catch (Exception)
+        {
+            // 元素还没进可视树时会抛异常：当作"没命中"即可，不影响其它标签
+            return false;
         }
     }
 
     // ────────────────────────────── 拖拽：悬停切页 + 丢到标签上 ──────────────────────────────
     //
     // 跨页移动的两条路：
-    //   ① 拖到某个标签上停住 → 自动切到那一页 → 用户继续在新页面里选位置放下（推荐，位置可精确控制）；
+    //   ① 拖到某个标签上停住 → 自动切到那一页 → 用户继续在新页面里选位置放下（位置可精确控制）；
     //   ② 直接松手在标签上 → 追加到那一页末尾（快手操作）。
     // ⚠️ 悬停判定用**定时器**而不是 PointerEntered：拖拽期间指针事件与普通指针事件是两套，
     //    这里以 DragOver 为准（每次移动都会重置定时器，停住才开始计时）。
@@ -455,6 +505,39 @@ public sealed partial class TabStripView : UserControl
             }
 
             element = element.Parent as FrameworkElement;
+        }
+
+        return null;
+    }
+
+    private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        SyncSelection();
+
+        if (Tabs.SelectedItem is TabItemViewModel tab)
+        {
+            TabSelected?.Invoke(this, tab);
+        }
+    }
+
+    // ────────────────────────────── 视觉树小工具 ──────────────────────────────
+
+    private static T? FindByName<T>(DependencyObject root, string name) where T : FrameworkElement
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match && match.Name == name)
+            {
+                return match;
+            }
+
+            var found = FindByName<T>(child, name);
+            if (found is not null)
+            {
+                return found;
+            }
         }
 
         return null;

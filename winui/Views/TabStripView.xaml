@@ -35,28 +35,42 @@
         <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="Transparent" />
 
         <DataTemplate x:Key="TabItemTemplate" x:DataType="vm:TabItemViewModel">
-            <Grid PointerEntered="OnItemPointerEntered"
-                  PointerMoved="OnItemPointerMoved"
-                  PointerExited="OnItemPointerExited">
+            <!--
+                ⚠️ 悬停判定**不在这里做**（本模板上没有 PointerEntered/Moved/Exited）。
+                以前是每个标签各自判定，结果：
+                  · 移到别的标签时，上一个标签收不回去（各自的退出事件互相打架）；
+                  · 图标槽变宽会重排内容，WinUI 在指针没离开时抛假退出，抖动。
+                现在改由**标签栏统一判定**（TabStripView 上挂 PointerMoved/Exited，
+                用平移后的实际文字范围选"指针在哪个标签上"），保证**同时最多只有一个标签展开**。
+            -->
+            <Grid>
                 <StackPanel Orientation="Horizontal" Spacing="6"
                             VerticalAlignment="Center" Margin="0,0,0,2">
                     <!--
-                        图标槽：宽度 0↔16 之间动画。标签宽度由内容决定，槽变宽 → 标签整体拉伸。
-                        IsHitTestVisible=False：让槽的增长不影响命中测试，减少悬停判定抖动。
+                        「隐藏项」= 图标槽 + 数量文字：两者一起淡出/淡入（用户要求把它们视为同一种隐藏项）。
+                        ⚠️ 用**负左边距**做动画而不是改宽度：改宽度会触发布局重排（抖动+卡顿），
+                        负边距只影响渲染位置，布局尺寸恒定 ⇒ 既平滑又不会引发假的指针退出事件。
                     -->
-                    <Border x:Name="TabGlyphHost" Width="0" Opacity="0"
-                            VerticalAlignment="Center"
-                            IsHitTestVisible="False"
-                            Loaded="OnGlyphHostLoaded">
-                        <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
-                    </Border>
+                    <Grid x:Name="TabHiddenHost" IsHitTestVisible="False"
+                          Loaded="OnHiddenHostLoaded">
+                        <Grid.RenderTransform>
+                            <CompositeTransform x:Name="HiddenHostTransform" TranslateX="0" />
+                        </Grid.RenderTransform>
 
-                    <TextBlock Text="{x:Bind Name}" FontSize="12" VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal" Spacing="6"
+                                    Margin="-16,0,0,0" VerticalAlignment="Center">
+                            <Grid Width="16" VerticalAlignment="Center">
+                                <FontIcon Glyph="{x:Bind Glyph}" FontSize="12" />
+                            </Grid>
 
-                    <!-- 数量文字：设置里可以隐藏（show_tab_counts） -->
-                    <TextBlock Text="{x:Bind CountLabel}" FontSize="10" Opacity="0.5"
-                               VerticalAlignment="Center"
-                               Visibility="{x:Bind ShowCount, Mode=OneWay}" />
+                            <!-- 数量文字（设置里可以隐藏）：与图标同一个隐藏项，一起出现/收起 -->
+                            <TextBlock x:Name="TabCountText" Text="{x:Bind CountLabel}" FontSize="10" Opacity="0.5"
+                                       VerticalAlignment="Center"
+                                       Visibility="{x:Bind ShowCount, Mode=OneWay}" />
+                        </StackPanel>
+                    </Grid>
+
+                    <TextBlock x:Name="TabNameText" Text="{x:Bind Name}" FontSize="12" VerticalAlignment="Center" />
                 </StackPanel>
 
                 <!-- 选中态：底部 2px 强调条（颜色走主题令牌，见 TabStripView.ApplyTheme） -->
