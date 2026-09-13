@@ -23,11 +23,13 @@ public interface IAnimatedPage
     void PrepareEntrance();
 
     /// <summary>
-    /// 第二步：开始入场（放行整页 + 让各容器从起始态动起来）。
+    /// 第二步：**在页面可以安全放行时**开始入场（放行整页 + 让各容器从起始态动起来）。
     ///
-    /// <para>⚠️ 它与 <see cref="PrepareEntrance"/> 之间**必须隔一次布局**（延迟一帧调用），
-    /// 否则容器还没来得及被实现，动画就"没有对象可播"，于是整页直接亮起来。
-    /// 推荐做法见 <c>MainWindow.ShowTab</c>：先 Prepare，再 <c>DispatcherQueue.TryEnqueue</c> 延迟一帧 Play。</para>
+    /// <para>⚠️ 不要简单地"延迟一帧"就调用它：延迟一帧只保证调度器转了一圈，
+    /// **不保证布局已经跑过** —— 布局没跑就没有 item 容器，动画一个都建不出来，
+    /// 而整页闸门却被放行 ⇒ 用户看到的是一块空白或直接亮起的最终态。
+    /// 实现方应当在"等到容器"或"确认布局已跑过"之后再放行（本项目见
+    /// <c>EntranceAnimator.RevealWhenReady</c> 的轮询实现）。</para>
     /// </summary>
-    void PlayEntrance();
+    void RevealWhenReady();
 }

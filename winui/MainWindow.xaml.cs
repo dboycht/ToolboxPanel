@@ -510,7 +510,7 @@ public sealed partial class MainWindow : Window
 
             Settings.Bind(_settings, _settingsData);
             Settings.SettingApplied += (_, _) => ApplyAllSettings();
-            Settings.PreviewRequested += (_, _) => CurrentPage()?.PlayEntrance();
+            Settings.PreviewRequested += (_, _) => CurrentPage()?.RevealWhenReady();
             Settings.CloseRequested += (_, _) => ShowSettings(false);
 
             _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
@@ -834,28 +834,22 @@ public sealed partial class MainWindow : Window
                 ProbePage("切页前", tab);
             }
 
-            // ⚠️ 入场动效的正确时序（三条一起成立才"从无到有"，少一条就会闪）：
-            //   ① 先置起始态：整页不透明度 = 0 —— 它是"总闸门"，从这一刻起到动画开始，
-            //      中间渲染出的任何一帧都看不到内容；
-            //   ② 让页面可见并**隔一次布局**（延迟一帧）—— 容器要在这一帧被实现出来；
-            //   ③ 再开始动画：此时容器已实现、且整页仍是不透明的 0，
-            //      于是放行整页的那一帧"什么都没有"，随后才逐格浮现。
-            //   为什么必须延迟一帧：容器在切页时会被回收，未实现的容器是"渲染之后才出现"的，
-            //   若不等这一帧，动画就没有对象可播 → 整页直接亮起来（这正是反复反馈的现象）。
+            // ⚠️ 入场动效的正确时序（四条一起成立才"从无到有"，少一条就会闪或空白）：
+            //   ① 目标页此刻还是**折叠**的 —— 闸门必须在这个状态下关；
+            //   ② PrepareEntrance()：整页不透明度 = 0（总闸门）；
+            //   ③ ShowPage()：让页面可见 —— 它此刻是全 0，显示出来也什么都没有，
+            //      而且**可见才会布局**（折叠状态下 GridView 不布局、容器不会被实现）；
+            //   ④ RevealWhenReady()：等容器就位/布局跑过之后再放行。
+            //      ⚠️ 这里**不能**简单延迟一帧就放行：调度器转一圈不保证布局已跑过，
+            //         布局没跑就没有容器、动画一个都建不出来，而闸门却放开了 ⇒ 用户看到空白。
             animated.PrepareEntrance();
             ShowPage(tab.Id);
+            animated.RevealWhenReady();
 
-            DispatcherQueue.TryEnqueue(() =>
+            if (EntranceAnimator.DiagnosticsEnabled)
             {
-                if (_currentPageId == tab.Id)
-                {
-                    animated.PlayEntrance();
-                    if (EntranceAnimator.DiagnosticsEnabled)
-                    {
-                        ProbePage("Play 后", tab);
-                    }
-                }
-            });
+                ProbePage("Reveal 调用后", tab);
+            }
         }
 
         _transientStatus = null;
@@ -916,10 +910,9 @@ public sealed partial class MainWindow : Window
             }
         }
 
-        App.ProbeLog($"[页面] {stage}：页面={page?.GetType().Name} Opacity={(page?.Opacity ?? -1):0.00} "
-                     + $"尺寸={(page as FrameworkElement)?.ActualWidth:0}x{(page as FrameworkElement)?.ActualHeight:0} "
-                     + $"列表IsLoaded={list?.IsLoaded} "
-                     + $"已实现容器={realized}（其中全1的={atOne}）  ← 判据：Play 放行时「全1的」必须是 0");
+        App.ProbeLog($"[页面] {stage}：页面={page?.GetType().Name} 尺寸={(page as FrameworkElement)?.ActualWidth:0}x{(page as FrameworkElement)?.ActualHeight:0} "
+                     + $"列表IsLoaded={list?.IsLoaded} 已实现容器={realized}（其中已到最终态的={atOne}）"
+                     + "  ← 判据：入场期间「已到最终态的」应为 0");
     }
 
     private static T? FindFirstChild<T>(DependencyObject root) where T : DependencyObject

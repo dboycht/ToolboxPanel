@@ -60,10 +60,11 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     public void ApplyAnimationSpec(AnimationSpec spec) => _entrance.ApplySpec(spec);
 
-    /// <summary>挂进可视树**之前**准备入场起始态（否则会先以最终态闪一帧，见 IAnimatedPage 的说明）。</summary>
+    /// <summary>置于入场起始态（整页不透明度 = 0）。必须在页面可见之前调用。</summary>
     public void PrepareEntrance() => _entrance.Prepare();
 
-    public void PlayEntrance() => _entrance.Play();
+    /// <summary>等到"可以安全放行"（容器已就位或布局已跑过）再开始入场并放行整页。</summary>
+    public void RevealWhenReady() => _entrance.RevealWhenReady();
 
     public TabItemViewModel Tab => _tab;
 

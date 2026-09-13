@@ -54,9 +54,6 @@ internal sealed class EntranceAnimator
     private AnimationSpec _spec = AnimationSpec.Disabled;
     private bool _pending;
 
-    /// <summary>本次入场是否被请求过（<see cref="Prepare"/> 置位，下次 Prepare 前一直保持）。</summary>
-    private bool _playRequested;
-
     /// <summary>诊断：用于给日志加上"距本次切页多少毫秒"。</summary>
     private static System.Diagnostics.Stopwatch? _diagnosticClock;
 
@@ -89,8 +86,8 @@ internal sealed class EntranceAnimator
     }
 
     /// <summary>
-    /// ⚠️ 临时诊断：把"页面根元素的不透明度 + 已实现容器的最值"打成一行。
-    /// 定位"切页先亮一下"用：页面级不透明度必须在挂载前就是 0，且直到动画结束才回 1。
+    /// 诊断：把"已实现容器的不透明度分布"打成一行。
+    /// 判据：动画期间**不应该**有容器已经停在最终态（那说明它没走入场、会直接亮着出现）。
     /// </summary>
     internal void DiagFrame(string stage)
     {
@@ -99,7 +96,6 @@ internal sealed class EntranceAnimator
             return;
         }
 
-        double pageOpacity = GetPageOpacity();
         int realized = 0;
         int atOne = 0;
         for (int index = 0; index < _list.Items.Count; index++)
@@ -111,38 +107,7 @@ internal sealed class EntranceAnimator
             }
         }
 
-        Diag($"{stage}：页面Opacity={pageOpacity:0.00} 已实现={realized} 其中全1的={atOne}");
-    }
-
-    /// <summary>⚠️ 临时诊断：页面根元素（网格页/列表页 UserControl）当前的不透明度。</summary>
-    internal double GetPageOpacity() => PageElement?.Opacity ?? -1;
-
-    /// <summary>
-    /// 页面根元素（GridPage / ListViewPage 这个 **UserControl**）——**整页一次性隐藏的开关**。
-    ///
-    /// <para>⚠️ 不能停在"页面内部的 Grid"上（第一版就错在这儿，日志里表现为
-    /// `Prepare 后：页面Opacity=1.00`）：视觉树是
-    /// `ContentControl → ContentPresenter → UserControl(页面) → Grid(页面内根) → ListView`，
-    /// 所以要一直往上找到 UserControl 为止。</para>
-    /// </summary>
-    internal FrameworkElement? PageElement
-    {
-        get
-        {
-            DependencyObject? current = _list;
-
-            while (current is not null)
-            {
-                if (current is UserControl page)
-                {
-                    return page;
-                }
-
-                current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current);
-            }
-
-            return null;
-        }
+        Diag($"{stage}：已实现={realized} 其中已到最终态的={atOne}");
     }
 
     /// <summary>诊断：把"当前已实现容器的数量 + 不透明度分布"打成一行。</summary>
@@ -193,16 +158,15 @@ internal sealed class EntranceAnimator
     /// 主窗口在把页面挂进可视树**之前**调用它 —— 这样"最终态那一帧"根本没机会被渲染出来。
     /// </summary>
     /// <summary>
-    /// 第一步：把页面置于**入场起始态**（整页不透明度 = 0），并标记"下一次 <see cref="Play"/> 要从头播"。
+    /// 准备入场：登记"这一轮要播"，并把**已实现**的容器同步置为起始态。
     ///
-    /// <para>⚠️ 页面级不透明度是"总闸门"，不是可选优化：容器在切页时会被回收，
-    /// 未实现的容器是**渲染之后才出现**的；只把已实现的容器置 0 挡不住它们。
-    /// 闸门在这里关掉之后，从这一刻到 <see cref="Play"/> 之间渲染出的任何一帧都看不到内容。</para>
+    /// <para>⚠️ 这里**刻意不碰页面级不透明度**（上一版用它当"总闸门"，结果一旦放行没跑到，
+    /// 整页就永久不可见 —— 用户看到空白）。现在只做容器级起始态：
+    /// 没有容器时什么都不用做，页面本来就是可见的，**不可能出现整页空白**。</para>
     /// </summary>
     public void Prepare()
     {
         DiagSnapshot("Prepare 进入");
-        StopRunning();
 
         if (!_spec.Enabled)
         {
@@ -210,66 +174,94 @@ internal sealed class EntranceAnimator
             return;
         }
 
-        _playRequested = true;
+        StopRunning();
         _pending = true;
-        SetPageOpacity(0);          // 总闸门：整页不可见
         _played.Clear();
-        HideRealized();             // 已实现的容器也给上起始态（供交错动画）
+        HideRealized();         // 已实现的容器给上起始态（未实现的交给 ContainerContentChanging）
         DiagSnapshot("Prepare 结束");
     }
 
     /// <summary>
-    /// 第二步：开始入场。**必须在 <see cref="Prepare"/> 之后隔一次布局（延迟一帧）调用**。
+    /// 在"可以开始动画"时放行：等到容器就位（或确认这一页没有内容）之后再起交错动画。
     ///
-    /// <para>延迟这一帧的作用：让容器先被实现出来。到这里时容器已是最终态，
-    /// 我们临起动画前再置 0（同一帧内完成，不会渲染出中间态），
-    /// 最后才放开整页闸门 —— 放行那一帧页面上"什么都没有"，随后逐格浮现。</para>
+    /// <para>轮询而不是"延迟一帧"：延迟一帧只保证调度器转了一圈，**不保证布局跑过**；
+    /// 布局没跑就没有容器，动画建不出来。轮询能让这两种情况都收敛，
+    /// 并且**最多等 <paramref name="maxAttempts"/> 个周期**，绝不会把界面卡住。</para>
     /// </summary>
-    public void Play()
+    /// <param name="maxAttempts">最多等多少个调度器周期（每个周期 ≈ 一帧）。</param>
+    public void RevealWhenReady(int maxAttempts = 4)
     {
-        DiagSnapshot("Play 进入");
-
         if (!_spec.Enabled)
         {
             ResetAll();
             return;
         }
 
-        // 本次入场没被要求（例如只是设置变化后的重套），不播
-        if (!_playRequested)
+        AttemptReveal(attempt: 0, maxAttempts);
+    }
+
+    private void AttemptReveal(int attempt, int maxAttempts)
+    {
+        if (!_spec.Enabled)
         {
-            SetPageOpacity(1);
+            ResetAll();
             return;
         }
 
-        // 停止上一轮：HoldEnd 的动画值优先级高于本地赋值，不停掉就会"先闪最终态再重播"
-        StopRunning();
+        int realized = RealizedCount();
+        bool layoutHasRun = _list.ActualWidth > 0 && _list.ActualHeight > 0;
 
-        // 容器此刻是最终态 → 同步置 0（同帧完成，不会渲染出 1）
-        HideRealized();
+        Diag($"RevealWhenReady 尝试#{attempt}：已实现容器={realized} 列表尺寸={_list.ActualWidth:0}x{_list.ActualHeight:0}");
 
-        // 起动画（已实现的容器）
-        PlayRealized();
+        // 有容器可播，或布局已经跑过（说明这一页确实没有可播的东西），就开始
+        if (realized > 0 || layoutHasRun || attempt >= maxAttempts)
+        {
+            Play();
+            return;
+        }
 
-        // 放行整页：此刻各容器都在起始态，所以这一帧看到的是"什么都没有"
-        SetPageOpacity(1);
-
-        // 判据日志：放行之后若还有容器停在最终态（其中全1的 > 0），它们就会"已经亮着"地出现
-        DiagFrame("Play 放行后（判据：其中全1的应为 0）");
-
-        // ⚠️ 这里**不**清 _playRequested / _pending：
-        //    本帧之后才被实现的容器（滚动进视野、虚拟化补实现）也要按入场态出现，
-        //    由 ContainerContentChanging 兜住；下次切页时 Prepare() 才重置。
-        DiagSnapshot("Play 结束");
+        _list.DispatcherQueue.TryEnqueue(() => AttemptReveal(attempt + 1, maxAttempts));
     }
 
-    /// <summary>设置"整页"的不透明度（找不到页面元素时静默跳过）。</summary>
-    private void SetPageOpacity(double value)
+    /// <summary>开始入场：把已实现的容器置起始态并起交错动画。</summary>
+    private void Play()
     {
-        if (PageElement is { } page)
+        DiagSnapshot("Play 进入");
+
+        try
         {
-            page.Opacity = value;
+            // 停止上一轮：HoldEnd 的动画值优先级高于本地赋值，不停掉就会"先闪最终态再重播"
+            StopRunning();
+
+            // 容器此刻可能已是最终态 → 同步置 0（同帧完成，不会渲染出 1）
+            HideRealized();
+
+            // 起交错动画（已实现的容器）。未实现的容器由 ContainerContentChanging 兜住。
+            PlayRealized();
+
+            DiagFrame("Play 结束（判据：不应有容器停在最终态）");
+            DiagSnapshot("Play 结束");
         }
+        catch (Exception ex)
+        {
+            // 外观类失败必须是"软"的：出错也绝不能把界面留在不可见状态
+            App.WriteCrash("EntranceAnimator.Play", ex);
+            ResetAll();
+        }
+    }
+
+    private int RealizedCount()
+    {
+        int count = 0;
+        for (int index = 0; index < _list.Items.Count; index++)
+        {
+            if (_list.ContainerFromIndex(index) is not null)
+            {
+                count++;
+            }
+        }
+
+        return count;
     }
 
     private void StopRunning()
@@ -373,12 +365,11 @@ internal sealed class EntranceAnimator
     {
         StopRunning();
         _pending = false;
-        _playRequested = false;
         _played.Clear();
 
-        // 整页放行：动效关掉时页面必须立刻可见（否则会留下一块整页透明）
-        SetPageOpacity(1);
-
+        // 恢复所有已实现容器的常态（不透明度 1、位移 0）。
+        // ⚠️ 这里**只碰容器**，不碰页面级不透明度 —— 现在的设计里页面从不被隐藏，
+        //    所以"界面空白"在设计上就不可能发生（这也是上一版整页闸门被撤掉的原因）。
         for (int index = 0; index < _list.Items.Count; index++)
         {
             if (_list.ContainerFromIndex(index) is not UIElement container)
