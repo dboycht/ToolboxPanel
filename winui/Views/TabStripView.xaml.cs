@@ -15,12 +15,14 @@
 //   4. 图标槽 `IsHitTestVisible=False`：槽的增长不参与命中测试。
 
 using System;
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace ToolboxPanel.Views;
 
@@ -36,12 +38,25 @@ public sealed partial class TabStripView : UserControl
     /// </summary>
     private const double ExitTolerance = 2;
 
+    /// <summary>
+    /// 拖拽悬停在某个标签上多久才自动切到那一页（毫秒）。
+    /// ⚠️ 不能太短：用户可能只是拖过标签栏、想放到**当前页**的某个位置。
+    /// </summary>
+    private static readonly TimeSpan DragAutoSwitchDelay = TimeSpan.FromMilliseconds(550);
+
+    /// <summary>拖拽"离开标签栏"的去抖时长：DragLeave 在项之间移动时会误报，用这个兜底取消。</summary>
+    private static readonly TimeSpan DragLeaveGrace = TimeSpan.FromMilliseconds(260);
+
     private readonly Dictionary<TabItemViewModel, Border> _glyphHosts = new();
     private readonly HashSet<TabItemViewModel> _expanded = new();
     private readonly Dictionary<TabItemViewModel, Storyboard> _animations = new();
 
     private TabIconMode _iconMode = TabIconMode.Hover;
     private AnimationSpec _spec = AnimationSpec.Disabled;
+
+    private DispatcherQueueTimer? _dragAutoSwitchTimer;
+    private DispatcherQueueTimer? _dragLeaveTimer;
+    private TabItemViewModel? _dragOverTab;
 
     public TabStripView()
     {
@@ -50,10 +65,26 @@ public sealed partial class TabStripView : UserControl
         // 兜底：指针离开整条标签栏时，把所有展开项收起来
         // （万一某项没收到 PointerExited，也不会留下"图标一直挂着"的状态）
         Tabs.PointerExited += OnStripPointerExited;
+
+        _dragAutoSwitchTimer = DispatcherQueue.CreateTimer();
+        _dragAutoSwitchTimer.Interval = DragAutoSwitchDelay;
+        _dragAutoSwitchTimer.IsRepeating = false;
+        _dragAutoSwitchTimer.Tick += OnDragAutoSwitchTick;
+
+        _dragLeaveTimer = DispatcherQueue.CreateTimer();
+        _dragLeaveTimer.Interval = DragLeaveGrace;
+        _dragLeaveTimer.IsRepeating = false;
+        _dragLeaveTimer.Tick += OnDragLeaveGraceTick;
     }
 
     /// <summary>选中项变化（主窗口据此切页）。</summary>
     public event EventHandler<TabItemViewModel>? TabSelected;
+
+    /// <summary>拖拽悬停到某个标签上（主窗口据此切页；拖拽过程中不改变用户自己的点击选择语义）。</summary>
+    public event EventHandler<TabItemViewModel>? TabDraggedOver;
+
+    /// <summary>把图标/列表项直接丢在某个标签上 —— 主窗口把它追加到那一页末尾。</summary>
+    public event EventHandler<(DragPayload Payload, TabItemViewModel Tab)>? ItemDroppedOnTab;
 
     public object? ItemsSource
     {
@@ -72,7 +103,11 @@ public sealed partial class TabStripView : UserControl
 
     public int ItemCount => Tabs.Items.Count;
 
-    public TabItemViewModel? SelectedTab => Tabs.SelectedItem as TabItemViewModel;
+    public TabItemViewModel? SelectedTab
+    {
+        get => Tabs.SelectedItem as TabItemViewModel;
+        set => Tabs.SelectedItem = value;
+    }
 
     /// <summary>套用设置：图标形态、是否显示数量、动效参数。</summary>
     public void ApplySettings(TabIconMode iconMode, bool showCounts, AnimationSpec spec)
@@ -266,5 +301,131 @@ public sealed partial class TabStripView : UserControl
         {
             TabSelected?.Invoke(this, tab);
         }
+    }
+
+    // ────────────────────────────── 拖拽：悬停切页 + 丢到标签上 ──────────────────────────────
+    //
+    // 跨页移动的两条路：
+    //   ① 拖到某个标签上停住 → 自动切到那一页 → 用户继续在新页面里选位置放下（推荐，位置可精确控制）；
+    //   ② 直接松手在标签上 → 追加到那一页末尾（快手操作）。
+    // ⚠️ 悬停判定用**定时器**而不是 PointerEntered：拖拽期间指针事件与普通指针事件是两套，
+    //    这里以 DragOver 为准（每次移动都会重置定时器，停住才开始计时）。
+
+    private void OnTabsDragOver(object sender, DragEventArgs e)
+    {
+        if (!TryReadPayload(e, out var payload))
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            StopDragTimers();
+            return;
+        }
+
+        e.AcceptedOperation = DataPackageOperation.Move;
+        e.DragUIOverride.IsCaptionVisible = false;
+
+        // 指针还在标签栏区域内 → 取消"离开"的兜底计时
+        _dragLeaveTimer?.Stop();
+        _dragLeaveTimer?.Start();
+
+        var tab = FindTabFromArgs(e);
+        if (tab is null || ReferenceEquals(tab, _dragOverTab))
+        {
+            return;
+        }
+
+        // 换了一个标签 → 重新开始计时（拖过标签栏时不会乱切页）
+        _dragOverTab = tab;
+        _dragAutoSwitchTimer?.Stop();
+        _dragAutoSwitchTimer?.Start();
+    }
+
+    /// <summary>项之间的 DragLeave 会误报，所以离开与否交给去抖定时器判定。</summary>
+    private void OnTabsDragLeave(object sender, DragEventArgs e)
+    {
+        // 什么都不做：真正"离开整条标签栏"由 OnDragLeaveGraceTick 处理
+    }
+
+    private void OnDragLeaveGraceTick(DispatcherQueueTimer sender, object args)
+    {
+        _dragLeaveTimer?.Stop();
+        _dragOverTab = null;
+        _dragAutoSwitchTimer?.Stop();
+    }
+
+    private void OnDragAutoSwitchTick(DispatcherQueueTimer sender, object args)
+    {
+        _dragAutoSwitchTimer?.Stop();
+
+        if (_dragOverTab is { } tab)
+        {
+            TabDraggedOver?.Invoke(this, tab);
+        }
+    }
+
+    private void OnTabsDrop(object sender, DragEventArgs e)
+    {
+        StopDragTimers();
+
+        if (!TryReadPayload(e, out var payload))
+        {
+            return;
+        }
+
+        if (FindTabFromArgs(e) is { } tab)
+        {
+            ItemDroppedOnTab?.Invoke(this, (payload, tab));
+        }
+    }
+
+    private void StopDragTimers()
+    {
+        _dragAutoSwitchTimer?.Stop();
+        _dragLeaveTimer?.Stop();
+        _dragOverTab = null;
+    }
+
+    /// <summary>载荷来自本应用、且格式合法才接受（具体"哪一页收哪一类"由主窗口判）。</summary>
+    private static bool TryReadPayload(DragEventArgs e, out DragPayload payload)
+    {
+        payload = null!;
+
+        try
+        {
+            if (!e.DataView.Contains(StandardDataFormats.Text))
+            {
+                return false;
+            }
+
+            var parsed = DragPayload.TryParse(e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult());
+            if (parsed is null)
+            {
+                return false;
+            }
+
+            payload = parsed;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("TabStripView.TryReadPayload", ex);
+            return false;
+        }
+    }
+
+    /// <summary>这次 DragOver 落在哪个标签项上（落在标签栏空白处 → null）。</summary>
+    private static TabItemViewModel? FindTabFromArgs(DragEventArgs e)
+    {
+        var element = e.OriginalSource as FrameworkElement;
+        while (element is not null)
+        {
+            if (element.DataContext is TabItemViewModel tab)
+            {
+                return tab;
+            }
+
+            element = element.Parent as FrameworkElement;
+        }
+
+        return null;
     }
 }

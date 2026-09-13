@@ -131,6 +131,49 @@ public sealed class MainViewModel
     /// <summary>图标缓存目录（界面上要显示"图标从哪来"时用）。</summary>
     public string IconsDirectory => _iconExtractor?.CacheDirectory ?? string.Empty;
 
+    // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
+
+    /// <summary>
+    /// 把界面上的拖放结果落库，并让**两张标签页的界面集合跟着 Core 走**。
+    ///
+    /// <para>顺序很关键（也是这个类唯一有点绕的地方）：
+    /// ① 先让 <see cref="DataStore.ApplyDragDrop"/> 改 Core（它是唯一事实源，失败就一个字节都没动）；
+    /// ② 再 <see cref="TabItemViewModel.SyncIconsFromModel"/> 把界面集合重排成 Core 的顺序
+    ///    —— 源页与目标页都要同步（跨页移动时两张页的集合都变了）。
+    /// ③ 最后刷新标签栏上的数量文字。</para>
+    ///
+    /// <para>演示模式下 <c>_store</c> 为空：**不做任何事**并返回失败（演示模式不产生持久化副作用）。</para>
+    /// </summary>
+    public DragDropResult ApplyDrop(DragDropRequest request)
+    {
+        if (_store is null)
+        {
+            return DragDropResult.Fail("演示模式：不会真的保存", request);
+        }
+
+        var result = _store.ApplyDragDrop(request);
+        if (!result.Success)
+        {
+            return result;
+        }
+
+        if (request.Payload.Kind == DragItemKind.Icon)
+        {
+            FindTab(request.Payload.SourceTabId)?.SyncIconsFromModel();
+            FindTab(request.TargetTabId)?.SyncIconsFromModel();
+        }
+        else
+        {
+            FindTab(request.Payload.SourceTabId)?.SyncListItemsFromModel();
+            FindTab(request.TargetTabId)?.SyncListItemsFromModel();
+        }
+
+        return result;
+    }
+
+    private TabItemViewModel? FindTab(string tabId)
+        => Tabs.FirstOrDefault(t => t.Id == tabId);
+
     // ────────────────────────────── 纯 UI 演示内容 ──────────────────────────────
 
     /// <summary>

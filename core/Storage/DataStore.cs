@@ -440,6 +440,144 @@ public sealed class DataStore
         Save();
     }
 
+    // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
+
+    /// <summary>
+    /// 把界面上的拖放结果落库 —— **UI 侧唯一应该调的拖放入口**。
+    ///
+    /// <para>为什么不让界面直接调 <see cref="ReorderIcon"/> / <see cref="MoveIcon"/>：
+    /// 那样"同页排序"与"跨页移动"要各写一套，而且很容易出现
+    /// 「界面集合改了、Core 没改」这种下次启动才暴露的不一致。这里统一收口，
+    /// 并且**失败时保证一个字节都不改**（越界的索引一律夹取，不做半途而废的部分修改）。</para>
+    ///
+    /// <para>⚠️ 与原 Python 版的一致性：原版是在 UI 里就地改集合再 save()，没有这一层；
+    /// 结果数据格式完全相同（都是把顺序写进 <c>sort_order</c> 并重排），只是入口更收敛。</para>
+    /// </summary>
+    public DragDropResult ApplyDragDrop(DragDropRequest request)
+    {
+        var payload = request.Payload;
+
+        var sourceTab = FindTab(payload.SourceTabId);
+        if (sourceTab is null)
+        {
+            return DragDropResult.Fail("来源标签页已不存在", request);
+        }
+
+        var targetTab = FindTab(request.TargetTabId);
+        if (targetTab is null)
+        {
+            return DragDropResult.Fail("目标标签页已不存在", request);
+        }
+
+        if (payload.Kind == DragItemKind.Icon && targetTab.IsListTab)
+        {
+            return DragDropResult.Fail("图标不能放到列表页", request);
+        }
+
+        if (payload.Kind == DragItemKind.ListItem && !targetTab.IsListTab)
+        {
+            return DragDropResult.Fail("列表项不能放到网格页", request);
+        }
+
+        return payload.Kind == DragItemKind.Icon
+            ? ApplyIconDrop(payload, sourceTab, targetTab, request)
+            : ApplyListItemDrop(payload, sourceTab, targetTab, request);
+    }
+
+    private DragDropResult ApplyIconDrop(
+        DragPayload payload, TabModel sourceTab, TabModel targetTab, DragDropRequest request)
+    {
+        if (!sourceTab.Icons.Any(i => i.Id == payload.ItemId))
+        {
+            return DragDropResult.Fail("被拖动的图标已不存在", request);
+        }
+
+        if (ReferenceEquals(sourceTab, targetTab))
+        {
+            int fromIndex = sourceTab.Icons.FindIndex(i => i.Id == payload.ItemId);
+            int toIndex = Math.Clamp(request.TargetIndex, 0, sourceTab.Icons.Count);
+            return ApplySameTabDrop(sourceTab.Icons, fromIndex, toIndex, request);
+        }
+
+        // 跨页移动：**先把图标从源页摘下来**，目标索引才是"去掉自己之后"的坐标系
+        // （否则往后面的位置拖会整体差一位）
+        var icon = FindIcon(payload.ItemId)!.Value.Icon;
+        sourceTab.Icons.Remove(icon);
+        int insertAt = Math.Clamp(request.TargetIndex, 0, targetTab.Icons.Count);
+        targetTab.Icons.Insert(insertAt, icon);
+
+        RenumberIcons(sourceTab);
+        RenumberIcons(targetTab);
+        Save();
+
+        return DragDropResult.Ok(new DragDropRequest(payload, request.TargetTabId, insertAt));
+    }
+
+    private DragDropResult ApplyListItemDrop(
+        DragPayload payload, TabModel sourceTab, TabModel targetTab, DragDropRequest request)
+    {
+        if (!sourceTab.ListItems.Any(it => it.Id == payload.ItemId))
+        {
+            return DragDropResult.Fail("被拖动的列表项已不存在", request);
+        }
+
+        if (ReferenceEquals(sourceTab, targetTab))
+        {
+            int fromIndex = sourceTab.ListItems.FindIndex(it => it.Id == payload.ItemId);
+            int toIndex = Math.Clamp(request.TargetIndex, 0, sourceTab.ListItems.Count);
+            return ApplySameTabDrop(sourceTab.ListItems, fromIndex, toIndex, request);
+        }
+
+        var item = FindListItem(payload.ItemId)!.Value.Item;
+        sourceTab.ListItems.Remove(item);
+        int insertAtListItem = Math.Clamp(request.TargetIndex, 0, targetTab.ListItems.Count);
+        targetTab.ListItems.Insert(insertAtListItem, item);
+
+        RenumberListItems(sourceTab);
+        RenumberListItems(targetTab);
+        Save();
+
+        return DragDropResult.Ok(new DragDropRequest(payload, request.TargetTabId, insertAtListItem));
+    }
+
+    /// <summary>同页内重排：移动 → 重排序号 → 落盘。**索引越界已由调用方夹取**。</summary>
+    private DragDropResult ApplySameTabDrop<T>(List<T> items, int fromIndex, int toIndex, DragDropRequest request)
+    {
+        if (fromIndex < 0)
+        {
+            return DragDropResult.Fail("被拖动的项已不存在", request);
+        }
+
+        var moved = items[fromIndex];
+        items.RemoveAt(fromIndex);
+        items.Insert(Math.Clamp(toIndex, 0, items.Count), moved);
+
+        // 即使"原地落下"（顺序没变）也照样重排序号：序号必须是 0..N-1 的连续值
+        for (int i = 0; i < items.Count; i++)
+        {
+            switch (items[i])
+            {
+                case IconModel icon:
+                    icon.SortOrder = i;
+                    break;
+                case ListItemModel listItem:
+                    listItem.SortOrder = i;
+                    break;
+            }
+        }
+
+        Save();
+        return DragDropResult.Ok(new DragDropRequest(request.Payload, request.TargetTabId, toIndex));
+    }
+
+    private static void RenumberListItems(TabModel tab)
+    {
+        for (int i = 0; i < tab.ListItems.Count; i++)
+        {
+            tab.ListItems[i].SortOrder = i;
+        }
+    }
+
     // ────────────────────────────── 图标缓存清理 ──────────────────────────────
 
     /// <summary>icons/ 目录里没有被任何图标引用的缓存文件名。</summary>

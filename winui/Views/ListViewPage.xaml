@@ -3,7 +3,10 @@
     ListViewPage.xaml —— 列表页（紧凑版：行高 26、11~12 号字、两列）
 
     对应 v1.11.6 的 ListTabPage：两列（说明 / 路径），点一行打开该路径。
-    行内编辑、右键菜单、拖拽排序属于 W5。
+    行内编辑、右键菜单属于 W5；拖拽排序（同页 + 跨页）已在 W3 做完。
+
+    拖拽：与网格页同一套做法（见 GridPage.xaml.cs 顶部注释的取舍说明）——
+      行容器开 CanDrag，页面上接 DragStarting / DragOver / Drop，落点判定交给 Core。
 -->
 <UserControl
     x:Class="ToolboxPanel.Views.ListViewPage"
@@ -18,6 +21,8 @@
             <Setter Property="Padding" Value="8,3" />
             <Setter Property="Margin" Value="0" />
             <Setter Property="CornerRadius" Value="4" />
+            <!-- 拖拽排序：行本身可拖 -->
+            <Setter Property="CanDrag" Value="True" />
         </Style>
 
         <DataTemplate x:Key="ListRowTemplate" x:DataType="vm:ListRowViewModel">
@@ -44,6 +49,12 @@
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnRowClick"
+                  CanDrag="True"
+                  AllowDrop="True"
+                  DragStarting="OnRowDragStarting"
+                  DragOver="OnRowDragOver"
+                  Drop="OnRowDrop"
+                  DragItemsCompleted="OnRowDragItemsCompleted"
                   Padding="6,4"
                   Background="Transparent" />
 
@@ -54,5 +65,16 @@
             <TextBlock Text="这一页还没有列表项" Opacity="0.65" FontSize="12" />
             <TextBlock Text="（新建 / 编辑在 W5 实现）" Opacity="0.4" FontSize="10.5" />
         </StackPanel>
+
+        <!--
+            拖拽落点指示线：**横**线（列表是单列，插入位在行的上/下边缘）。
+            放在最后 = 绘制在内容之上；IsHitTestVisible=False 保证它不吃拖放事件。
+        -->
+        <Border x:Name="DropIndicator"
+                Height="2" CornerRadius="1"
+                Background="#FF6CC6FF"
+                IsHitTestVisible="False"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                Visibility="Collapsed" />
     </Grid>
 </UserControl>

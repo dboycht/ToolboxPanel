@@ -529,12 +529,14 @@ public sealed partial class MainWindow : Window
 
             TabStrip.ItemsSource = _viewModel.Tabs;
             TabStrip.TabSelected += OnTabSelected;
+            TabStrip.TabDraggedOver += OnTabDraggedOver;
+            TabStrip.ItemDroppedOnTab += OnItemDroppedOnTab;
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");
             _log.AppendLine(_viewModel.StatusText);
             foreach (var tab in _viewModel.Tabs)
             {
-                _log.AppendLine($"  - [{tab.Kind}] {tab.Name} :: {tab.CountLabel}");
+                _log.AppendLine($"  - [{tab.DraggableKind}] {tab.Name} :: {tab.CountLabel}");
             }
 
             if (TabStrip.ItemCount > 0)
@@ -568,7 +570,7 @@ public sealed partial class MainWindow : Window
         {
             page = CreatePage(tab);
             _pages[tab.Id] = page;
-            _log.AppendLine($"首次创建页面 = [{tab.Kind}] {tab.Name}（{page.GetType().Name}）");
+            _log.AppendLine($"首次创建页面 = [{tab.DraggableKind}] {tab.Name}（{page.GetType().Name}）");
         }
 
         ContentHost.Content = page;
@@ -587,14 +589,115 @@ public sealed partial class MainWindow : Window
     {
         if (tab.IsList)
         {
-            var listPage = new ListViewPage(tab);
+            var listPage = new ListViewPage(tab) { DragDropEnabled = !_isDemo };
             listPage.ItemActivated += OnListItemActivated;
+            listPage.ItemDropped += OnItemDropped;
             return listPage;
         }
 
-        var gridPage = new GridPage(tab);
+        var gridPage = new GridPage(tab) { DragDropEnabled = !_isDemo };
         gridPage.IconActivated += OnIconActivated;
+        gridPage.ItemDropped += OnItemDropped;
         return gridPage;
+    }
+
+    // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
+
+    /// <summary>
+    /// 拖拽悬停在某个标签上 → 切到那一页（跨页移动的"先切页再选位置"路径）。
+    /// 只有停留超过 <see cref="TabStripView"/> 里的阈值才会到这里，拖过标签栏不会乱切。
+    /// </summary>
+    private void OnTabDraggedOver(object? sender, TabItemViewModel tab)
+    {
+        if (!ReferenceEquals(tab, TabStrip.SelectedTab))
+        {
+            TabStrip.SelectedTab = tab;
+            ShowTab(tab);
+            _log.AppendLine($"拖拽悬停 → 切到标签页「{tab.Name}」");
+        }
+    }
+
+    /// <summary>直接把图标/列表项丢在标签上 —— 追加到那一页末尾。</summary>
+    private void OnItemDroppedOnTab(object? sender, (DragPayload Payload, TabItemViewModel Tab) e)
+    {
+        var target = e.Tab;
+        if (!KindMatches(e.Payload, target))
+        {
+            _transientStatus = $"「{target.Name}」不收这一类项目";
+            UpdateStatusBar();
+            return;
+        }
+
+        int targetIndex = e.Payload.Kind == DragItemKind.Icon ? target.Icons.Count : target.ListItems.Count;
+        ApplyDrop(new DragDropRequest(e.Payload, target.Id, targetIndex));
+    }
+
+    /// <summary>页面里拖放落下 —— 交给 ViewModel 落库（Core 是唯一事实源）。</summary>
+    private void OnItemDropped(object? sender, DragDropRequest request)
+    {
+        var target = _viewModel?.Tabs.FirstOrDefault(t => t.Id == request.TargetTabId);
+        if (target is null)
+        {
+            return;
+        }
+
+        if (!KindMatches(request.Payload, target))
+        {
+            _transientStatus = $"「{target.Name}」不收这一类项目";
+            UpdateStatusBar();
+            return;
+        }
+
+        ApplyDrop(request);
+    }
+
+    /// <summary>同一类才能往同一页放（图标 ↔ 列表项不通用；网格页/列表页的语义不同）。</summary>
+    private static bool KindMatches(DragPayload payload, TabItemViewModel tab)
+        => payload.Kind == tab.DraggableKind;
+
+    private void ApplyDrop(DragDropRequest request)
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        var result = _viewModel.ApplyDrop(request);
+        var target = _viewModel.Tabs.FirstOrDefault(t => t.Id == request.TargetTabId);
+        var name = target?.Name ?? "?";
+
+        _transientStatus = result.Success
+            ? $"已移动：{DescribeDroppedItem(request.Payload)} → 「{name}」"
+            : $"移动失败：{result.Reason}";
+
+        if (result.Success)
+        {
+            _log.AppendLine($"拖放落库：{request.Payload} → 页={name} 位置={request.TargetIndex}");
+        }
+
+        UpdateStatusBar();
+        FlushLog();
+    }
+
+    private string DescribeDroppedItem(DragPayload payload)
+    {
+        if (_viewModel is null)
+        {
+            return payload.ItemId;
+        }
+
+        if (payload.Kind == DragItemKind.Icon)
+        {
+            var tile = _viewModel.Tabs
+                .SelectMany(t => t.Icons)
+                .FirstOrDefault(i => i.Model.Id == payload.ItemId);
+            return tile?.DisplayName ?? payload.ItemId;
+        }
+
+        var row = _viewModel.Tabs
+            .SelectMany(t => t.ListItems)
+            .FirstOrDefault(i => i.Model.Id == payload.ItemId);
+        return row?.Description ?? payload.ItemId;
     }
 
     // ────────────────────────────── 打开动作 ──────────────────────────────

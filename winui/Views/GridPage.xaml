@@ -4,6 +4,9 @@
 
     ⚠️ WinUI 的 GridView **自己管 delegate 的 x/y**：模板里不要绑 y、不要给 y 加动画
        （同类坑见 memory/05-布局与动效通用坑.md）。
+
+    拖拽排序（W3）：图块容器开 CanDrag，页面上接 DragStarting / DragOver / Drop，
+      **不用** GridView 内置的 CanReorderItems（理由见 GridPage.xaml.cs 顶部注释）。
 -->
 <UserControl
     x:Class="ToolboxPanel.Views.GridPage"
@@ -27,6 +30,8 @@
             <Setter Property="Margin" Value="0" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="VerticalContentAlignment" Value="Top" />
+            <!-- 拖拽排序：图块本身可拖（长按不动即起拖，拖动过程中不会触发点击） -->
+            <Setter Property="CanDrag" Value="True" />
         </Style>
 
         <DataTemplate x:Key="IconTileTemplate" x:DataType="vm:IconTileViewModel">
@@ -64,6 +69,12 @@
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnTileClick"
+                  CanDrag="True"
+                  AllowDrop="True"
+                  DragStarting="OnTileDragStarting"
+                  DragOver="OnTileDragOver"
+                  Drop="OnTileDrop"
+                  DragItemsCompleted="OnTileDragItemsCompleted"
                   Padding="4,3"
                   Background="Transparent" />
 
@@ -75,5 +86,17 @@
             <TextBlock Text="这一页还没有图标" Opacity="0.65" FontSize="12" />
             <TextBlock Text="（新建 / 拖入图标在 W5 实现）" Opacity="0.4" FontSize="10.5" />
         </StackPanel>
+
+        <!--
+            拖拽落点指示线：GridView 的兄弟节点，放在最后 → 绘制在内容之上。
+            宽度 2、水平居中，靠代码设 Canvas.Left/Top（放在 Grid 里用附加属性定位即可）。
+        -->
+        <Border x:Name="DropIndicator"
+                Width="2" CornerRadius="1"
+                Background="#FF6CC6FF"
+                IsHitTestVisible="False"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                Visibility="Collapsed" />
     </Grid>
 </UserControl>
+

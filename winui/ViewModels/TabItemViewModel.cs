@@ -9,6 +9,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Storage;
 
 namespace ToolboxPanel.ViewModels;
 
@@ -37,12 +38,10 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     public bool IsList { get; }
 
     /// <summary>
-    /// 标签类型字形。
-    /// ⚠️ 选字形**必须实际渲染出来看**：`\uE71D`（名字叫 AllApps）实际画出来是「缩略图列表」，
-    /// 跟 `\uE8FD`(List) 几乎分不出来（用户实测反馈"两种标签图标一样"）。
-    /// 现在改用 `\uE80A`（密集方格 = 网格页）与 `\uE8FD`（项目符号列表 = 列表页），区分明显。
+    /// 拖拽用：这一页收哪一类东西。
+    /// 界面靠它判断"这次拖放我接不接受"（网格页只收图标、列表页只收列表项）。
     /// </summary>
-    public string Glyph => IsList ? "\uE8FD" : "\uE80A";
+    public DragItemKind DraggableKind => IsList ? DragItemKind.ListItem : DragItemKind.Icon;
 
     /// <summary>是否选中（标签栏用它显示底部强调条）。</summary>
     public bool IsSelected
@@ -58,7 +57,13 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
         set => SetField(ref _showCount, value, nameof(ShowCount));
     }
 
-    public string Kind => Model.TabType;
+    /// <summary>
+    /// 标签类型字形。
+    /// ⚠️ 选字形**必须实际渲染出来看**：`\uE71D`（名字叫 AllApps）实际画出来是「缩略图列表」，
+    /// 跟 `\uE8FD`(List) 几乎分不出来（用户实测反馈"两种标签图标一样"）。
+    /// 现在改用 `\uE80A`（密集方格 = 网格页）与 `\uE8FD`（项目符号列表 = 列表页），区分明显。
+    /// </summary>
+    public string Glyph => IsList ? "\uE8FD" : "\uE80A";
 
     public ObservableCollection<IconTileViewModel> Icons { get; } = new();
 
@@ -66,6 +71,87 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     /// <summary>标签栏上的数量文字（如「20 个图标」）。</summary>
     public string CountLabel => IsList ? $"{ListItems.Count} 项" : $"{Icons.Count} 个图标";
+
+    /// <summary>数量变了（拖拽搬走/搬来图标）之后刷新标签栏上的数量文字。</summary>
+    public void NotifyCountLabel() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountLabel)));
+
+    // ────────────────────────────── 视图 ↔ Core 顺序同步（拖拽排序用）──────────────────────────────
+
+    /// <summary>
+    /// 按 Core 里图标的顺序重排界面的 <see cref="Icons"/>。
+    ///
+    /// <para>为什么要"照 Core 重排"而不是"界面自己挪一格"：
+    /// **界面集合的顺序必须与 Core 完全一致** —— 下次启动时界面是照 Core 的顺序重建的，
+    /// 只要有一次不一致，用户就会看到"重启后顺序又变了"。
+    /// 把 Core 当唯一事实源、界面跟着它走，这个类问题就不存在了。</para>
+    ///
+    /// <para>⚠️ 复用已有的 <see cref="IconTileViewModel"/> 实例（连同已经提取好的图标位图），
+    /// 而不是重新构造 —— 重新构造会丢掉图片源、并触发重复的图标提取。</para>
+    /// </summary>
+    public void SyncIconsFromModel()
+    {
+        var existing = Icons.ToDictionary(tile => tile.Model.Id, tile => tile);
+        var ordered = new List<IconTileViewModel>(Model.Icons.Count);
+
+        foreach (var icon in Model.Icons)
+        {
+            if (existing.TryGetValue(icon.Id, out var tile))
+            {
+                ordered.Add(tile);
+            }
+        }
+
+        // Core 里新出现、界面还没建的图标（理论上不会有）补建，绝不静默丢项
+        foreach (var icon in Model.Icons)
+        {
+            if (!existing.ContainsKey(icon.Id))
+            {
+                ordered.Add(new IconTileViewModel(icon, null));
+            }
+        }
+
+        ReorderObservable(Icons, ordered);
+        NotifyCountLabel();
+    }
+
+    /// <summary>同上，列表页版本。</summary>
+    public void SyncListItemsFromModel()
+    {
+        var existing = ListItems.ToDictionary(row => row.Model.Id, row => row);
+        var ordered = new List<ListRowViewModel>(Model.ListItems.Count);
+
+        foreach (var item in Model.ListItems)
+        {
+            if (existing.TryGetValue(item.Id, out var row))
+            {
+                ordered.Add(row);
+            }
+        }
+
+        ReorderObservable(ListItems, ordered);
+        NotifyCountLabel();
+    }
+
+    /// <summary>
+    /// 用最小改动把 <paramref name="target"/> 调成 <paramref name="ordered"/> 的顺序。
+    /// 走 <see cref="ObservableCollection{T}.Move"/> 而不是 Clear+Add：
+    /// 后者会让 GridView 丢掉容器、把入场动画/滚动位置一起重置（观感上是"整页闪一下"）。
+    /// </summary>
+    private static void ReorderObservable<T>(ObservableCollection<T> target, IReadOnlyList<T> ordered)
+    {
+        for (int i = 0; i < ordered.Count; i++)
+        {
+            int currentIndex = target.IndexOf(ordered[i]);
+            if (currentIndex < 0)
+            {
+                target.Insert(i, ordered[i]);
+            }
+            else if (currentIndex != i)
+            {
+                target.Move(currentIndex, i);
+            }
+        }
+    }
 
     private void SetField<T>(ref T field, T value, string propertyName)
     {
