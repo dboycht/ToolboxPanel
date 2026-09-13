@@ -1,21 +1,21 @@
 // TabStripView.xaml.cs —— 标签栏的交互与"隐藏项"（图标 + 数量文字）三态
 //
-// ────────────────────────── 悬停判定为什么改成"标签栏统一判定" ──────────────────────────
-// 以前是**每个标签各自**判定（模板上挂 PointerEntered/Moved/Exited），用户实测有两个问题：
-//   ① 移到别的标签时，**上一个标签收不回去**（各自的退出事件互相打架，谁也没真正收起谁）；
-//   ② 图标槽变宽会重排内容，WinUI 会在指针**没离开**时抛出 PointerExited → 反复展开/收起。
+// ────────────────────────── 悬停判定：由标签栏**统一**判定 ──────────────────────────
+// 用户实测的两个问题：
+//   ① 移到别的标签时**上一个收不回去**（每个标签各自 PointerEntered/Exited 互相打架）；
+//   ② 图标槽变宽会重排内容，WinUI 在指针没离开时抛假退出 → 反复展开/收起。
+// 现在：标签栏自己在 PointerMoved 里算一次"指针在哪个标签上"（用**整个标签项**的范围命中，
+// 用户要的是"鼠标在标签上就展开"），然后**只展开那一个、其余一律收起** ——
+// "同时最多一个展开"是结构性保证，不靠事件顺序。
+// 判定只在"悬停目标变化"时才动手，避免每移动 1px 就重启动画。
 //
-// 现在改成：**标签栏自己**在 PointerMoved 时算一次"指针在哪个标签上"
-// （用"平移后的实际文字范围"做命中，而不是拿整个容器矩形），然后
-// **只展开那一个、其余一律收起** —— 于是"同时最多一个标签展开"是结构性保证，不靠事件顺序。
-// 判定只在"悬停目标发生变化"时才动手，避免每移动 1px 就重启动画（那是卡顿的来源）。
+// ────────────────────────── 隐藏项 = 图标 + 数量文字 ──────────────────────────
+// 由每个标签里的 `TabHiddenSlotView` 自己管（见该文件的说明）。
+// 它的轨道宽度恒定、只动渲染位移，所以**标签项的布局尺寸永远不变**：
+// 不卡、不抖、也不会把相邻标签推走。
 //
-// ────────────────────────── 隐藏项 = 图标 + 数量文字（用户要求） ──────────────────────────
-// 两者在同一个 `TabHiddenHost` 里，一起淡出/淡入、一起横向滑出/滑回。
-// ⚠️ 滑动用**负左边距**而不是改宽度：改宽度会触发布局重排（抖动 + 卡顿），
-//    负边距只影响渲染位置，标签的布局尺寸恒定。
-//
-// ⚠️ 悬停动效本身只能由用户目检（代理不注入鼠标，见 ERROR.md E5）。
+// ⚠️ 悬停动效本身只能由用户目检（代理不注入鼠标，见 ERROR.md E5）；
+//    排查这类"看不见的布局问题"时用 `--hover-tab=N` 强制展开某个标签来截图核对。
 
 using System;
 using Microsoft.UI;
@@ -33,9 +33,6 @@ namespace ToolboxPanel.Views;
 
 public sealed partial class TabStripView : UserControl
 {
-    /// <summary>隐藏项滑动到位后占用的额外宽度（DIP）：图标 16 + 与文字的间距 6。</summary>
-    private const double HiddenSlotOffset = 22;
-
     /// <summary>
     /// 指针范围核对的容差（DIP）。留一点点，避免正好压在边界上时判定跳变。
     /// </summary>
@@ -50,20 +47,25 @@ public sealed partial class TabStripView : UserControl
     /// <summary>拖拽"离开标签栏"的去抖时长：DragLeave 在项之间移动时会误报，用这个兜底取消。</summary>
     private static readonly TimeSpan DragLeaveGrace = TimeSpan.FromMilliseconds(260);
 
-    /// <summary>一个标签的隐藏项宿主（供动画与命中判定使用）。</summary>
-    private sealed class HiddenHost
-    {
-        public required Grid Root { get; init; }
+    /// <summary>每个标签的隐藏项控件（自己管"图标 + 数量文字"的出现与名字让位）。</summary>
+    private readonly Dictionary<TabItemViewModel, TabHiddenSlotView> _slots = new();
 
-        public required CompositeTransform Transform { get; init; }
-    }
-
-    private readonly Dictionary<TabItemViewModel, HiddenHost> _hosts = new();
+    /// <summary>
+    /// 当前的图标形态（`static`）。
+    ///
+    /// <para>⚠️ 为什么是 static：`ApplySettings` 往往**早于**标签项的模板被实现
+    /// （设置是装配阶段下发的，标签项的 Loaded 在布局之后），那时 `_slots` 还是空的；
+    /// 而 `OnHiddenSlotViewLoaded` 又需要知道"我现在应该收起还是展开"。
+    /// 用一个模块级状态让**后加载的控件也能取到当前形态**，比"先加载的记住"更不容易错位。
+    /// （这个 bug 真出现过：`--tab-icons=always` 下名字不让位，图标与名字叠在一起。）</para>
+    /// </summary>
+    private static TabIconMode CurrentIconMode = TabIconMode.Hover;
 
     /// <summary>当前展开（显示隐藏项）的那个标签 —— 结构性保证"最多只有一个"。</summary>
     private TabItemViewModel? _expandedTab;
 
-    private readonly Dictionary<TabItemViewModel, Storyboard> _animations = new();
+    /// <summary>`--hover-tab=N` 请求的展开目标（等模板登记完成后再应用）。</summary>
+    private TabItemViewModel? _pendingHoverTab;
 
     private TabIconMode _iconMode = TabIconMode.Hover;
     private AnimationSpec _spec = AnimationSpec.Disabled;
@@ -76,8 +78,8 @@ public sealed partial class TabStripView : UserControl
     {
         InitializeComponent();
 
-        // 悬停判定统一在"标签栏"这一层做：容器上收 PointerMoved / PointerExited，
-        // 这样"移到别的标签"和"离开整条标签栏"都由同一条逻辑处理。
+        // 悬停判定统一在"标签栏"这一层做：这样"移到别的标签"和"离开整条标签栏"
+        // 由同一条逻辑处理，不会出现"上一个收不回去"。
         Tabs.PointerMoved += OnStripPointerMoved;
         Tabs.PointerExited += OnStripPointerExited;
 
@@ -129,6 +131,7 @@ public sealed partial class TabStripView : UserControl
     {
         _iconMode = iconMode;
         _spec = spec;
+        CurrentIconMode = iconMode;
 
         foreach (var tab in Tabs.Items.OfType<TabItemViewModel>())
         {
@@ -176,95 +179,79 @@ public sealed partial class TabStripView : UserControl
         }
     }
 
-    // ────────────────────────────── 隐藏项的登记与三态 ──────────────────────────────
-
-    private void OnHiddenHostLoaded(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 开发/验证用：强制把第 <paramref name="index"/> 个标签置为"展开"（`--hover-tab=N`）。
+    /// 用途：悬停态**没法用工具稳定复现**（合成鼠标注入对 WinUI 时灵时不灵，
+    /// 而真实悬停又必须由用户手点），留一个开关让布局本身可被截图核对
+    /// （本轮"名字与图标重叠"就是靠它抓出来的）。
+    /// </summary>
+    public void ForceHoverTab(int index)
     {
-        if (sender is not Grid host || host.DataContext is not TabItemViewModel tab)
+        var tabs = Tabs.Items.OfType<TabItemViewModel>().ToList();
+        _pendingHoverTab = index >= 0 && index < tabs.Count ? tabs[index] : null;
+
+        // 模板可能还没实现出来 —— 那就等登记完成后统一应用
+        if (_pendingHoverTab is null || _slots.ContainsKey(_pendingHoverTab))
+        {
+            ApplyPendingHoverTab();
+        }
+    }
+
+    private void ApplyPendingHoverTab()
+    {
+        if (_pendingHoverTab is not null && _slots.ContainsKey(_pendingHoverTab))
+        {
+            SetExpandedTab(_pendingHoverTab);
+            _pendingHoverTab = null;
+        }
+    }
+
+    // ────────────────────────────── 隐藏项的三态 ──────────────────────────────
+
+    private void OnHiddenSlotViewLoaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TabHiddenSlotView slot || slot.DataContext is not TabItemViewModel tab)
         {
             return;
         }
 
-        if (host.RenderTransform is not CompositeTransform transform)
-        {
-            return;
-        }
+        slot.DurationMs = _spec.DurationMs;
+        _slots[tab] = slot;
 
-        _hosts[tab] = new HiddenHost { Root = host, Transform = transform };
+        // 初始态：按当前形态（text = 收起；always = 展开）就位，不做动画。
+        // ⚠️ 用 CurrentIconMode（静态）而不是 _iconMode（实例）：模板加载可能早于/晚于设置下发。
+        slot.IsExpanded = CurrentIconMode == TabIconMode.Always;
 
-        // 初始态：按当前形态（text = 收起；always = 展开）就位，不做动画
-        bool expanded = _iconMode == TabIconMode.Always;
-        ApplyHiddenState(tab, expanded, animate: false);
+        ApplyPendingHoverTab();
     }
 
     private void ApplyIconModeToAll()
     {
-        foreach (var tab in _hosts.Keys.ToList())
+        CurrentIconMode = _iconMode;
+
+        foreach (var (tab, slot) in _slots)
         {
-            StopAnimation(tab);
-            ApplyHiddenState(tab, _iconMode == TabIconMode.Always, animate: false);
+            slot.DurationMs = _spec.DurationMs;
+            slot.IsExpanded = CurrentIconMode == TabIconMode.Always;
         }
 
-        _expandedTab = _iconMode == TabIconMode.Always
+        _expandedTab = CurrentIconMode == TabIconMode.Always
             ? Tabs.Items.OfType<TabItemViewModel>().FirstOrDefault()
             : null;
     }
 
-    /// <summary>把某个标签的隐藏项设置为展开/收起（可选动画）。</summary>
-    private void ApplyHiddenState(TabItemViewModel tab, bool expanded, bool animate)
+    /// <summary>
+    /// 保证"同时最多只有一个标签展开"：只展开 <paramref name="tab"/>，其余一律收起。
+    /// 这是结构性保证，不依赖任何 pointer 事件的到达顺序。
+    /// </summary>
+    private void SetExpandedTab(TabItemViewModel? tab)
     {
-        if (!_hosts.TryGetValue(tab, out var host))
+        _expandedTab = tab;
+
+        foreach (var (candidate, slot) in _slots)
         {
-            return;
-        }
-
-        if (!animate || !_spec.Enabled)
-        {
-            StopAnimation(tab);
-            host.Root.Opacity = expanded ? 1 : 0;
-            host.Transform.TranslateX = expanded ? 0 : -HiddenSlotOffset;
-            return;
-        }
-
-        StopAnimation(tab);
-
-        var duration = new Duration(TimeSpan.FromMilliseconds(_spec.DurationMs));
-        var easing = EntranceAnimator.CreateEasing(_spec.Easing);
-
-        var fade = new DoubleAnimation
-        {
-            From = expanded ? 0 : 1,       // 显式起始值，别依赖"当前值"
-            To = expanded ? 1 : 0,
-            Duration = duration,
-            EasingFunction = easing,
-        };
-        Storyboard.SetTarget(fade, host.Root);
-        Storyboard.SetTargetProperty(fade, "Opacity");
-
-        // ⚠️ 只动 TranslateX（渲染层），**不动 Width**：改宽度会触发布局重排，
-        //    既卡顿又会让 WinUI 抛假的指针退出事件（用户反馈的抖动就是这么来的）。
-        var slide = new DoubleAnimation
-        {
-            From = expanded ? -HiddenSlotOffset : 0,
-            To = expanded ? 0 : -HiddenSlotOffset,
-            Duration = duration,
-            EasingFunction = easing,
-        };
-        Storyboard.SetTarget(slide, host.Transform);
-        Storyboard.SetTargetProperty(slide, "TranslateX");
-
-        var storyboard = new Storyboard();
-        storyboard.Children.Add(fade);
-        storyboard.Children.Add(slide);
-        _animations[tab] = storyboard;
-        storyboard.Begin();
-    }
-
-    private void StopAnimation(TabItemViewModel tab)
-    {
-        if (_animations.Remove(tab, out var running))
-        {
-            running.Stop();
+            slot.DurationMs = _spec.DurationMs;
+            slot.IsExpanded = ReferenceEquals(candidate, tab);
         }
     }
 
@@ -300,26 +287,11 @@ public sealed partial class TabStripView : UserControl
     }
 
     /// <summary>
-    /// 保证"同时最多只有一个标签展开"：只展开 <paramref name="tab"/>，其余一律收起。
-    /// 这是结构性保证，不依赖任何 pointer 事件的到达顺序。
-    /// </summary>
-    private void SetExpandedTab(TabItemViewModel? tab)
-    {
-        _expandedTab = tab;
-
-        foreach (var candidate in _hosts.Keys.ToList())
-        {
-            bool expanded = ReferenceEquals(candidate, tab);
-            ApplyHiddenState(candidate, expanded, animate: true);
-        }
-    }
-
-    /// <summary>
     /// 指针落在哪个标签上。
     ///
-    /// <para>判据用**平移后的实际文字范围**（而不是整个容器矩形）：
-    /// 隐藏项展开后是把文字往右推，此时"文字左侧那块新增区域"并没有真的悬停在标签文字上，
-    /// 用容器矩形会让判定范围越滚越大。</para>
+    /// <para>判据用**整个标签项的范围**（含内边距）—— 用户要求"鼠标在标签上就展开"，
+    /// 而不是只有精确落在文字笔画上才展开。轨道宽度恒定，容器范围不会随展开变化，
+    /// 所以不存在"判定范围越滚越大"的问题。</para>
     /// </summary>
     private TabItemViewModel? FindTabAt(Windows.Foundation.Point positionInStrip)
     {
@@ -518,28 +490,5 @@ public sealed partial class TabStripView : UserControl
         {
             TabSelected?.Invoke(this, tab);
         }
-    }
-
-    // ────────────────────────────── 视觉树小工具 ──────────────────────────────
-
-    private static T? FindByName<T>(DependencyObject root, string name) where T : FrameworkElement
-    {
-        int count = VisualTreeHelper.GetChildrenCount(root);
-        for (int i = 0; i < count; i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is T match && match.Name == name)
-            {
-                return match;
-            }
-
-            var found = FindByName<T>(child, name);
-            if (found is not null)
-            {
-                return found;
-            }
-        }
-
-        return null;
     }
 }

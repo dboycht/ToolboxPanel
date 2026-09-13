@@ -48,6 +48,7 @@ public sealed partial class MainWindow : Window
     private int _startupTabIndex;           // --tab=
     private bool _isDemo;                   // --demo
     private bool _openSettingsAtStartup;    // --open-settings
+    private int _forceHoverTab = -1;        // --hover-tab=N（开发/验证：强制某个标签展开）
     private bool _diagSwitch;               // ⚠️ 临时诊断（定位完删）
 
     /// <summary>窗口尺寸就绪之前不把 Changed 事件当"用户改尺寸"（启动时我们自己会 Resize 一次）。</summary>
@@ -95,6 +96,12 @@ public sealed partial class MainWindow : Window
         if (_diagSwitch)
         {
             StartDiagSwitch();   // ⚠️ 临时诊断：程序自己切页（不注入任何输入）
+        }
+
+        if (_forceHoverTab >= 0)
+        {
+            // 等一次布局：标签项的模板要先实现出来，才能取到隐藏项宿主（`--hover-tab=N`）
+            DispatcherQueue.TryEnqueue(() => TabStrip.ForceHoverTab(_forceHoverTab));
         }
     }
 
@@ -327,6 +334,12 @@ public sealed partial class MainWindow : Window
             {
                 // 开发/验证用：临时覆盖界面主题（**不落盘**）
                 _themeOverride = argument["--theme=".Length..];
+            }
+            else if (argument.StartsWith("--hover-tab=", StringComparison.OrdinalIgnoreCase)
+                     && int.TryParse(argument["--hover-tab=".Length..], out int hoverIndex))
+            {
+                // 开发/验证用：把某个标签强制置为"展开"（悬停态没法稳定合成，只能这样核对布局）
+                _forceHoverTab = hoverIndex;
             }
             else if (argument.Equals("--diag", StringComparison.OrdinalIgnoreCase)
                      || argument.Equals("--probe-switch", StringComparison.OrdinalIgnoreCase))
@@ -843,25 +856,19 @@ public sealed partial class MainWindow : Window
             {
                 EntranceAnimator.BeginDiagnostics();
                 App.ProbeLog($"===== 切到「{tab.Name}」 =====");
-                ProbePage("切页前", tab);
             }
 
-            // ⚠️ 入场动效的正确时序（四条一起成立才"从无到有"，少一条就会闪或空白）：
-            //   ① 目标页此刻还是**折叠**的 —— 闸门必须在这个状态下关；
-            //   ② PrepareEntrance()：整页不透明度 = 0（总闸门）；
+            // ⚠️ 入场动效的时序（`--diag` 可核对）：
+            //   ① 目标页此刻还是**折叠**的；
+            //   ② PrepareEntrance()：把列表整体不透明度置 0（入场起始态）；
             //   ③ ShowPage()：让页面可见 —— 它此刻是全 0，显示出来也什么都没有，
             //      而且**可见才会布局**（折叠状态下 GridView 不布局、容器不会被实现）；
-            //   ④ RevealWhenReady()：等容器就位/布局跑过之后再放行。
-            //      ⚠️ 这里**不能**简单延迟一帧就放行：调度器转一圈不保证布局已跑过，
-            //         布局没跑就没有容器、动画一个都建不出来，而闸门却放开了 ⇒ 用户看到空白。
+            //   ④ RevealWhenReady()：容器就位/布局跑过之后再起"整片淡入"。
+            //      ⚠️ 不要简单"延迟一帧"就放行：调度器转一圈不保证布局跑过，
+            //         布局没跑就没有可播的对象（动画建不出来）。
             animated.PrepareEntrance();
             ShowPage(tab.Id);
             animated.RevealWhenReady();
-
-            if (EntranceAnimator.DiagnosticsEnabled)
-            {
-                ProbePage("Reveal 调用后", tab);
-            }
         }
 
         _transientStatus = null;
@@ -896,57 +903,6 @@ public sealed partial class MainWindow : Window
         => _currentPageId is not null && _pages.TryGetValue(_currentPageId, out var page)
             ? page as IAnimatedPage
             : null;
-
-    /// <summary>
-    /// ⚠️ 临时诊断：打"页面级不透明度 + 容器实现情况"。
-    /// 定位"切页先亮一下"用：页面级不透明度必须在页面可见之前就是 0。定位完删掉。
-    /// </summary>
-    private void ProbePage(string stage, TabItemViewModel tab)
-    {
-        var page = _pages.TryGetValue(tab.Id, out var p) ? p : null;
-        var list = page is null ? null : FindFirstChild<ListViewBase>(page);
-        bool wrapperVisible = _pageWrappers.TryGetValue(tab.Id, out var wrapper)
-                              && wrapper.Visibility == Visibility.Visible;
-
-        int realized = 0;
-        int atOne = 0;
-        if (list is not null)
-        {
-            for (int i = 0; i < list.Items.Count; i++)
-            {
-                if (list.ContainerFromIndex(i) is UIElement container)
-                {
-                    realized++;
-                    if (container.Opacity >= 0.999) atOne++;
-                }
-            }
-        }
-
-        App.ProbeLog($"[页面] {stage}：页面={page?.GetType().Name} 尺寸={(page as FrameworkElement)?.ActualWidth:0}x{(page as FrameworkElement)?.ActualHeight:0} "
-                     + $"列表IsLoaded={list?.IsLoaded} 已实现容器={realized}（其中已到最终态的={atOne}）"
-                     + "  ← 判据：入场期间「已到最终态的」应为 0");
-    }
-
-    private static T? FindFirstChild<T>(DependencyObject root) where T : DependencyObject
-    {
-        int count = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChildrenCount(root);
-        for (int i = 0; i < count; i++)
-        {
-            var child = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetChild(root, i);
-            if (child is T match)
-            {
-                return match;
-            }
-
-            var found = FindFirstChild<T>(child);
-            if (found is not null)
-            {
-                return found;
-            }
-        }
-
-        return null;
-    }
 
     private UIElement CreatePage(TabItemViewModel tab)
     {
