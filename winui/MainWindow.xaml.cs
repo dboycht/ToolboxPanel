@@ -49,6 +49,7 @@ public sealed partial class MainWindow : Window
     private bool _isDemo;                   // --demo
     private bool _openSettingsAtStartup;    // --open-settings
     private int _forceHoverTab = -1;        // --hover-tab=N（开发/验证：强制某个标签展开）
+
     private bool _diagSwitch;               // ⚠️ 临时诊断（定位完删）
 
     /// <summary>窗口尺寸就绪之前不把 Changed 事件当"用户改尺寸"（启动时我们自己会 Resize 一次）。</summary>
@@ -97,6 +98,8 @@ public sealed partial class MainWindow : Window
         {
             StartDiagSwitch();   // ⚠️ 临时诊断：程序自己切页（不注入任何输入）
         }
+
+
 
         if (_forceHoverTab >= 0)
         {
@@ -211,7 +214,34 @@ public sealed partial class MainWindow : Window
 
             if (RootGrid.RequestedTheme != requested)
             {
-                RootGrid.RequestedTheme = requested;
+                // ⚠️⚠️ 改 `RequestedTheme` 之前**必须先摘掉 SystemBackdrop**（用户实测的崩溃，见 ERROR.md E16）：
+                //    主题一变，WinUI 会把"默认背景配置变了"通知给当前挂着的 backdrop
+                //    （`SystemBackdrop.OnDefaultSystemBackdropConfigurationChanged`），
+                //    这一步会抛 `System.ArgumentException: 参数错误`（XamlUnhandledException ⇒ 直接崩）。
+                //    摘掉之后再改，就没有 backdrop 可通知了。
+                bool detached = SystemBackdrop is not null;
+                if (detached)
+                {
+                    SystemBackdrop = null;
+                }
+
+                try
+                {
+                    RootGrid.RequestedTheme = requested;
+                }
+                catch (Exception ex)
+                {
+                    // 换主题失败不该把窗口搞挂：落盘 + 继续（保持原主题）
+                    App.WriteCrash("ApplyTheme/RequestedTheme", ex);
+                }
+
+                // 自己挂回来：`ApplyAllSettings` 随后也会再挂一次（那一步是幂等的），
+                // 但如果本次是从别处（例如只改主题）调用，没有第二次机会 —— 所以这里必须兜住，
+                // 否则窗口会永久失去材质（表现就是"玻璃没了"）。
+                if (detached)
+                {
+                    ApplyBackdrop(_settingsData?.Backdrop ?? BackdropKinds.Mica);
+                }
             }
         }
 
@@ -335,6 +365,7 @@ public sealed partial class MainWindow : Window
                 // 开发/验证用：临时覆盖界面主题（**不落盘**）
                 _themeOverride = argument["--theme=".Length..];
             }
+
             else if (argument.StartsWith("--hover-tab=", StringComparison.OrdinalIgnoreCase)
                      && int.TryParse(argument["--hover-tab=".Length..], out int hoverIndex))
             {
@@ -522,7 +553,23 @@ public sealed partial class MainWindow : Window
             }
 
             Settings.Bind(_settings, _settingsData);
-            Settings.SettingApplied += (_, _) => ApplyAllSettings();
+
+            // ⚠️ 这里一定要 try/catch：设置面板的每一项改动都会走到这条链，
+            //    链上任何一处抛异常（例如切主题时 WinUI 的背景配置回调抛 ArgumentException，
+            //    见 ERROR.md E16）都会变成"未处理异常 → 应用直接崩"。
+            //    外观类失败必须是**软**的：落盘 + 保持原样；用户顶多看到"没变色"，不该丢掉整个应用。
+            Settings.SettingApplied += (_, _) =>
+            {
+                try
+                {
+                    ApplyAllSettings();
+                }
+                catch (Exception ex)
+                {
+                    App.WriteCrash("MainWindow.SettingApplied/ApplyAllSettings", ex);
+                }
+            };
+
             Settings.PreviewRequested += (_, _) => CurrentPage()?.RevealWhenReady();
             Settings.CloseRequested += (_, _) => ShowSettings(false);
 
@@ -669,7 +716,7 @@ public sealed partial class MainWindow : Window
         FlushLog();
     }
 
-    /// <summary>面板滑出多远才算"完全在窗口外"（面板宽度；拿不到时退回设计宽度）。</summary>
+    //    /// <summary>面板滑出多远才算"完全在窗口外"（面板宽度；拿不到时退回设计宽度）。</summary>
     private double PanelSlideDistance()
     {
         double width = SettingsPanelHost.ActualWidth > 0
