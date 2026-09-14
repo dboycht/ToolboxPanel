@@ -30,8 +30,13 @@
             <Setter Property="Margin" Value="0" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="VerticalContentAlignment" Value="Top" />
-            <!-- 拖拽排序：图块本身可拖（长按不动即起拖，拖动过程中不会触发点击） -->
-            <Setter Property="CanDrag" Value="True" />
+            <!--
+                拖拽排序（2026-09-14 改为**长按起拖**，手机桌面手感）：
+                不再让系统"按下 + 轻微移动"就起拖 —— 那会与"点一下打开"抢手势（手一抖就变拖动）。
+                这里把容器自身的 CanDrag 关掉，由页面在**长按 350ms** 后临时打开并调 StartDragAsync。
+                判定逻辑在 Core 的 LongPressGesture（有单测），见 GridPage.xaml.cs。
+            -->
+            <Setter Property="CanDrag" Value="False" />
         </Style>
 
         <DataTemplate x:Key="IconTileTemplate" x:DataType="vm:IconTileViewModel">

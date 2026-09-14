@@ -21,8 +21,13 @@
             <Setter Property="Padding" Value="8,3" />
             <Setter Property="Margin" Value="0" />
             <Setter Property="CornerRadius" Value="4" />
-            <!-- 拖拽排序：行本身可拖 -->
-            <Setter Property="CanDrag" Value="True" />
+            <!--
+                拖拽排序（2026-09-14 与网格页同步改为**长按起拖**，手机桌面手感）：
+                不再让系统"按下 + 轻微移动"就起拖 —— 那会与"点一下打开"抢手势。
+                这里关掉容器自身的 CanDrag，由页面在长按 350ms 后临时打开并调 StartDragAsync；
+                判定逻辑在 Core 的 LongPressGesture（有单测），见 ListViewPage.xaml.cs。
+            -->
+            <Setter Property="CanDrag" Value="False" />
         </Style>
 
         <DataTemplate x:Key="ListRowTemplate" x:DataType="vm:ListRowViewModel">

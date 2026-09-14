@@ -9,8 +9,10 @@
 //   ② 插入位置是**行与行之间的横线**，不是竖线。
 // 落点判定仍然用 Core 的 DropIndexCalculator（单列布局它能自动只按 Y 判）。
 
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Storage;
@@ -34,6 +36,14 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         EmptyHint.Visibility = tab.ListItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         _entrance = new EntranceAnimator(Rows);
+
+        // 长按起拖要用**指针事件**；ListViewBase 自己也会处理这些事件，
+        // 所以必须 handledEventsToo: true —— 否则我们根本收不到（内部已经把按下吃掉了）。
+        Rows.AddHandler(PointerPressedEvent, new PointerEventHandler(OnRowPointerPressed), handledEventsToo: true);
+        Rows.AddHandler(PointerMovedEvent, new PointerEventHandler(OnRowPointerMoved), handledEventsToo: true);
+        Rows.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnRowPointerReleased), handledEventsToo: true);
+        Rows.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnRowPointerAborted), handledEventsToo: true);
+        Rows.AddHandler(PointerCaptureLostEvent, new PointerEventHandler(OnRowPointerAborted), handledEventsToo: true);
     }
 
     /// <summary>点了一行 —— 把该行的路径交给宿主窗口打开。</summary>
@@ -75,10 +85,172 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     private void OnRowClick(object sender, ItemClickEventArgs e)
     {
+        // 长按（起拖）之后系统偶尔还会补一次 ItemClick —— 那次不能当成"打开"
+        if (_suppressNextClick)
+        {
+            _suppressNextClick = false;
+            return;
+        }
+
         if (e.ClickedItem is ListRowViewModel row)
         {
             ItemActivated?.Invoke(this, row.Model);
         }
+    }
+
+    // ────────────────────────────── 长按起拖（与网格页同一套，2026-09-14）──────────────────────────────
+    //
+    // 判定逻辑在 Core 的 `LongPressGesture`（有单测）：按下 → 350ms 到点且没移动 ⇒ 起拖；
+    // 起拖后**原地松手** ⇒ 这一行没有菜单，直接不做事（列表页本轮只有"打开"语义）；
+    // 阈值前移动超容差 ⇒ 手势作废。
+
+    private readonly LongPressGesture _longPress = new();
+
+    private DispatcherQueueTimer? _longPressTimer;
+    private ListViewItem? _pressedContainer;
+    private Microsoft.UI.Input.PointerPoint? _pressedPoint;
+    private bool _suppressNextClick;
+
+    private void OnRowPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        _suppressNextClick = false;
+
+        if (!DragDropEnabled)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(Rows);
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        var container = FindContainerFromSource(e.OriginalSource);
+        if (container is null)
+        {
+            return;                     // 空白处按下：不参与长按
+        }
+
+        _pressedContainer = container;
+        _pressedPoint = point;
+        _longPress.Press(point.Position.X, point.Position.Y, Environment.TickCount64);
+        EnsureLongPressTimer().Start();
+    }
+
+    private void OnRowPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_longPress.IsPressed)
+        {
+            return;
+        }
+
+        var position = e.GetCurrentPoint(Rows).Position;
+        if (_longPress.Move(position.X, position.Y))
+        {
+            CancelLongPress();
+        }
+    }
+
+    private void OnRowPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        _longPressTimer?.Stop();
+
+        if (!_longPress.HasDragStarted)
+        {
+            _longPress.Reset();
+            ResetPressedRow();
+        }
+    }
+
+    private void OnRowPointerAborted(object sender, PointerRoutedEventArgs e)
+    {
+        if (_longPress.HasDragStarted)
+        {
+            return;                     // 拖动自己会收尾
+        }
+
+        CancelLongPress();
+    }
+
+    private DispatcherQueueTimer EnsureLongPressTimer()
+    {
+        if (_longPressTimer is null)
+        {
+            _longPressTimer = DispatcherQueue.CreateTimer();
+            _longPressTimer.Interval = TimeSpan.FromMilliseconds(_longPress.ThresholdMs);
+            _longPressTimer.IsRepeating = false;
+            _longPressTimer.Tick += async (_, _) => await StartLongPressDragAsync();
+        }
+
+        return _longPressTimer;
+    }
+
+    private async Task StartLongPressDragAsync()
+    {
+        _longPressTimer?.Stop();
+
+        var container = _pressedContainer;
+        var point = _pressedPoint;
+        if (container is null || point is null || !_longPress.Tick(Environment.TickCount64))
+        {
+            return;
+        }
+
+        try
+        {
+            container.CanDrag = true;                 // StartDragAsync 要求 CanDrag=true，起拖前临时开
+            _suppressNextClick = true;
+            await container.StartDragAsync(point);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("ListViewPage.StartLongPressDragAsync", ex);
+        }
+        finally
+        {
+            container.CanDrag = false;
+            HideDropIndicator();
+            _longPress.Complete();                    // 列表页没有"长按要菜单"，结论不用
+            ResetPressedRow();
+        }
+    }
+
+    private void CancelLongPress()
+    {
+        _longPressTimer?.Stop();
+        _longPress.Reset();
+        ResetPressedRow();
+    }
+
+    private void ResetPressedRow()
+    {
+        _pressedContainer = null;
+        _pressedPoint = null;
+    }
+
+    private static ListViewItem? FindContainerFromSource(object? source)
+    {
+        var current = source as DependencyObject;
+
+        while (current is not null)
+        {
+            if (current is ListViewItem item)
+            {
+                return item;
+            }
+
+            try
+            {
+                current = VisualTreeHelper.GetParent(current);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     // ────────────────────────────── 拖拽排序 ──────────────────────────────
@@ -105,6 +277,10 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
             HideDropIndicator();
             return;
         }
+
+        // 拖动期间的"有没有移动"喂给长按状态机（与网格页同款；拖动中指针事件不保证还来）
+        var pointer = e.GetPosition(Rows);
+        _longPress.Move(pointer.X, pointer.Y);
 
         e.AcceptedOperation = DataPackageOperation.Move;
         e.DragUIOverride.IsCaptionVisible = false;

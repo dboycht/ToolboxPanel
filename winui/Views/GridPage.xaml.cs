@@ -16,6 +16,7 @@
 // ⚠️ 落点判定（DropIndexCalculator）在 Core 里，有单测；这里只负责把矩形喂给它。
 // ⚠️ 拖拽交互本身**只能由用户手动验证**（代理不注入鼠标输入，见 ERROR.md E5）。
 
+using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -44,6 +45,14 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         EmptyHint.Visibility = tab.Icons.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         _entrance = new EntranceAnimator(TileGrid);
+
+        // 长按起拖要用**指针事件**；而 ListViewBase / GridViewItem 自己也会处理这些事件，
+        // 所以必须 handledEventsToo: true —— 否则我们根本收不到（GridView 内部已经把按下吃掉了）。
+        TileGrid.AddHandler(PointerPressedEvent, new PointerEventHandler(OnTilePointerPressed), handledEventsToo: true);
+        TileGrid.AddHandler(PointerMovedEvent, new PointerEventHandler(OnTilePointerMoved), handledEventsToo: true);
+        TileGrid.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnTilePointerReleased), handledEventsToo: true);
+        TileGrid.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnTilePointerAborted), handledEventsToo: true);
+        TileGrid.AddHandler(PointerCaptureLostEvent, new PointerEventHandler(OnTilePointerAborted), handledEventsToo: true);
     }
 
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>
@@ -104,10 +113,176 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     private void OnTileClick(object sender, ItemClickEventArgs e)
     {
+        // 长按（起拖/要菜单）之后系统偶尔还会补一次 ItemClick —— 那次不能当成"打开"
+        if (_suppressNextClick)
+        {
+            _suppressNextClick = false;
+            return;
+        }
+
         if (e.ClickedItem is IconTileViewModel tile)
         {
             IconActivated?.Invoke(this, tile.Model);
         }
+    }
+
+    // ────────────────────────────── 长按起拖（手机桌面式，2026-09-14）──────────────────────────────
+    //
+    // 为什么不用系统的"按下 + 移动即起拖"（CanDrag=True 的默认行为）：
+    //   ① 与"点一下打开"抢手势 —— 手一抖就变成拖动；
+    //   ② 用户要的是手机桌面那种"**长按拎起**"的手感。
+    //
+    // 现在的时序（判定逻辑全在 Core 的 `LongPressGesture`，有单测）：
+    //   按下（落在某个图块上）→ 起 350ms 一次性定时器
+    //   → 到点仍按着且没移动 ⇒ 自己调 `StartDragAsync` 起拖（起拖前把容器 CanDrag 临时打开）
+    //   → 起拖后**全程没移动**就结束 ⇒ 当作"长按要菜单"，弹出该图块的右键菜单
+    //   → 阈值之前移动超容差 ⇒ 这次手势作废（不重排、不弹菜单；避免"想点却拖了"）
+    //
+    // ⚠️ 拖动过程中的"有没有移动"要靠 DragOver 里的坐标喂给状态机（拖动期间指针事件不保证还来）。
+
+    private readonly LongPressGesture _longPress = new();
+
+    private DispatcherQueueTimer? _longPressTimer;
+    private GridViewItem? _pressedContainer;
+    private IconTileViewModel? _pressedTile;
+    private Microsoft.UI.Input.PointerPoint? _pressedPoint;   // WinUI 3 的 PointerPoint 在 Microsoft.UI.Input
+    private bool _suppressNextClick;
+
+    private void OnTilePointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        _suppressNextClick = false;
+
+        if (!DragDropEnabled)
+        {
+            return;                     // 演示模式：不起拖（与 DragDropEnabled 的既有语义一致）
+        }
+
+        var point = e.GetCurrentPoint(TileGrid);
+
+        // 只关心左键（触摸/笔没有"左右键"之分，IsLeftButtonPressed 对它们也是 true）
+        if (!point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        var tile = FindTileFromSource(e.OriginalSource);
+        var container = FindContainerFromSource(e.OriginalSource);
+        if (tile is null || container is null)
+        {
+            return;                     // 空白处按下：不参与长按（空白处右键菜单照旧）
+        }
+
+        _pressedTile = tile;
+        _pressedContainer = container;
+        _pressedPoint = point;
+        _longPress.Press(point.Position.X, point.Position.Y, Environment.TickCount64);
+        EnsureLongPressTimer().Start();
+    }
+
+    private void OnTilePointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_longPress.IsPressed)
+        {
+            return;
+        }
+
+        var position = e.GetCurrentPoint(TileGrid).Position;
+        if (_longPress.Move(position.X, position.Y))
+        {
+            // 阈值前就移超容差 ⇒ 这不是长按：作废这次手势（也不打开，交给系统的点击判定）
+            CancelLongPress();
+        }
+    }
+
+    private void OnTilePointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        _longPressTimer?.Stop();
+
+        if (!_longPress.HasDragStarted)
+        {
+            // 普通点击：清干净，让 ItemClick 去"打开"
+            _longPress.Reset();
+            ResetPressedTile();
+        }
+    }
+
+    /// <summary>指针被取消 / 捕获丢失（切页、拖动接管等）：清干净，别留下"按着"的假状态。</summary>
+    private void OnTilePointerAborted(object sender, PointerRoutedEventArgs e)
+    {
+        if (_longPress.HasDragStarted)
+        {
+            return;                     // 拖动自己会收尾（StartDragAsync 返回后 Complete）
+        }
+
+        CancelLongPress();
+    }
+
+    private DispatcherQueueTimer EnsureLongPressTimer()
+    {
+        if (_longPressTimer is null)
+        {
+            _longPressTimer = DispatcherQueue.CreateTimer();
+            _longPressTimer.Interval = TimeSpan.FromMilliseconds(_longPress.ThresholdMs);
+            _longPressTimer.IsRepeating = false;
+            _longPressTimer.Tick += async (_, _) => await StartLongPressDragAsync();
+        }
+
+        return _longPressTimer;
+    }
+
+    private async Task StartLongPressDragAsync()
+    {
+        _longPressTimer?.Stop();
+
+        var container = _pressedContainer;
+        var point = _pressedPoint;
+        if (container is null || point is null || !_longPress.Tick(Environment.TickCount64))
+        {
+            return;
+        }
+
+        try
+        {
+            // StartDragAsync 要求 CanDrag=true —— 起拖前临时打开，起拖结束再关回去，
+            // 这样"按下就移动"永远起不了拖（长按才算数）。
+            container.CanDrag = true;
+            _suppressNextClick = true;
+            await container.StartDragAsync(point);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("GridPage.StartLongPressDragAsync", ex);
+        }
+        finally
+        {
+            container.CanDrag = false;
+            HideDropIndicator();
+
+            // 起拖过 + 全程没移动 ⇒ 用户是"长按要菜单"（手机上没有右键，这是等价物）
+            var outcome = _longPress.Complete();
+            var tile = _pressedTile;
+            var position = point.Position;
+            ResetPressedTile();
+
+            if (outcome == LongPressOutcome.MenuRequested && tile is not null)
+            {
+                ShowTileMenu(tile, position);
+            }
+        }
+    }
+
+    private void CancelLongPress()
+    {
+        _longPressTimer?.Stop();
+        _longPress.Reset();
+        ResetPressedTile();
+    }
+
+    private void ResetPressedTile()
+    {
+        _pressedContainer = null;
+        _pressedTile = null;
+        _pressedPoint = null;
     }
 
     // ────────────────────────────── 右键菜单（W5：新建 / 编辑属性）──────────────────────────────
@@ -130,9 +305,21 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         var position = args.TryGetPosition(TileGrid, out var point) ? point : new Windows.Foundation.Point(0, 0);
 
         var tile = FindTileFromSource(args.OriginalSource);
-        (tile is null ? BuildNewIconMenu() : BuildTileMenu(tile)).ShowAt(TileGrid, position);
+        if (tile is null)
+        {
+            BuildNewIconMenu().ShowAt(TileGrid, position);
+        }
+        else
+        {
+            ShowTileMenu(tile, position);
+        }
+
         args.Handled = true;
     }
+
+    /// <summary>弹某个图块的菜单（右键与"长按原地松手"共用同一个入口）。</summary>
+    private void ShowTileMenu(IconTileViewModel tile, Windows.Foundation.Point position)
+        => BuildTileMenu(tile).ShowAt(TileGrid, position);
 
     /// <summary>空白处菜单：新建五类（顺序与分隔线照原版）。</summary>
     private MenuFlyout BuildNewIconMenu()
@@ -180,6 +367,31 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         }
 
         return menu;
+    }
+
+    /// <summary>右键点在哪 —— 往上找到承载图块的 GridViewItem；点在空白处返回 null。</summary>
+    private static GridViewItem? FindContainerFromSource(object? source)
+    {
+        var current = source as DependencyObject;
+
+        while (current is not null)
+        {
+            if (current is GridViewItem item)
+            {
+                return item;
+            }
+
+            try
+            {
+                current = VisualTreeHelper.GetParent(current);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>右键点在哪 —— 往上找到承载图块的 GridViewItem；点在空白处返回 null。</summary>
@@ -234,6 +446,10 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     {
         if (TryReadPayload(e, out _))
         {
+            // 拖动期间的"有没有移动"喂给长按状态机：起拖后原地松手 = 长按要菜单
+            var pointer = e.GetPosition(TileGrid);
+            _longPress.Move(pointer.X, pointer.Y);
+
             e.AcceptedOperation = DataPackageOperation.Move;
             e.DragUIOverride.IsCaptionVisible = false;
             ShowDropIndicator(ComputeInsertIndex(e));
