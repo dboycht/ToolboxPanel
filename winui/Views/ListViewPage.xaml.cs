@@ -38,12 +38,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         _entrance = new EntranceAnimator(Rows);
 
-        // 长按起拖要用**指针事件**；ListViewBase 自己也会处理这些事件，
-        // 所以必须 handledEventsToo: true —— 否则我们根本收不到（内部已经把按下吃掉了）。
-        Rows.AddHandler(PointerPressedEvent, new PointerEventHandler(OnRowPointerPressed), handledEventsToo: true);
-        Rows.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnRowPointerReleased), handledEventsToo: true);
-        Rows.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnRowPointerAborted), handledEventsToo: true);
-        Rows.AddHandler(PointerCaptureLostEvent, new PointerEventHandler(OnRowPointerAborted), handledEventsToo: true);
     }
 
     /// <summary>点了一行 —— 把该行的路径交给宿主窗口打开。</summary>
@@ -105,128 +99,15 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
     }
 
-    // ────────────────────────────── 长按起拖（与网格页同一套，2026-09-14 第二版）──────────────────────────────
+    // ────────────────────────────── 拖动反馈（"浮起"占位）──────────────────────────────
     //
-    // 手感与网格页一致：**按住 350ms ⇒ 行"浮起"跟手拖**；
-    // 没有"长按原地松手弹菜单"，也不因"按住期间移动过"而取消（详见 GridPage 的注释）。
-    // ⚠️ 早到的定时器必须按 RemainingMs 重排再试，否则这次长按会被静默丢掉。
+    // 起拖交给**系统的原生拖拽**：按下拖动即起拖（同网格页）—— 用户明确要求取消长按门控。
+    // 这里只负责：拖动开始时把行"浮起"（轻微放大 + 半透明占位），以及抑制起拖后系统补的那次 ItemClick。
+    // ⚠️ 压暗要在拖拽视觉**抓取之后**（TryEnqueue 排一下）。
 
-    private readonly LongPressGesture _longPress = new();
-
-    private DispatcherQueueTimer? _longPressTimer;
-    private ListViewItem? _pressedContainer;
-    private Microsoft.UI.Input.PointerPoint? _pressedPoint;
     private bool _suppressNextClick;
+    private FrameworkElement? _liftedContainer;
 
-    private void OnRowPointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        _suppressNextClick = false;
-
-        if (!DragDropEnabled)
-        {
-            return;
-        }
-
-        var point = e.GetCurrentPoint(Rows);
-        if (!point.Properties.IsLeftButtonPressed)
-        {
-            return;
-        }
-
-        var container = FindContainerFromSource(e.OriginalSource);
-        if (container is null)
-        {
-            return;                     // 空白处按下：不参与长按
-        }
-
-        _pressedContainer = container;
-        _pressedPoint = point;
-        _longPress.Press(Environment.TickCount64);
-        RestartLongPressTimer(_longPress.ThresholdMs);
-    }
-
-    private void OnRowPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        _longPressTimer?.Stop();
-        _longPress.Release();
-        ResetPressedRow();
-    }
-
-    private void OnRowPointerAborted(object sender, PointerRoutedEventArgs e)
-    {
-        _longPressTimer?.Stop();
-        _longPress.Reset();
-        ResetPressedRow();
-    }
-
-    private DispatcherQueueTimer EnsureLongPressTimer()
-    {
-        if (_longPressTimer is null)
-        {
-            _longPressTimer = DispatcherQueue.CreateTimer();
-            _longPressTimer.IsRepeating = false;
-            _longPressTimer.Tick += async (_, _) => await StartLongPressDragAsync();
-        }
-
-        return _longPressTimer;
-    }
-
-    /// <summary>（重新）排一次定时器 —— 早到时按剩余毫秒再来一次。</summary>
-    private void RestartLongPressTimer(int delayMs)
-    {
-        var timer = EnsureLongPressTimer();
-        timer.Stop();
-        timer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMs));
-        timer.Start();
-    }
-
-    private async Task StartLongPressDragAsync()
-    {
-        var now = Environment.TickCount64;
-
-        if (!_longPress.Tick(now))
-        {
-            if (_longPress.IsPressed)
-            {
-                RestartLongPressTimer(_longPress.RemainingMs(now));   // 早到 ⇒ 重排再试
-            }
-
-            return;
-        }
-
-        var container = _pressedContainer;
-        var point = _pressedPoint;
-        if (container is null || point is null)
-        {
-            return;
-        }
-
-        try
-        {
-            container.CanDrag = true;                 // StartDragAsync 要求 CanDrag=true
-            _suppressNextClick = true;
-            // ⚠️ 先让 StartDragAsync 抓取"跟着鼠标的那份视觉"，**再**压暗原件：
-            //    反过来的话，被抓走的图标会带着 0.35 的不透明度，看着像根本没浮起。
-            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
-
-            await container.StartDragAsync(point);
-            ApplyLift(container, lifted: true);    // 拖拽视觉 = 行快照，跟着鼠标走
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("ListViewPage.StartLongPressDragAsync", ex);
-        }
-        finally
-        {
-            container.CanDrag = false;
-            ApplyLift(container, lifted: false);
-            HideDropIndicator();
-            _longPress.Release();
-            ResetPressedRow();
-        }
-    }
-
-    /// <summary>"浮起"反馈：只用合成变换（Scale / Opacity），不碰布局。</summary>
     private void ApplyLift(FrameworkElement container, bool lifted)
     {
         try
@@ -242,12 +123,25 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
     }
 
-    private void ResetPressedRow()
+    private void BeginLiftForDrag(DragStartingEventArgs args)
     {
-        _pressedContainer = null;
-        _pressedPoint = null;
+        if (FindContainerFromSource(args.OriginalSource) is { } container)
+        {
+            _liftedContainer = container;
+            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
+        }
     }
 
+    private void EndLiftForDrag()
+    {
+        if (_liftedContainer is { } container)
+        {
+            ApplyLift(container, lifted: false);
+            _liftedContainer = null;
+        }
+    }
+
+    /// <summary>从事件源往上找到承载这一行的 ListViewItem（找不到返回 null）。</summary>
     private static ListViewItem? FindContainerFromSource(object? source)
     {
         var current = source as DependencyObject;
@@ -286,6 +180,9 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         var payload = new DragPayload(DragItemKind.ListItem, _tab.Id, row.Model.Id);
         args.Data.SetText(payload.ToString());
         args.Data.RequestedOperation = DataPackageOperation.Move;
+
+        _suppressNextClick = true;
+        BeginLiftForDrag(args);
 
         _dragOrderSnapshot = _tab.ListItems.Select(r => r.Model.Id).ToList();
         _draggingId = row.Model.Id;
@@ -340,6 +237,7 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
     private void OnRowDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
         HideDropIndicator();
+        EndLiftForDrag();
 
         if (!_dropHandled && _livePreviewed)
         {

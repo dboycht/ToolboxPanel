@@ -47,12 +47,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
         _entrance = new EntranceAnimator(TileGrid);
 
-        // 长按起拖要用**指针事件**；而 ListViewBase / GridViewItem 自己也会处理这些事件，
-        // 所以必须 handledEventsToo: true —— 否则我们根本收不到（GridView 内部已经把按下吃掉了）。
-        TileGrid.AddHandler(PointerPressedEvent, new PointerEventHandler(OnTilePointerPressed), handledEventsToo: true);
-        TileGrid.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnTilePointerReleased), handledEventsToo: true);
-        TileGrid.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnTilePointerAborted), handledEventsToo: true);
-        TileGrid.AddHandler(PointerCaptureLostEvent, new PointerEventHandler(OnTilePointerAborted), handledEventsToo: true);
     }
 
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>
@@ -139,139 +133,19 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         }
     }
 
-    // ────────────────────────────── 长按起拖（手机桌面式，2026-09-14 第二版）──────────────────────────────
+    // ────────────────────────────── 拖动反馈（"浮起"占位，2026-09-14 第三版）──────────────────────────────
     //
-    // 手感（用户明确要求，别再自作聪明）：
-    //   **按住 350ms ⇒ 图块立刻"浮起"跟手拖，像磁贴一样；松手落在哪就排到哪。**
-    //   · **没有**"长按原地松手弹菜单"这套判定（菜单只管鼠标右键 / 键盘菜单键）；
-    //   · **不因**"按住期间移动过"而取消 —— 只要按够久就起拖（上一版这里会静默作废，像"没反应"）；
-    //   · 阈值之前松手 = 普通点击（打开图标），由 ItemClick 负责。
-    //
-    // ⚠️⚠️ **Windows 定时器会早到**：早到时 `Tick()` 返回 false，必须按 `RemainingMs` **重排再试**，
-    //      否则那一次长按会被静默丢掉 —— 上一版"长按偶发完全没反应"就是这个 bug。
+    // 起拖**交给系统的原生拖拽**：**按下拖动即起拖（像 Windows 桌面），不再有长按门控**
+    // —— 用户明确要求取消长按那套判定（"只要有拖动的话都算"）。
+    // 这里只负责两件事：
+    //   ① 拖动开始时把原件"浮起"（轻微放大 + 半透明当占位）—— 跟着鼠标的是系统抓走的图块快照；
+    //   ② 起拖之后系统偶尔补的那次 ItemClick 不能当成"打开"。
+    // ⚠️ 压暗必须等拖拽视觉**抓取之后**（先 TryEnqueue 排一下），否则被抓走的那份也带 35% 透明度。
 
-    private readonly LongPressGesture _longPress = new();
-
-    private DispatcherQueueTimer? _longPressTimer;
-    private GridViewItem? _pressedContainer;
-    private Microsoft.UI.Input.PointerPoint? _pressedPoint;   // WinUI 3 的 PointerPoint 在 Microsoft.UI.Input
     private bool _suppressNextClick;
+    private FrameworkElement? _liftedContainer;
 
-    private void OnTilePointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        _suppressNextClick = false;
-
-        if (!DragDropEnabled)
-        {
-            return;
-        }
-
-        var point = e.GetCurrentPoint(TileGrid);
-        if (!point.Properties.IsLeftButtonPressed)
-        {
-            return;                     // 右键另有菜单
-        }
-
-        var container = FindContainerFromSource(e.OriginalSource);
-        if (container is null)
-        {
-            return;                     // 空白处按下：不参与长按
-        }
-
-        _pressedContainer = container;
-        _pressedPoint = point;
-        _longPress.Press(Environment.TickCount64);
-        RestartLongPressTimer(_longPress.ThresholdMs);
-    }
-
-    private void OnTilePointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        _longPressTimer?.Stop();
-        _longPress.Release();
-        ResetPressedTile();             // 拖动（若已起拖）由 StartLongPressDragAsync 收尾
-    }
-
-    /// <summary>指针被取消 / 捕获丢失（切页等）：清干净，别留下"按着"的假状态。</summary>
-    private void OnTilePointerAborted(object sender, PointerRoutedEventArgs e)
-    {
-        _longPressTimer?.Stop();
-        _longPress.Reset();
-        ResetPressedTile();
-    }
-
-    private DispatcherQueueTimer EnsureLongPressTimer()
-    {
-        if (_longPressTimer is null)
-        {
-            _longPressTimer = DispatcherQueue.CreateTimer();
-            _longPressTimer.IsRepeating = false;
-            _longPressTimer.Tick += async (_, _) => await StartLongPressDragAsync();
-        }
-
-        return _longPressTimer;
-    }
-
-    /// <summary>（重新）排一次定时器 —— 早到时按剩余毫秒再来一次。</summary>
-    private void RestartLongPressTimer(int delayMs)
-    {
-        var timer = EnsureLongPressTimer();
-        timer.Stop();
-        timer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMs));
-        timer.Start();
-    }
-
-    private async Task StartLongPressDragAsync()
-    {
-        var now = Environment.TickCount64;
-
-        if (!_longPress.Tick(now))
-        {
-            if (_longPress.IsPressed)
-            {
-                RestartLongPressTimer(_longPress.RemainingMs(now));   // 早到 ⇒ 重排再试
-            }
-
-            return;
-        }
-
-        var container = _pressedContainer;
-        var point = _pressedPoint;
-        if (container is null || point is null)
-        {
-            return;
-        }
-
-        try
-        {
-            // StartDragAsync 要求 CanDrag=true：起拖前临时打开，起拖结束再关回去
-            // （这样"按下就移动"永远起不了拖 —— 只有长按才算数）
-            container.CanDrag = true;
-            _suppressNextClick = true;      // 长按后系统补的那次 ItemClick 不能当"打开"
-            // ⚠️ 先让 StartDragAsync 抓取"跟着鼠标的那份视觉"，**再**压暗原件：
-            //    反过来的话，被抓走的图标会带着 0.35 的不透明度，看着像根本没浮起。
-            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
-
-            await container.StartDragAsync(point);
-            ApplyLift(container, lifted: true);   // 系统拖拽视觉 = 图块快照，跟着鼠标走
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("GridPage.StartLongPressDragAsync", ex);
-        }
-        finally
-        {
-            container.CanDrag = false;
-            ApplyLift(container, lifted: false);
-            HideDropIndicator();
-            _longPress.Release();
-            ResetPressedTile();
-        }
-    }
-
-    /// <summary>
-    /// "浮起"反馈（手机桌面那种"拎起来"）：原件轻微放大 + 半透明占位，跟着鼠标走的是拖拽视觉。
-    /// ⚠️ 只用**合成变换**（Scale / Opacity），不碰布局 —— 不会把相邻图块挤走。
-    /// </summary>
+    /// <summary>"浮起"反馈：只用合成变换（Scale / Opacity），不碰布局 —— 不会把相邻图块挤走。</summary>
     private void ApplyLift(FrameworkElement container, bool lifted)
     {
         try
@@ -287,12 +161,24 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         }
     }
 
-    private void ResetPressedTile()
+    /// <summary>拖动开始：记下容器（拖动结束要还原"浮起"），并延后一拍压暗。</summary>
+    private void BeginLiftForDrag(DragStartingEventArgs args)
     {
-        _pressedContainer = null;
-        _pressedPoint = null;
+        if (FindContainerFromSource(args.OriginalSource) is { } container)
+        {
+            _liftedContainer = container;
+            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
+        }
     }
 
+    private void EndLiftForDrag()
+    {
+        if (_liftedContainer is { } container)
+        {
+            ApplyLift(container, lifted: false);
+            _liftedContainer = null;
+        }
+    }
     // ────────────────────────────── 右键菜单（W5：新建 / 编辑属性）──────────────────────────────
     //
     // 交互照原版 v1.11.6：
@@ -443,6 +329,9 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         args.Data.SetText(payload.ToString());
         args.Data.RequestedOperation = DataPackageOperation.Move;
 
+        _suppressNextClick = true;      // 起拖之后系统补的那次 ItemClick 不能当"打开"
+        BeginLiftForDrag(args);         // "浮起"占位（延后一拍压暗，等拖拽视觉先被抓走）
+
         // 实时让位的现场记录：这次拖动开始时界面的顺序 + 被拖的是谁（拖动取消时要还原）
         _dragOrderSnapshot = _tab.Icons.Select(t => t.Model.Id).ToList();
         _draggingId = tile.Model.Id;
@@ -563,6 +452,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     private void OnTileDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
         HideDropIndicator();
+        EndLiftForDrag();
 
         if (!_dropHandled && _livePreviewed)
         {

@@ -31,12 +31,11 @@
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="VerticalContentAlignment" Value="Top" />
             <!--
-                拖拽排序（2026-09-14 改为**长按起拖**，手机桌面手感）：
-                不再让系统"按下 + 轻微移动"就起拖 —— 那会与"点一下打开"抢手势（手一抖就变拖动）。
-                这里把容器自身的 CanDrag 关掉，由页面在**长按 350ms** 后临时打开并调 StartDragAsync。
-                判定逻辑在 Core 的 LongPressGesture（有单测），见 GridPage.xaml.cs。
+                拖拽排序：容器可拖 ⇒ **按下拖动即起拖**（系统原生行为，像 Windows 桌面）。
+                ⚠️ 2026-09-14 用户明确要求取消"长按 350ms 才起拖"那套判定（"只要有拖动的话都算"）。
+                拖动时的"插入让位"与"浮起占位"由 GridPage.xaml.cs 处理。
             -->
-            <Setter Property="CanDrag" Value="False" />
+            <Setter Property="CanDrag" Value="True" />
         </Style>
 
         <DataTemplate x:Key="IconTileTemplate" x:DataType="vm:IconTileViewModel">
@@ -77,8 +76,8 @@
             菜单项由托管窗口处理（页面只发事件，不自己开对话框、不碰数据）。
         -->
         <!--
-            起拖**只由长按驱动**：ListViewBase 的 CanDrag=True 会让系统"按下 + 移动"就自己起拖，
-            绕过我们的长按门控（两条路打架）。所以这里必须是 False，由页面在长按到点时临时打开容器的 CanDrag。
+            起拖交给**系统的原生拖拽**：按下拖动即起拖（像 Windows 桌面）—— 用户明确要求取消长按门控。
+            （曾经把这里设成 False + 自己用长按定时器起拖，那套已按用户要求删除。）
         -->
         <GridView x:Name="TileGrid"
                   ItemTemplate="{StaticResource IconTileTemplate}"
@@ -86,7 +85,7 @@
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnTileClick"
-                  CanDrag="False"
+                  CanDrag="True"
                   AllowDrop="True"
                   DragStarting="OnTileDragStarting"
                   DragOver="OnTileDragOver"
