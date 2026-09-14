@@ -522,6 +522,7 @@ public sealed partial class MainWindow : Window
                 _probeThemeSwitch = true;
             }
 
+
             else if (argument.StartsWith("--size=", StringComparison.OrdinalIgnoreCase))
             {
                 var parts = argument["--size=".Length..].Split('x', 'X');
@@ -1238,6 +1239,7 @@ public sealed partial class MainWindow : Window
             var listPage = new ListViewPage(tab) { DragDropEnabled = !_isDemo };
             listPage.ItemActivated += OnListItemActivated;
             listPage.ItemDropped += OnItemDropped;
+        listPage.OrderCommitted += OnListOrderCommitted;
             ApplyThemeIfAnimated(listPage);
             return listPage;
         }
@@ -1248,10 +1250,41 @@ public sealed partial class MainWindow : Window
         gridPage.NewIconRequested += OnNewIconRequested;
         gridPage.IconMenuActionRequested += OnIconMenuActionRequested;
         gridPage.FilesDropped += OnFilesDropped;
+        gridPage.OrderCommitted += OnGridOrderCommitted;
         ApplyThemeIfAnimated(gridPage);
         return gridPage;
     }
 
+    // ────────────────────────────── 实时让位之后的落库 ──────────────────────────────
+    //
+    // 界面在拖动时已经把图块/行让好位了（ObservableCollection.Move，自带重排动画），
+    // 落下时只需把这个顺序写下去 —— 不要再按落点索引算一次（界面顺序已变，会闪一下又弹回去）。
+
+    /// <summary>网格页：本页内拖动结束后按界面顺序落库。</summary>
+    private void OnGridOrderCommitted(object? sender, IReadOnlyList<string> orderedIconIds)
+    {
+        if (sender is not GridPage page)
+        {
+            return;
+        }
+
+        var ok = _viewModel?.ApplyIconOrder(page.Tab.Id, orderedIconIds) ?? false;
+        _log.AppendLine($"图标重排落库（{page.Tab.Name}）：{(ok ? "成功" : "失败（演示模式/页不存在）")}，共 {orderedIconIds.Count} 项");
+        ReportTransient(ok ? "图标已移动" : "演示模式：不会真的保存");
+    }
+
+    /// <summary>列表页：本页内拖动结束后按界面顺序落库。</summary>
+    private void OnListOrderCommitted(object? sender, IReadOnlyList<string> orderedItemIds)
+    {
+        if (sender is not ListViewPage page)
+        {
+            return;
+        }
+
+        var ok = _viewModel?.ApplyListItemOrder(page.Tab.Id, orderedItemIds) ?? false;
+        _log.AppendLine($"列表重排落库（{page.Tab.Name}）：{(ok ? "成功" : "失败（演示模式/页不存在）")}，共 {orderedItemIds.Count} 项");
+        ReportTransient(ok ? "图标已移动到目标标签页" : "演示模式：不会真的保存");
+    }
     // ────────────────────────────── 拖入添加图标（W5）──────────────────────────────
 
     /// <summary>

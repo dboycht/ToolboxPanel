@@ -197,6 +197,98 @@ public class DragDropTests
         Assert.Equal(new[] { 0, 1, 2 }, tab.Icons.Select(i => i.SortOrder));
     }
 
+    [Fact]
+    public void 同页排序_往中间后面拖_不会多走一格()
+    {
+        // ⚠️ 这是本轮补上的覆盖点：TargetIndex 的口径是"插到**当前**第 N 项之前"，
+        //    往后移时被拖项自己还占着一格 ⇒ 落库要去掉自己后 -1。
+        //    修正前：[A,B,C,D] 把 B 拖到 C 与 D 之间（TargetIndex=3）会变成 [A,C,D,B]（差一格）。
+        using var temp = new TempDataDirectory();
+        var store = temp.NewStore();
+        store.Load();
+        var tab = store.AddTab("图标页");
+        foreach (var name in new[] { "A", "B", "C", "D" })
+        {
+            store.AddIcon(tab.Id, new IconModel { DisplayName = name, SourcePath = @"C:\a.exe" });
+        }
+
+        var ids = tab.Icons.Select(i => i.Id).ToList();
+
+        var result = store.ApplyDragDrop(new DragDropRequest(
+            new DragPayload(DragItemKind.Icon, tab.Id, ids[1]), tab.Id, targetIndex: 3));
+
+        Assert.True(result.Success);
+        Assert.Equal(new[] { "A", "C", "B", "D" }, tab.Icons.Select(i => i.DisplayName));
+        Assert.Equal(new[] { "A", "C", "B", "D" },
+            temp.NewStore().Load().Single(t => t.Id == tab.Id).Icons.Select(i => i.DisplayName));
+    }
+
+    [Fact]
+    public void 同页排序_往前拖的口径不变()
+    {
+        using var temp = new TempDataDirectory();
+        var store = temp.NewStore();
+        store.Load();
+        var tab = store.AddTab("图标页");
+        foreach (var name in new[] { "A", "B", "C", "D" })
+        {
+            store.AddIcon(tab.Id, new IconModel { DisplayName = name, SourcePath = @"C:\a.exe" });
+        }
+
+        var ids = tab.Icons.Select(i => i.Id).ToList();
+
+        // 把 C 拖到 A 之前（TargetIndex=0）
+        store.ApplyDragDrop(new DragDropRequest(
+            new DragPayload(DragItemKind.Icon, tab.Id, ids[2]), tab.Id, targetIndex: 0));
+
+        Assert.Equal(new[] { "C", "A", "B", "D" }, tab.Icons.Select(i => i.DisplayName));
+    }
+
+    // ────────────────────────────── 落库：按界面顺序（实时让位之后）──────────────────────────────
+
+    [Fact]
+    public void ApplyIconOrder_按给定顺序落库并重排序号()
+    {
+        using var temp = new TempDataDirectory();
+        var (store, tab, ids) = StoreWithIcons(temp);
+
+        var ok = store.ApplyIconOrder(tab.Id, new[] { ids[2], ids[0], ids[1] });
+
+        Assert.True(ok);
+        Assert.Equal(new[] { "C", "A", "B" }, tab.Icons.Select(i => i.DisplayName));
+        Assert.Equal(new[] { 0, 1, 2 }, tab.Icons.Select(i => i.SortOrder));
+
+        var reloaded = temp.NewStore().Load().Single(t => t.Id == tab.Id);
+        Assert.Equal(new[] { "C", "A", "B" }, reloaded.Icons.Select(i => i.DisplayName));
+        Assert.Equal(new[] { 0, 1, 2 }, reloaded.Icons.Select(i => i.SortOrder));
+    }
+
+    [Fact]
+    public void ApplyIconOrder_没出现的id一律追加到末尾_绝不丢项()
+    {
+        using var temp = new TempDataDirectory();
+        var (store, tab, ids) = StoreWithIcons(temp);
+
+        store.ApplyIconOrder(tab.Id, new[] { ids[1] });   // 只给了一个 id
+
+        Assert.Equal(new[] { "B", "A", "C" }, tab.Icons.Select(i => i.DisplayName));
+        Assert.Equal(3, tab.Icons.Count);
+    }
+
+    [Fact]
+    public void ApplyIconOrder_未知id被忽略_列表页拒绝()
+    {
+        using var temp = new TempDataDirectory();
+        var (store, tab, ids) = StoreWithIcons(temp);
+
+        store.ApplyIconOrder(tab.Id, new[] { "no-such-id", ids[0], ids[1], ids[2] });
+        Assert.Equal(new[] { "A", "B", "C" }, tab.Icons.Select(i => i.DisplayName));
+
+        var listTab = store.AddTab("列表页", TabModel.TypeList);
+        Assert.False(store.ApplyIconOrder(listTab.Id, new[] { "x" }));
+        Assert.False(store.ApplyIconOrder("no-such-tab", new[] { ids[0] }));
+    }
+
     // ────────────────────────────── 落库：跨页移动 ──────────────────────────────
 
     [Fact]

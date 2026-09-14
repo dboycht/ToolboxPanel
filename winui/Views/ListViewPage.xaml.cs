@@ -52,6 +52,9 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
     /// <summary>拖放落下 —— 交给宿主窗口落库。</summary>
     public event EventHandler<DragDropRequest>? ItemDropped;
 
+    /// <summary>做过"实时让位"的拖动落下时：界面上的最终顺序交给宿主窗口落库（与网格页同款分工）。</summary>
+    public event EventHandler<IReadOnlyList<string>>? OrderCommitted;
+
     /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽。</summary>
     public bool DragDropEnabled
     {
@@ -276,6 +279,11 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         var payload = new DragPayload(DragItemKind.ListItem, _tab.Id, row.Model.Id);
         args.Data.SetText(payload.ToString());
         args.Data.RequestedOperation = DataPackageOperation.Move;
+
+        _dragOrderSnapshot = _tab.ListItems.Select(r => r.Model.Id).ToList();
+        _draggingId = row.Model.Id;
+        _livePreviewed = false;
+        _dropHandled = false;
     }
 
     private void OnRowDragOver(object sender, DragEventArgs e)
@@ -287,11 +295,16 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
             return;
         }
 
-
         e.AcceptedOperation = DataPackageOperation.Move;
         e.DragUIOverride.IsCaptionVisible = false;
 
-        ShowDropIndicator(ComputeInsertIndex(e));
+        var insertIndex = ComputeInsertIndex(e);
+
+        // 优先实时让位（行往下/上让开）；让不了位（跨页拖过来）才画指示线
+        if (!TryLivePreview(insertIndex))
+        {
+            ShowDropIndicator(insertIndex);
+        }
     }
 
     private void OnRowDrop(object sender, DragEventArgs e)
@@ -304,11 +317,107 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
             return;
         }
 
+        _dropHandled = true;
+
+        if (TryLivePreview(insertIndex))
+        {
+            // 界面顺序已是最终顺序 ⇒ 直接写下去（与网格页同口径）
+            OrderCommitted?.Invoke(this, _tab.ListItems.Select(r => r.Model.Id).ToList());
+            return;
+        }
+
         ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
     }
 
+    /// <summary>拖动结束（含取消）：做过让位却没落下 ⇒ 还原界面顺序（Core 才是唯一事实源）。</summary>
     private void OnRowDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
-        => HideDropIndicator();
+    {
+        HideDropIndicator();
+
+        if (!_dropHandled && _livePreviewed)
+        {
+            RevertLivePreview();
+        }
+
+        _dragOrderSnapshot = null;
+        _draggingId = null;
+        _livePreviewed = false;
+        _dropHandled = false;
+    }
+
+    // ────────────────────────────── 实时让位（"插入效果"）──────────────────────────────
+    //
+    // 与网格页同一套：把被拖的行实时 `Move` 到落点，ListView 用内置重排动画让其它行让开。
+    // ⚠️ 索引口径与 Core 一致（往后移减去自己那一格）；⚠️ 界面顺序变了之后落库必须走"按顺序落库"。
+
+    private List<string>? _dragOrderSnapshot;
+    private string? _draggingId;
+    private bool _livePreviewed;
+    private bool _dropHandled;
+
+    /// <summary>true = 做得了实时让位（不要画指示线）；false = 做不了（跨页拖过来）。</summary>
+    private bool TryLivePreview(int insertIndex)
+    {
+        if (_draggingId is null)
+        {
+            return false;
+        }
+
+        int from = -1;
+        for (int i = 0; i < _tab.ListItems.Count; i++)
+        {
+            if (_tab.ListItems[i].Model.Id == _draggingId)
+            {
+                from = i;
+                break;
+            }
+        }
+
+        if (from < 0)
+        {
+            return false;
+        }
+
+        var to = insertIndex > from ? insertIndex - 1 : insertIndex;
+        to = Math.Clamp(to, 0, Math.Max(0, _tab.ListItems.Count - 1));
+
+        if (to != from)
+        {
+            _tab.ListItems.Move(from, to);
+            _livePreviewed = true;
+        }
+
+        HideDropIndicator();
+        return true;
+    }
+
+    private void RevertLivePreview()
+    {
+        if (_dragOrderSnapshot is null)
+        {
+            return;
+        }
+
+        for (int target = 0; target < _dragOrderSnapshot.Count; target++)
+        {
+            var id = _dragOrderSnapshot[target];
+
+            int current = -1;
+            for (int i = 0; i < _tab.ListItems.Count; i++)
+            {
+                if (_tab.ListItems[i].Model.Id == id)
+                {
+                    current = i;
+                    break;
+                }
+            }
+
+            if (current >= 0 && current != target)
+            {
+                _tab.ListItems.Move(current, target);
+            }
+        }
+    }
 
     private bool TryReadPayload(DragEventArgs e, out DragPayload payload)
     {

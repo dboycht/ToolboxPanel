@@ -74,6 +74,13 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     public event EventHandler<DragDropRequest>? ItemDropped;
 
     /// <summary>
+    /// 做过"实时让位"的拖动落下时：把界面上的最终顺序交给宿主窗口落库。
+    /// （分工：**本页内**拖动走这个 —— 界面已经让好位了，只需把顺序写下去；
+    ///   **跨页**移动仍走 <see cref="ItemDropped"/>，因为被拖项不在本页集合里、让不了位。）
+    /// </summary>
+    public event EventHandler<IReadOnlyList<string>>? OrderCommitted;
+
+    /// <summary>
     /// 演示模式下不写盘：由宿主窗口置为 false 关掉拖拽（避免"看着能拖、其实存不下来"）。
     /// </summary>
     public bool DragDropEnabled
@@ -426,6 +433,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         var payload = new DragPayload(DragItemKind.Icon, _tab.Id, tile.Model.Id);
         args.Data.SetText(payload.ToString());
         args.Data.RequestedOperation = DataPackageOperation.Move;
+
+        // 实时让位的现场记录：这次拖动开始时界面的顺序 + 被拖的是谁（拖动取消时要还原）
+        _dragOrderSnapshot = _tab.Icons.Select(t => t.Model.Id).ToList();
+        _draggingId = tile.Model.Id;
+        _livePreviewed = false;
+        _dropHandled = false;
     }
 
     /// <summary>
@@ -440,7 +453,15 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         {
             e.AcceptedOperation = DataPackageOperation.Move;
             e.DragUIOverride.IsCaptionVisible = false;
-            ShowDropIndicator(ComputeInsertIndex(e));
+
+            var insertIndex = ComputeInsertIndex(e);
+
+            // 优先"实时让位"（手机那种插入效果）；让不了位（跨页拖过来）才退回画一条指示线
+            if (!TryLivePreview(insertIndex))
+            {
+                ShowDropIndicator(insertIndex);
+            }
+
             return;
         }
 
@@ -470,6 +491,16 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         {
             var insertIndex = ComputeInsertIndex(e);
             HideDropIndicator();
+            _dropHandled = true;
+
+            if (TryLivePreview(insertIndex))
+            {
+                // 已经实时让好位了 ⇒ 界面顺序就是最终顺序，直接写下去
+                // （不能再按落点索引算一次：界面顺序已经变了，索引会对不上）
+                OrderCommitted?.Invoke(this, _tab.Icons.Select(t => t.Model.Id).ToList());
+                return;
+            }
+
             ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
             return;
         }
@@ -516,9 +547,108 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         }
     }
 
-    /// <summary>拖动结束（含取消）—— 把指示线收掉，别留在界面上。</summary>
+    /// <summary>
+    /// 拖动结束（含取消）：收掉指示线；**若这次拖动做了实时让位却没落下（Esc / 丢到窗口外），
+    /// 把界面顺序还原**（否则界面与 Core 就不一致了 —— Core 才是唯一事实源）。
+    /// </summary>
     private void OnTileDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
-        => HideDropIndicator();
+    {
+        HideDropIndicator();
+
+        if (!_dropHandled && _livePreviewed)
+        {
+            RevertLivePreview();
+        }
+
+        _dragOrderSnapshot = null;
+        _draggingId = null;
+        _livePreviewed = false;
+        _dropHandled = false;
+    }
+
+    // ────────────────────────────── 实时让位（"插入效果"，2026-09-14）──────────────────────────────
+    //
+    // 手机桌面的手感：拖动时**其它图块让开、露出插入空位**。
+    // 做法：把被拖的图块在界面集合里实时 `Move` 到落点 —— GridView 会用内置的重排动画把其它图块推过去。
+    // ⚠️ 索引口径与 Core 完全一致：落点索引是"插到**当前**第 N 项之前"，往后移时要减去自己那一格
+    //    （Core 的 ApplySameTabDrop 也在做同一件事，两边必须同口径）。
+    // ⚠️ 界面顺序一旦实时变了，落库就不能再按"落点索引"算 —— 直接把这个顺序交给
+    //    `DataStore.ApplyIconOrder` 写下去（否则会闪一下又弹回去）。
+
+    private List<string>? _dragOrderSnapshot;   // 拖动开始时的界面顺序（取消时还原）
+    private string? _draggingId;                // 正在拖的图块 id（本页集合里找得到才做让位）
+    private bool _livePreviewed;                // 本次拖动做过让位
+    private bool _dropHandled;                  // 落下是否已处理（决定要不要还原）
+
+    /// <summary>
+    /// 把被拖的图块实时挪到落点，让其它图块让开。
+    /// </summary>
+    /// <returns>
+    /// true = 本次能做实时让位（调用方不要画指示线）；false = 做不了（例如跨页拖过来，
+    /// 被拖项不在本页集合里）⇒ 调用方退回"画一条落点指示线"。
+    /// </returns>
+    private bool TryLivePreview(int insertIndex)
+    {
+        if (_draggingId is null)
+        {
+            return false;
+        }
+
+        int from = -1;
+        for (int i = 0; i < _tab.Icons.Count; i++)
+        {
+            if (_tab.Icons[i].Model.Id == _draggingId)
+            {
+                from = i;
+                break;
+            }
+        }
+
+        if (from < 0)
+        {
+            return false;   // 不是本页的图块（跨页拖过来）：让不了位
+        }
+
+        var to = insertIndex > from ? insertIndex - 1 : insertIndex;
+        to = Math.Clamp(to, 0, Math.Max(0, _tab.Icons.Count - 1));
+
+        if (to != from)
+        {
+            _tab.Icons.Move(from, to);
+            _livePreviewed = true;
+        }
+
+        HideDropIndicator();   // 有让位就不需要那条线了
+        return true;
+    }
+
+    /// <summary>拖动被取消：按拖动开始时的快照把界面顺序挪回去。</summary>
+    private void RevertLivePreview()    {
+        if (_dragOrderSnapshot is null)
+        {
+            return;
+        }
+
+        for (int target = 0; target < _dragOrderSnapshot.Count; target++)
+        {
+            var id = _dragOrderSnapshot[target];
+
+            int current = -1;
+            for (int i = 0; i < _tab.Icons.Count; i++)
+            {
+                if (_tab.Icons[i].Model.Id == id)
+                {
+                    current = i;
+                    break;
+                }
+            }
+
+            if (current >= 0 && current != target)
+            {
+                _tab.Icons.Move(current, target);
+            }
+        }
+    }
 
     /// <summary>读取拖放载荷；不是本页该收的类型就返回 false（例如"图标拖到列表页"）。</summary>
     private bool TryReadPayload(DragEventArgs e, out DragPayload payload)

@@ -348,6 +348,44 @@ public sealed class DataStore
     }
 
     /// <summary>
+    /// 按给定 id 顺序重排某个网格页的图标（**实时让位预览之后落库用**）。
+    ///
+    /// <para>为什么需要它而不是继续用 <see cref="ApplyDragDrop"/>：实时让位时界面集合已经被
+    /// 拖到最终位置了，落库只是"把这个顺序写下来"；而 <see cref="ApplyDragDrop"/> 是拿
+    /// 落点索引重新算一次 —— 界面已经变了，索引对不上，会出现闪一下又弹回去。
+    /// 语义与列表项的 <see cref="ReorderListItems"/> 完全一致：没出现的 id **一律追加到末尾**
+    /// （防御：绝不静默丢项）。</para>
+    /// </summary>
+    /// <returns>标签页不存在或不是网格页时返回 false（什么都不改）。</returns>
+    public bool ApplyIconOrder(string tabId, IReadOnlyList<string> orderedIconIds)
+    {
+        var tab = FindTab(tabId);
+        if (tab is null || tab.IsListTab)
+        {
+            return false;
+        }
+
+        var byId = tab.Icons.ToDictionary(icon => icon.Id, icon => icon);
+        var seen = new HashSet<string>(orderedIconIds);
+        var reordered = new List<IconModel>(tab.Icons.Count);
+
+        foreach (var id in orderedIconIds)
+        {
+            if (byId.TryGetValue(id, out var icon))
+            {
+                reordered.Add(icon);
+            }
+        }
+
+        reordered.AddRange(tab.Icons.Where(icon => !seen.Contains(icon.Id)));
+
+        tab.Icons = reordered;
+        RenumberIcons(tab);
+        Save();
+        return true;
+    }
+
+    /// <summary>
     /// 用编辑后的字段覆盖某个已有图标（按 id 找）。
     ///
     /// <para>为什么需要它而不是"直接改模型引用 + Save"：界面上的图标集合持有的是模型实例，
@@ -569,7 +607,15 @@ public sealed class DataStore
         return DragDropResult.Ok(new DragDropRequest(payload, request.TargetTabId, insertAtListItem));
     }
 
-    /// <summary>同页内重排：移动 → 重排序号 → 落盘。**索引越界已由调用方夹取**。</summary>
+    /// <summary>
+    /// 同页内重排：移动 → 重排序号 → 落盘。
+    ///
+    /// <para>⚠️ <c>TargetIndex</c> 的口径是「插到**当前**第 N 项之前」（与界面上的落点指示线、
+    /// 以及 <see cref="DropIndexCalculator.Compute"/> 的返回值同一个口径）。
+    /// **往后移时被拖项自己还占着一格**，去掉自己之后索引要 -1，否则会落到目标项的**后面**（差一格）。
+    /// 例：<c>[A,B,C,D]</c> 把 B 拖到 C 与 D 之间（TargetIndex=3）⇒ 期望 <c>[A,C,B,D]</c>，
+    /// 不修正的话会变成 <c>[A,C,D,B]</c>（本轮补的单测抓出来的）。</para>
+    /// </summary>
     private DragDropResult ApplySameTabDrop<T>(List<T> items, int fromIndex, int toIndex, DragDropRequest request)
     {
         if (fromIndex < 0)
@@ -577,9 +623,11 @@ public sealed class DataStore
             return DragDropResult.Fail("被拖动的项已不存在", request);
         }
 
+        var adjusted = toIndex > fromIndex ? toIndex - 1 : toIndex;
+
         var moved = items[fromIndex];
         items.RemoveAt(fromIndex);
-        items.Insert(Math.Clamp(toIndex, 0, items.Count), moved);
+        items.Insert(Math.Clamp(adjusted, 0, items.Count), moved);
 
         // 即使"原地落下"（顺序没变）也照样重排序号：序号必须是 0..N-1 的连续值
         for (int i = 0; i < items.Count; i++)
