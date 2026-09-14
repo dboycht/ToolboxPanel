@@ -609,6 +609,31 @@ public sealed partial class MainWindow : Window
 
     private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(!_settingsPanelOpen);
 
+    /// <summary>
+    /// 标题栏 ⓘ —— 弹「关于」对话框。
+    /// 内容由 Core 的 <see cref="AboutInfo"/> 组装（有单测）；环境事实（版本/运行时/SDK/系统/程序路径）
+    /// 由 <see cref="AppInfo"/> 采集后传进去 —— 版本号**只读程序集**（csproj 的 &lt;Version&gt; 是单一来源）。
+    /// </summary>
+    private async void OnAboutButtonClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var info = AboutInfo.Create(
+                version: AppInfo.Version,
+                dataDirectory: _isDemo ? null : _viewModel?.DataDirectory,
+                isDemo: _isDemo,
+                extraDiagnostics: AppInfo.Diagnostics());
+
+            var dialog = AboutDialog.Create(info);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnAboutButtonClick", ex);
+        }
+    }
+
     /// <summary>点面板外的空白处关闭（这一层在面板"下面"，点面板本身不会触发）。</summary>
     private void OnSettingsBackdropTapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
         => ShowSettings(false);

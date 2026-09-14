@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    AboutDialog.xaml —— 「关于」对话框（照原版 v1.11.6 的 QMessageBox.about 内容）
+
+    内容全部由 Core 的 AboutInfo 供应（版本 / 作者 / 项目地址 / 6 条操作提示 / 诊断信息），
+    本文件只负责摆放；版本号是运行时从程序集读的，**没有任何写死的版本**。
+
+    · 项目地址是可点的超链接（点开默认浏览器）
+    · 诊断信息默认收起（用 Expander），报 bug 时展开截图即可
+-->
+<ContentDialog
+    x:Class="ToolboxPanel.Views.AboutDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    CloseButtonText="关闭"
+    DefaultButton="Close">
+
+    <StackPanel Width="420" Spacing="8">
+
+        <!-- 标题 + 版本（版本号由代码填入） -->
+        <TextBlock x:Name="VersionLine" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
+        <TextBlock x:Name="SubtitleLine" FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+
+        <TextBlock x:Name="AuthorLine" FontSize="12" />
+        <HyperlinkButton x:Name="ProjectLink" Padding="0" Click="OnProjectLinkClick" />
+
+        <Border Height="1" Background="{ThemeResource DividerBrushDark}" Margin="0,2" />
+
+        <!-- 操作提示（原版那 6 条，由代码铺出来） -->
+        <StackPanel x:Name="FeatureList" Spacing="4" />
+
+        <!-- 诊断信息：默认收起 -->
+        <Expander x:Name="DiagnosticsExpander" Header="诊断信息" HorizontalAlignment="Stretch"
+                  HorizontalContentAlignment="Stretch">
+            <TextBlock x:Name="DiagnosticsText"
+                       FontFamily="Consolas" FontSize="11" Opacity="0.85"
+                       TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+        </Expander>
+    </StackPanel>
+</ContentDialog>
