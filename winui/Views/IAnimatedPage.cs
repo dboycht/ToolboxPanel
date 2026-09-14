@@ -13,6 +13,15 @@ public interface IAnimatedPage
     void ApplyAnimationSpec(AnimationSpec spec);
 
     /// <summary>
+    /// 套用主题令牌。
+    ///
+    /// <para>页面里那些**引用本项目注入的固定资源键**（如 `{ThemeResource AccentBrushDark}`，
+    /// 拖放落点指示线）不会随主题自动换色 —— 必须由代码直接赋值（memory/07 §4 的"表面按名字"）。
+    /// 主题切换与页面创建时都会调用。</para>
+    /// </summary>
+    void ApplyTheme(ThemePalette palette);
+
+    /// <summary>
     /// 第一步：把页面置于"入场起始态"（**整页**不透明度 = 0，各容器也置起始态）。
     ///
     /// <para>必须在页面**成为可见内容之前**调用 —— 页面级不透明度是"总闸门"，

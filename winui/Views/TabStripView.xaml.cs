@@ -160,14 +160,63 @@ public sealed partial class TabStripView : UserControl
         Set("ListViewItemBackgroundPointerOver", palette.HoverSurface);
         Set("ListViewItemBackgroundPressed", palette.PressedSurface);
 
-        // 选中标签的文字/图标前景：深色下是白、浅色下必须是黑，否则看不见
-        Set("ListViewItemForegroundSelected", palette.TitleBarButtonForeground);
+        // ⚠️ 选中标签的**文字/图标**前景不在这里管：
+        //    过去是覆盖轻量样式键 `ListViewItemForegroundSelected`，但它切主题时不会重新解析
+        //    （实测：浅色下选中标签仍是白字 rgb(152,152,152)，未选中已是黑字 rgb(16,16,16)）。
+        //    现在由 TabHiddenSlotView 的模板显式声明框架主题资源 ⇒ 跟随元素主题，必然正确。
+        //    详见 ERROR.md E19。
 
         // 标签栏外框的底与描边
         Set("StripSurfaceBrush", palette.TabStripSurface);
         Set("StripBorderBrush", palette.TabStripBorder);
         StripSurface.Background = Resources["StripSurfaceBrush"] as Brush;
         StripSurface.BorderBrush = Resources["StripBorderBrush"] as Brush;
+
+        // 选中强调条：模板里是 `{ThemeResource AccentBrushDark}`（本项目注入的固定值键，不会自己变）
+        // ⇒ 既更新本控件资源里的同名键（之后新实现/回收出来的容器用得上），
+        //    也**直接改已经实现出来的那些条**（存量元素不会因资源变化重新解析，实测过）。
+        var accent = new SolidColorBrush(
+            Windows.UI.Color.FromArgb(palette.Accent.A, palette.Accent.R, palette.Accent.G, palette.Accent.B));
+        Resources["AccentBrushDark"] = accent;
+        ApplyAccentToRealizedSelectionBars(accent);
+    }
+
+    /// <summary>把强调条颜色直接写到"已经实现出来"的标签项上（含回收复用的容器）。</summary>
+    private void ApplyAccentToRealizedSelectionBars(Brush accent)
+    {
+        for (int i = 0; i < Tabs.Items.Count; i++)
+        {
+            if (Tabs.ContainerFromIndex(i) is not DependencyObject container)
+            {
+                continue;
+            }
+
+            if (FindByName(container, "SelectionBar") is Border bar)
+            {
+                bar.Background = accent;
+            }
+        }
+    }
+
+    /// <summary>在**某个容器自己的子树里**找名字（不是跨容器找，见 TabHiddenSlotView 的注释）。</summary>
+    private static DependencyObject? FindByName(DependencyObject root, string name)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement element && element.Name == name)
+            {
+                return child;
+            }
+
+            if (FindByName(child, name) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>主窗口在切换选中项后调用，用于同步强调条。</summary>

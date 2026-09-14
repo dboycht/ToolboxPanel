@@ -52,6 +52,7 @@ public sealed partial class MainWindow : Window
     private int _forceHoverTab = -1;        // --hover-tab=N（开发/验证：强制某个标签展开）
 
     private bool _diagSwitch;               // ⚠️ 临时诊断（定位完删）
+    private bool _probeThemeSwitch;         // --probe-theme-switch（常驻诊断：切主题漏网元素自检）
 
     /// <summary>窗口尺寸就绪之前不把 Changed 事件当"用户改尺寸"（启动时我们自己会 Resize 一次）。</summary>
     private bool _windowSizeReady;
@@ -106,6 +107,110 @@ public sealed partial class MainWindow : Window
         {
             // 等一次布局：标签项的模板要先实现出来，才能取到隐藏项宿主（`--hover-tab=N`）
             DispatcherQueue.TryEnqueue(() => TabStrip.ForceHoverTab(_forceHoverTab));
+        }
+
+        if (_probeThemeSwitch)
+        {
+            DispatcherQueue.TryEnqueue(async () => await RunThemeSwitchProbeAsync());
+        }
+    }
+
+    /// <summary>
+    /// 开发/验证开关：`--probe-theme-switch`（**常驻**，与 `--diag` / `--probe-switch` 同类）。
+    ///
+    /// <para>自驱动复现用户路径「打开 → 点设置 → 切换主题」（深色 → 浅色），把**会随主题变化的各元素
+    /// 当前颜色**写进自检日志（`%TEMP%\toolboxpanel-verify.txt`），并在屏幕上各停留一会儿
+    /// 供外部 `PrintWindow` 抓图核对；同时写 `%TEMP%\toolboxpanel-switch-probe.txt`
+    /// （内容 `before` / `after`）作为"现在是哪一帧"的标记。跑完自动退出。</para>
+    ///
+    /// <para>为什么值得常驻：**"切主题后有些元素没换"是热切换特有的 bug** ——
+    /// 冷启动两种主题都是对的（初值来自 XAML），所以"用 `--theme=` 启动两次"根本验证不出来。
+    /// 这个开关让"漏网元素"以后随时可复测（本次它一眼抓出 6 处，见 ERROR.md E19）。</para>
+    /// </summary>
+    private async Task RunThemeSwitchProbeAsync()
+    {
+        var markerPath = Path.Combine(Path.GetTempPath(), "toolboxpanel-switch-probe.txt");
+
+        try
+        {
+            _log.AppendLine("===== 切主题：漏网元素自检（--probe-theme-switch）=====");
+
+            _settingsData!.UiTheme = ThemeMode.Dark;
+            ApplyAllSettings();
+            ShowSettings(true);                 // 复现用户路径：先打开设置面板
+            await Task.Delay(700);
+
+            LogThemeState("切换前(深色)");
+            File.WriteAllText(markerPath, "before");
+            await Task.Delay(2600);
+
+            _settingsData.UiTheme = ThemeMode.Light;
+            ApplyAllSettings();                 // 设置面板改主题走的就是这条链
+            await Task.Delay(900);
+
+            LogThemeState("切换后(浅色)");
+            File.WriteAllText(markerPath, "after");
+            await Task.Delay(2600);
+
+            _log.AppendLine("===== 自检结束 =====");
+        }
+        catch (Exception ex)
+        {
+            _log.AppendLine("[自检] 失败：" + ex);
+        }
+        finally
+        {
+            FlushLog();
+            Environment.Exit(0);
+        }
+    }
+
+    /// <summary>自检：把"会随主题变"的各元素当前颜色打出来（漏网元素一眼可见）。</summary>
+    private void LogThemeState(string tag)
+    {
+        static string C(Brush? brush)
+            => brush is SolidColorBrush solid
+                ? $"#{solid.Color.A:X2}{solid.Color.R:X2}{solid.Color.G:X2}{solid.Color.B:X2}"
+                : "(非纯色/未设)";
+
+        var bar = AppWindow.TitleBar;
+        _log.AppendLine($"[{tag}] 根元素ActualTheme={RootGrid.ActualTheme} 令牌IsDark={_themePalette.IsDark}");
+        _log.AppendLine($"[{tag}] 系统窗按钮：前景={C(new SolidColorBrush(bar.ButtonForegroundColor ?? Microsoft.UI.Colors.Transparent))} "
+                        + $"非活动={C(new SolidColorBrush(bar.ButtonInactiveForegroundColor ?? Microsoft.UI.Colors.Transparent))} "
+                        + $"悬停底={C(new SolidColorBrush(bar.ButtonHoverBackgroundColor ?? Microsoft.UI.Colors.Transparent))}");
+        _log.AppendLine($"[{tag}] 标题文字={C(TitleText.Foreground)} 材质标签={C(BackdropLabel.Foreground)}");
+        _log.AppendLine($"[{tag}] 状态栏底={C(StatusBar.Background)}");
+        _log.AppendLine($"[{tag}] 设置面板：描边={C(SettingsPanelHost.BorderBrush)} 遮罩={C(SettingsBackdrop.Background)}");
+        _log.AppendLine($"[{tag}] 标签选中条={C(FindSelectionBarBrush())}");
+        FlushLog();
+    }
+
+    /// <summary>自检：在标签栏可视树里找"选中强调条"（模板里的 <c>Border x:Name=SelectionBar</c>）。</summary>
+    private Brush? FindSelectionBarBrush()
+    {
+        Brush? found = null;
+        Walk(TabStrip);
+        return found;
+
+        void Walk(DependencyObject node)
+        {
+            if (found is not null)
+            {
+                return;
+            }
+
+            int count = VisualTreeHelper.GetChildrenCount(node);
+            for (int i = 0; i < count; i++)
+            {
+                var child = VisualTreeHelper.GetChild(node, i);
+                if (child is FrameworkElement { Name: "SelectionBar" } bar)
+                {
+                    found = bar is Border border ? border.Background : null;
+                    return;
+                }
+
+                Walk(child);
+            }
         }
     }
 
@@ -297,6 +402,25 @@ public sealed partial class MainWindow : Window
 
         // 设置面板的玻璃表面：元素级 Acrylic，让面板后面的应用内内容也糊开
         SettingsPanelHost.Background = CreatePanelGlass(palette);
+
+        // ── 下面是**切主题时不会自己变的"漏网元素"**（用户实测反馈"有些图标与文字没换"）──
+        //    它们要么引用本项目注入的固定资源键（`XxxDark`，值是死的），
+        //    要么是系统绘制的窗口按钮 ⇒ 必须由代码按当前令牌直接赋值（ERROR.md E19、memory/07 §10）。
+        //
+        // ⚠️ 今后新增"会随主题变化的颜色"时，**同一步把它接进这个清单**，否则下次热切换必复现。
+
+        // ① 状态栏底（文字色走元素主题，这里只管底）
+        StatusBar.Background = new SolidColorBrush(ToColor(palette.StatusSurface));
+
+        // ② 设置面板的左描边（过去只换了底、没换描边：浅色下是一条白线压在浅色面板上）
+        SettingsPanelHost.BorderBrush = new SolidColorBrush(ToColor(palette.PanelBorder));
+
+        // ③ 设置面板的模态遮罩
+        SettingsBackdrop.Background = new SolidColorBrush(ToColor(palette.Overlay));
+
+        // ④ 系统绘制的窗口按钮（— □ ✕）：颜色是我们通过 AppWindow.TitleBar 设的，
+        //    **不会**随 RequestedTheme 自动变 —— 不在切主题时重设，浅色主题下就是白字白底（看不见）
+        CustomizeCaptionButtons();
     }
 
     /// <summary>
@@ -389,6 +513,11 @@ public sealed partial class MainWindow : Window
                 // ⚠️ 临时诊断：逐毫秒记录入场动效的容器状态（定位"切页先亮一下"）
                 EntranceAnimator.DiagnosticsEnabled = true;
                 _diagSwitch = true;
+            }
+            else if (argument.Equals("--probe-theme-switch", StringComparison.OrdinalIgnoreCase))
+            {
+                // 常驻自检：自驱动走"开设置 → 切主题"，打印各元素颜色并停留供抓图（见 RunThemeSwitchProbeAsync）
+                _probeThemeSwitch = true;
             }
             else if (argument.StartsWith("--size=", StringComparison.OrdinalIgnoreCase))
             {
@@ -612,6 +741,7 @@ public sealed partial class MainWindow : Window
         foreach (var page in _pages.Values.OfType<IAnimatedPage>())
         {
             page.ApplyAnimationSpec(settings.ToAnimationSpec());
+            page.ApplyTheme(_themePalette);   // 页面里的固定资源键（落点指示线等）随主题重绘
         }
 
         Settings.Refresh();
@@ -1091,11 +1221,21 @@ public sealed partial class MainWindow : Window
 
     private UIElement CreatePage(TabItemViewModel tab)
     {
+        // 页面创建时就要套一次主题：页里的固定资源键（落点指示线）不会自己变
+        void ApplyThemeIfAnimated(UIElement page)
+        {
+            if (page is IAnimatedPage animated)
+            {
+                animated.ApplyTheme(_themePalette);
+            }
+        }
+
         if (tab.IsList)
         {
             var listPage = new ListViewPage(tab) { DragDropEnabled = !_isDemo };
             listPage.ItemActivated += OnListItemActivated;
             listPage.ItemDropped += OnItemDropped;
+            ApplyThemeIfAnimated(listPage);
             return listPage;
         }
 
@@ -1104,6 +1244,7 @@ public sealed partial class MainWindow : Window
         gridPage.ItemDropped += OnItemDropped;
         gridPage.NewIconRequested += OnNewIconRequested;
         gridPage.EditIconRequested += OnEditIconRequested;
+        ApplyThemeIfAnimated(gridPage);
         return gridPage;
     }
 

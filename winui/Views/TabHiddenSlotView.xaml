@@ -32,16 +32,28 @@
 
                             <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
                                 <Grid Width="16" VerticalAlignment="Center">
-                                    <FontIcon Glyph="{TemplateBinding Glyph}" FontSize="12" />
+                                    <!--
+                                        ⚠️ 前景色**显式声明**用框架主题资源（跟随元素主题解析）。
+                                        之前这里没有任何 Foreground ⇒ 文字/图标**继承** ListViewItem 的前景，
+                                        而"选中标签的前景"是本项目用轻量样式键覆盖的固定值：
+                                        切主题时它**不会重新解析**（用户实测："切主题后上面的有些图标与文字没换"，
+                                        浅色主题下选中标签仍是白字，实测像素 rgb(152,152,152)）。
+                                        显式声明之后，颜色由元素主题决定，两套主题都必然正确
+                                        （深色下仍是白字 = 外观不变，浅色下变深字）。
+                                    -->
+                                    <FontIcon Glyph="{TemplateBinding Glyph}" FontSize="12"
+                                              Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                                 </Grid>
 
                                 <TextBlock Text="{TemplateBinding CountLabel}" FontSize="10" Opacity="0.5"
+                                           Foreground="{ThemeResource TextFillColorPrimaryBrush}"
                                            VerticalAlignment="Center"
                                            Visibility="{TemplateBinding ShowCount}" />
                             </StackPanel>
                         </Grid>
 
-                        <TextBlock Text="{TemplateBinding TabName}" FontSize="12" VerticalAlignment="Center" />
+                        <TextBlock Text="{TemplateBinding TabName}" FontSize="12" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
                     </StackPanel>
                 </ControlTemplate>
             </Setter.Value>

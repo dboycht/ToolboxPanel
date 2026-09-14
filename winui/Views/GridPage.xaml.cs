@@ -76,6 +76,16 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     public void ApplyAnimationSpec(AnimationSpec spec) => _entrance.ApplySpec(spec);
 
+    /// <summary>
+    /// 拖放落点指示线用的是本项目注入的固定键（`AccentBrushDark`）——
+    /// **它不随主题变**，所以这里按当前令牌直接赋值（切主题与页面创建时都会调用）。
+    /// </summary>
+    public void ApplyTheme(ThemePalette palette)
+    {
+        var (a, r, g, b) = palette.Accent;
+        DropIndicator.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(a, r, g, b));
+    }
+
     /// <summary>置于入场起始态（整页不透明度 = 0）。必须在页面可见之前调用。</summary>
     public void PrepareEntrance() => _entrance.Prepare();
 

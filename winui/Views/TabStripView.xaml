@@ -30,7 +30,13 @@
         <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#33FFFFFF" />
         <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#14FFFFFF" />
         <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="#22FFFFFF" />
-        <SolidColorBrush x:Key="ListViewItemForegroundSelected" Color="#FFFFFFFF" />
+        <!--
+            ⚠️ 这里**刻意不再覆盖 `ListViewItemForegroundSelected`**：
+            它是"轻量样式键"，切主题时**不会重新解析**（实测：切到浅色后选中标签仍是白字
+            rgb(152,152,152)，而未选中标签已经是黑字 rgb(16,16,16)）。
+            选中标签的文字/图标颜色改由 TabHiddenSlotView 模板**显式声明**框架主题资源
+            （跟随元素主题，必然正确；深色下仍是白字，外观不变）。详见 ERROR.md E19。
+        -->
         <SolidColorBrush x:Key="ListViewItemSelectionIndicatorBrush" Color="Transparent" />
         <SolidColorBrush x:Key="ListViewItemFocusVisualPrimaryBrush" Color="Transparent" />
         <SolidColorBrush x:Key="ListViewItemFocusVisualSecondaryBrush" Color="Transparent" />
