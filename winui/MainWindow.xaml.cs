@@ -115,6 +115,7 @@ public sealed partial class MainWindow : Window
         }
 
 
+
     }
 
     /// <summary>
@@ -521,6 +522,7 @@ public sealed partial class MainWindow : Window
                 // 常驻自检：自驱动走"开设置 → 切主题"，打印各元素颜色并停留供抓图（见 RunThemeSwitchProbeAsync）
                 _probeThemeSwitch = true;
             }
+
 
 
             else if (argument.StartsWith("--size=", StringComparison.OrdinalIgnoreCase))

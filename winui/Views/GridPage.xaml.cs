@@ -85,13 +85,19 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     /// </summary>
     public bool DragDropEnabled
     {
-        get => TileGrid.CanDrag;
+        get => _dragDropEnabled;
         set
         {
-            TileGrid.CanDrag = value;
+            _dragDropEnabled = value;
+
+            // ⚠️ 刻意**不设** TileGrid.CanDrag：ListViewBase 的 CanDrag=true 会让系统
+            // "按下 + 移动"就自己起拖，绕过我们的长按门控（两条路打架）。
+            // 起拖只由长按驱动：长按到点才把**容器**的 CanDrag 临时打开并调 StartDragAsync。
             TileGrid.AllowDrop = value;
         }
     }
+
+    private bool _dragDropEnabled;
 
     /// <summary>
     /// 演示模式下同样关掉「新建 / 编辑属性」菜单：假数据不会落库，菜单点了只会误导用户。
@@ -241,9 +247,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
             // （这样"按下就移动"永远起不了拖 —— 只有长按才算数）
             container.CanDrag = true;
             _suppressNextClick = true;      // 长按后系统补的那次 ItemClick 不能当"打开"
-            ApplyLift(container, lifted: true);
+            // ⚠️ 先让 StartDragAsync 抓取"跟着鼠标的那份视觉"，**再**压暗原件：
+            //    反过来的话，被抓走的图标会带着 0.35 的不透明度，看着像根本没浮起。
+            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
 
-            await container.StartDragAsync(point);   // 系统拖拽视觉 = 图块快照，跟着鼠标走
+            await container.StartDragAsync(point);
+            ApplyLift(container, lifted: true);   // 系统拖拽视觉 = 图块快照，跟着鼠标走
         }
         catch (Exception ex)
         {

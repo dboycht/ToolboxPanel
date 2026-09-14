@@ -48,13 +48,14 @@
     </UserControl.Resources>
 
     <Grid>
+        <!-- 起拖只由长按驱动（同网格页），所以 CanDrag 必须为 False。 -->
         <ListView x:Name="Rows"
                   ItemTemplate="{StaticResource ListRowTemplate}"
                   ItemContainerStyle="{StaticResource CompactRowStyle}"
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnRowClick"
-                  CanDrag="True"
+                  CanDrag="False"
                   AllowDrop="True"
                   DragStarting="OnRowDragStarting"
                   DragOver="OnRowDragOver"

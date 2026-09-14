@@ -76,13 +76,17 @@
             用 ContextRequested（而不是 RightTapped）：右键与键盘「菜单键 / Shift+F10」都能触发。
             菜单项由托管窗口处理（页面只发事件，不自己开对话框、不碰数据）。
         -->
+        <!--
+            起拖**只由长按驱动**：ListViewBase 的 CanDrag=True 会让系统"按下 + 移动"就自己起拖，
+            绕过我们的长按门控（两条路打架）。所以这里必须是 False，由页面在长按到点时临时打开容器的 CanDrag。
+        -->
         <GridView x:Name="TileGrid"
                   ItemTemplate="{StaticResource IconTileTemplate}"
                   ItemContainerStyle="{StaticResource CompactTileStyle}"
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnTileClick"
-                  CanDrag="True"
+                  CanDrag="False"
                   AllowDrop="True"
                   DragStarting="OnTileDragStarting"
                   DragOver="OnTileDragOver"

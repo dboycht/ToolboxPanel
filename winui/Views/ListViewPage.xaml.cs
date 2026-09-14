@@ -58,13 +58,17 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
     /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽。</summary>
     public bool DragDropEnabled
     {
-        get => Rows.CanDrag;
+        get => _dragDropEnabled;
         set
         {
-            Rows.CanDrag = value;
+            _dragDropEnabled = value;
+
+            // ⚠️ 同网格页：不设 Rows.CanDrag（那会让系统自己起拖，绕过长按门控）
             Rows.AllowDrop = value;
         }
     }
+
+    private bool _dragDropEnabled;
 
     public void ApplyAnimationSpec(AnimationSpec spec) => _entrance.ApplySpec(spec);
 
@@ -201,9 +205,12 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         {
             container.CanDrag = true;                 // StartDragAsync 要求 CanDrag=true
             _suppressNextClick = true;
-            ApplyLift(container, lifted: true);
+            // ⚠️ 先让 StartDragAsync 抓取"跟着鼠标的那份视觉"，**再**压暗原件：
+            //    反过来的话，被抓走的图标会带着 0.35 的不透明度，看着像根本没浮起。
+            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
 
-            await container.StartDragAsync(point);    // 拖拽视觉 = 行快照，跟着鼠标走
+            await container.StartDragAsync(point);
+            ApplyLift(container, lifted: true);    // 拖拽视觉 = 行快照，跟着鼠标走
         }
         catch (Exception ex)
         {
