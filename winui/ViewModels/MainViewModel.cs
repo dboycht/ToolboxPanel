@@ -189,6 +189,62 @@ public sealed class MainViewModel
         return true;
     }
 
+    /// <summary>
+    /// 从资源管理器**拖入**的路径 → 建图标（对应原版 <c>tab_widget._add_dropped_paths</c>）。
+    ///
+    /// <para>判定（分类 / 命名 / 去重 / 文案）全在 Core 的 <see cref="DropImporter"/>（有单测）；
+    /// 这里按判定结果执行：**按路径提取图标 → 落库 → 进界面集合**，并收集每条状态文案
+    /// （原版是每处理一个路径就发一条状态消息）。</para>
+    ///
+    /// <para>⚠️ 顺序与原版一致：先提取缓存再落库，且**重复/不存在的路径一个字节都不改**。</para>
+    /// </summary>
+    public DropImportResult AddDroppedPaths(string tabId, IReadOnlyList<string> paths)
+    {
+        if (_store is null)
+        {
+            return DropImportResult.Fail(DemoNoSave);
+        }
+
+        var tab = FindTab(tabId);
+        if (tab is null || tab.IsList)
+        {
+            return DropImportResult.Fail("目标标签页不存在或不是网格页");
+        }
+
+        var decisions = DropImporter.Plan(paths, tab.Icons.Select(tile => tile.Model.SourcePath));
+        var messages = new List<string>(decisions.Count);
+        int added = 0;
+
+        foreach (var decision in decisions)
+        {
+            if (decision.Kind != DropDecisionKind.Add)
+            {
+                messages.Add(decision.Message);
+                continue;
+            }
+
+            var icon = DropImporter.CreateIcon(decision);
+            if (icon is null)
+            {
+                continue;
+            }
+
+            var source = RefreshIconCache(icon, IconRefreshPlan.FromSource(icon.SourcePath));
+
+            _store.AddIcon(tabId, icon);
+            tab.Icons.Add(new IconTileViewModel(icon, source));
+            messages.Add(decision.Message);
+            added++;
+        }
+
+        if (added > 0)
+        {
+            tab.NotifyCountLabel();
+        }
+
+        return new DropImportResult(added, messages, null);
+    }
+
     /// <summary>图标缓存目录（界面上要显示"图标从哪来"时用）。</summary>
     public string IconsDirectory => _iconExtractor?.CacheDirectory ?? string.Empty;
 
@@ -571,4 +627,10 @@ public sealed class MainViewModel
             return null;
         }
     }
+}
+
+/// <summary>一次"拖入添加"的结果：成功几个 + 每个路径的状态文案（原版是逐条发状态消息）。</summary>
+public sealed record DropImportResult(int Added, IReadOnlyList<string> Messages, string? Error)
+{
+    public static DropImportResult Fail(string error) => new(0, Array.Empty<string>(), error);
 }

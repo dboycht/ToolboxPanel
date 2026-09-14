@@ -25,6 +25,7 @@ using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
+using Windows.Storage;
 
 namespace ToolboxPanel.Views;
 
@@ -53,6 +54,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     /// <summary>图块右键菜单选了某一项 —— 交给宿主窗口执行（**页面不碰数据、不开对话框**）。</summary>
     public event EventHandler<IconMenuRequest>? IconMenuActionRequested;
+
+    /// <summary>
+    /// 从资源管理器拖入的文件/文件夹/快捷方式 —— 交给宿主窗口建图标
+    /// （对应原版 <c>tab_widget._add_dropped_paths</c>）。
+    /// </summary>
+    public event EventHandler<IReadOnlyList<string>>? FilesDropped;
 
     /// <summary>拖放落下 —— 交给宿主窗口落库（页面自己不改数据）。</summary>
     public event EventHandler<DragDropRequest>? ItemDropped;
@@ -217,33 +224,92 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         args.Data.RequestedOperation = DataPackageOperation.Move;
     }
 
-    /// <summary>只接受"本应用、且是本页收的那一类"的拖放；顺便算出落点并画指示线。</summary>
+    /// <summary>
+    /// 只接受两类拖放：
+    ///   ① **本应用内部的图标重排**（文本载荷，见 <see cref="DragPayload"/>）；
+    ///   ② **从资源管理器拖进来的文件/文件夹/快捷方式**（StorageItems）—— 建新图标（原版语义）。
+    /// 其余一律拒绝（例如"图标拖到列表页"）。拖动中顺便算出落点并画指示线（只对内部重排有意义）。
+    /// </summary>
     private void OnTileDragOver(object sender, DragEventArgs e)
     {
-        if (!TryReadPayload(e, out _))
+        if (TryReadPayload(e, out _))
         {
-            e.AcceptedOperation = DataPackageOperation.None;
+            e.AcceptedOperation = DataPackageOperation.Move;
+            e.DragUIOverride.IsCaptionVisible = false;
+            ShowDropIndicator(ComputeInsertIndex(e));
+            return;
+        }
+
+        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            // 外部拖入：接受"复制"语义（原版也是把拖入当成"新建图标"，不移动原文件）
+            e.AcceptedOperation = DataPackageOperation.Copy;
+            e.DragUIOverride.IsCaptionVisible = false;
             HideDropIndicator();
             return;
         }
 
-        e.AcceptedOperation = DataPackageOperation.Move;
-        e.DragUIOverride.IsCaptionVisible = false;
-
-        ShowDropIndicator(ComputeInsertIndex(e));
+        e.AcceptedOperation = DataPackageOperation.None;
+        HideDropIndicator();
     }
 
-    private void OnTileDrop(object sender, DragEventArgs e)
+    /// <summary>
+    /// 拖放落下：内部重排 → 交给宿主窗口落库；外部拖入 → 把路径交给宿主窗口建图标。
+    ///
+    /// <para>⚠️ 外部拖入必须用 <c>GetDeferral()</c> 包住 `await`：Drop 事件返回后 DataView 就可能失效，
+    /// 没有 deferral 的话取 StorageItems 会随机拿不到东西（WinUI/OS 的硬要求）。</para>
+    /// </summary>
+    private async void OnTileDrop(object sender, DragEventArgs e)
     {
-        var insertIndex = ComputeInsertIndex(e);
-        HideDropIndicator();
-
-        if (!TryReadPayload(e, out var payload))
+        // ① 本应用内部的重排/跨页移动（有自己的文本载荷）
+        if (TryReadPayload(e, out var payload))
         {
+            var insertIndex = ComputeInsertIndex(e);
+            HideDropIndicator();
+            ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
             return;
         }
 
-        ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
+        // ② 从资源管理器拖入的文件/文件夹/快捷方式
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+        {
+            HideDropIndicator();
+            return;
+        }
+
+        HideDropIndicator();
+        var deferral = e.GetDeferral();
+        try
+        {
+            var items = await e.DataView.GetStorageItemsAsync();
+            var paths = new List<string>(items.Count);
+
+            foreach (var item in items)
+            {
+                switch (item)
+                {
+                    case StorageFile file when !string.IsNullOrWhiteSpace(file.Path):
+                        paths.Add(file.Path);
+                        break;
+                    case StorageFolder folder when !string.IsNullOrWhiteSpace(folder.Path):
+                        paths.Add(folder.Path);
+                        break;
+                }
+            }
+
+            if (paths.Count > 0)
+            {
+                FilesDropped?.Invoke(this, paths);
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("GridPage.OnTileDrop/StorageItems", ex);
+        }
+        finally
+        {
+            deferral.Complete();
+        }
     }
 
     /// <summary>拖动结束（含取消）—— 把指示线收掉，别留在界面上。</summary>

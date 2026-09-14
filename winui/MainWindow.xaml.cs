@@ -1244,8 +1244,55 @@ public sealed partial class MainWindow : Window
         gridPage.ItemDropped += OnItemDropped;
         gridPage.NewIconRequested += OnNewIconRequested;
         gridPage.IconMenuActionRequested += OnIconMenuActionRequested;
+        gridPage.FilesDropped += OnFilesDropped;
         ApplyThemeIfAnimated(gridPage);
         return gridPage;
+    }
+
+    // ────────────────────────────── 拖入添加图标（W5）──────────────────────────────
+
+    /// <summary>
+    /// 从资源管理器拖入文件/文件夹/快捷方式 → 建图标（原版 <c>tab_widget._add_dropped_paths</c>）。
+    /// 判定在 Core（<see cref="DropImporter"/>，有单测）；这里只负责执行与状态栏反馈。
+    /// </summary>
+    private void OnFilesDropped(object? sender, IReadOnlyList<string> paths)
+    {
+        if (_viewModel is null || sender is not GridPage page)
+        {
+            return;
+        }
+
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var result = _viewModel.AddDroppedPaths(page.Tab.Id, paths);
+            if (result.Error is not null)
+            {
+                ReportTransient(result.Error);
+                return;
+            }
+
+            _log.AppendLine($"拖入添加：{result.Added}/{paths.Count} 个（{page.Tab.Name}）");
+            foreach (var message in result.Messages)
+            {
+                _log.AppendLine("    " + message);
+            }
+
+            // 原版是"每处理一个就发一条状态消息"；状态栏单行，这里用 · 串起来（过长自动省略号）
+            ReportTransient(result.Messages.Count == 0
+                ? "没有可添加的项目"
+                : string.Join("   ·   ", result.Messages));
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnFilesDropped", ex);
+            ReportTransient("拖入添加失败：" + ex.Message);
+        }
     }
 
     // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
