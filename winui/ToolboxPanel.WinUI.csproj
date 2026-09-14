@@ -27,6 +27,29 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
 
+    <!--
+      版本号（v2.0.1 定版时补上）。
+      ⚠️ 必须与 Python 侧的 `src/toolbox/__init__.py::__version__` **保持一致** ——
+      两处各自是本实现的"版本号单一来源"（关于对话框 / EXE 文件属性 / 发布包命名都读它）。
+    -->
+    <Version>2.0.1</Version>
+    <AssemblyVersion>2.0.1.0</AssemblyVersion>
+    <FileVersion>2.0.1.0</FileVersion>
+    <Product>ToolboxPanel</Product>
+    <AssemblyTitle>ToolboxPanel</AssemblyTitle>
+    <Company>dboycht</Company>
+    <Copyright>Copyright © 2026 dboycht</Copyright>
+
+    <!--
+      ⚠️ 必须关掉"把 git 提交号拼进版本信息"的行为，否则上面写的版本会被覆盖成
+      `1.0.0+<commit>`（实测：EXE 属性里显示 FileVersion=1.0.0.0、ProductVersion=1.0.0+2903c73…）。
+      `IncludeSourceRevisionInInformationalVersion` 是 .NET 8+ 的开关；
+      `ContinuousIntegrationBuild=false` 再兜一层（它会关掉 SourceLink）。
+      发布包里的版本号必须是我们声明的那个。
+    -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <ContinuousIntegrationBuild>false</ContinuousIntegrationBuild>
+
     <!-- unpackaged 部署 -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
