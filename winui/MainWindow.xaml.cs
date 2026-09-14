@@ -152,6 +152,16 @@ public sealed partial class MainWindow : Window
     /// <summary>当前生效的主题令牌（换主题时整体替换）。</summary>
     private ThemePalette _themePalette = ThemeTokens.Dark;
 
+    /// <summary>
+    /// 当前生效的深浅，供对话框设 <c>RequestedTheme</c> 用。
+    ///
+    /// <para>⚠️ **ContentDialog 不会跟随窗口根元素的 `RequestedTheme`**：它住在 XamlRoot 的
+    /// popup 层，不在 `RootGrid` 的子树里，于是永远按系统主题解析 —— 用户实测反馈的
+    /// "关于窗口不随深浅色切换、里面有的字颜色不对"就是这个根因（ERROR.md E18）。
+    /// 每个对话框在 `ShowAsync` 之前都要显式设一遍。</para>
+    /// </summary>
+    private ElementTheme CurrentElementTheme => _themePalette.IsDark ? ElementTheme.Dark : ElementTheme.Light;
+
     /// <summary>把令牌灌进应用级资源（**幂等**：XAML 每次加载都会重新解析资源引用，字典只需建一次）。</summary>
     private static void EnsureThemeResources()
     {
@@ -626,6 +636,7 @@ public sealed partial class MainWindow : Window
 
             var dialog = AboutDialog.Create(info);
             dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18）
             await dialog.ShowAsync();
         }
         catch (Exception ex)
@@ -1229,6 +1240,7 @@ public sealed partial class MainWindow : Window
 
             var dialog = IconEditDialog.ForCreate(type, prefill, AppWindow.Id);
             dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18，与 About 同病）
 
             if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Draft is not { } draft)
             {
@@ -1263,7 +1275,7 @@ public sealed partial class MainWindow : Window
         {
             var dialog = IconEditDialog.ForEdit(icon, AppWindow.Id);
             dialog.XamlRoot = RootGrid.XamlRoot;
-
+            dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18，与 About 同病）
             if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Draft is not { } draft)
             {
                 return;

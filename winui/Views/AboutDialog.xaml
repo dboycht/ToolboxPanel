@@ -5,8 +5,20 @@
     内容全部由 Core 的 AboutInfo 供应（版本 / 作者 / 项目地址 / 6 条操作提示 / 诊断信息），
     本文件只负责摆放；版本号是运行时从程序集读的，**没有任何写死的版本**。
 
-    · 项目地址是可点的超链接（点开默认浏览器）
-    · 诊断信息默认收起（用 Expander），报 bug 时展开截图即可
+    ⚠️⚠️ 三条主题纪律（都是用户实测反馈后定死的，别再改回去）：
+    1. **不能引用本项目的 `XxxDark` 注入资源键**（如 `DividerBrushDark`）：
+       那是"深色调色板的固定值"，**不随主题变**；浅色模式下就是一条浅色线压在浅色面上。
+       这里一律用**框架主题资源**（`TextFillColor*Brush` / `DividerStrokeColorDefaultBrush`
+       / `AccentTextFillColorPrimaryBrush`）—— 它们跟随**元素自己的 `RequestedTheme`** 解析，
+       所以"浅色模式字体为深色、深色模式字体为浅色"是结构性保证，不靠人盯。
+    2. **文字颜色显式写出来**（主文字 / 次要文字各用对应令牌），不要靠 `Opacity` 调暗：
+       Opacity 不会换色，两套主题下观感不一致。
+    3. **`RequestedTheme` 必须由调用方设**（MainWindow 按当前调色板设）：
+       ContentDialog 不会自动跟随窗口根元素的 `RequestedTheme`（它住在 XamlRoot 的 popup 层），
+       不设就永远用系统主题 —— 这正是"关于窗口不随深浅色切换"的根因。
+
+    ⚠️ 内容必须能滚动：诊断信息展开后很长（数据目录 / 程序路径都很长），
+    而 ContentDialog 自己**不会**滚动，超出的部分直接被截断（用户实测反馈过）。
 -->
 <ContentDialog
     x:Class="ToolboxPanel.Views.AboutDialog"
@@ -15,26 +27,53 @@
     CloseButtonText="关闭"
     DefaultButton="Close">
 
-    <StackPanel Width="420" Spacing="8">
+    <!-- 外层滚动：整份内容超出对话框高度时可上下滚（MaxHeight 保证不顶出屏幕） -->
+    <ScrollViewer x:Name="ContentScroll" MaxHeight="440" Padding="2"
+                  VerticalScrollBarVisibility="Auto" VerticalScrollMode="Auto"
+                  HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
+        <StackPanel x:Name="ContentRoot" Width="420" Spacing="8">
 
-        <!-- 标题 + 版本（版本号由代码填入） -->
-        <TextBlock x:Name="VersionLine" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" />
-        <TextBlock x:Name="SubtitleLine" FontSize="11" Opacity="0.6" TextWrapping="Wrap" />
+            <!-- 标题 + 版本（版本号由代码填入） -->
+            <TextBlock x:Name="VersionLine" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+            <TextBlock x:Name="SubtitleLine" FontSize="11" TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
 
-        <TextBlock x:Name="AuthorLine" FontSize="12" />
-        <HyperlinkButton x:Name="ProjectLink" Padding="0" Click="OnProjectLinkClick" />
+            <TextBlock x:Name="AuthorLine" FontSize="12"
+                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+            <HyperlinkButton x:Name="ProjectLink" Padding="0" Click="OnProjectLinkClick"
+                             Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
 
-        <Border Height="1" Background="{ThemeResource DividerBrushDark}" Margin="0,2" />
+            <Border x:Name="DividerLine" Height="1" Margin="0,2"
+                    Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-        <!-- 操作提示（原版那 6 条，由代码铺出来） -->
-        <StackPanel x:Name="FeatureList" Spacing="4" />
+            <!-- 操作提示（原版那 6 条，由代码填 ItemsSource）：
+                 用 DataTemplate 而不是代码 new TextBlock —— 这样文字颜色由 XAML 声明，
+                 跟随元素主题解析（见顶部纪律 2） -->
+            <ItemsControl x:Name="FeatureList">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" FontSize="12" TextWrapping="Wrap" Margin="2,0,0,0"
+                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
 
-        <!-- 诊断信息：默认收起 -->
-        <Expander x:Name="DiagnosticsExpander" Header="诊断信息" HorizontalAlignment="Stretch"
-                  HorizontalContentAlignment="Stretch">
-            <TextBlock x:Name="DiagnosticsText"
-                       FontFamily="Consolas" FontSize="11" Opacity="0.85"
-                       TextWrapping="Wrap" IsTextSelectionEnabled="True" />
-        </Expander>
-    </StackPanel>
+            <!--
+                诊断信息：默认收起，展开后由**外层**那个 ScrollViewer 统一滚动。
+                ⚠️ 刻意**不**在这里再套一层 ScrollViewer：一条滚动条足够用，而且嵌套滚动
+                （ScrollViewer in Expander）在 WinUI 里属于容易出问题的组合。
+                （注：曾怀疑"表头附近有一条重影横带"是嵌套滚动造成的，去掉内层后那条带**依然在**——
+                 逐行像素统计证明每条文字都是单一连续行、行间是纯背景，那条带其实是 Expander
+                 表头自带的浅灰底，属正常外观。详见 ERROR.md E18。）
+            -->
+            <Expander x:Name="DiagnosticsExpander" Header="诊断信息"
+                      HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                <TextBlock x:Name="DiagnosticsText"
+                           FontFamily="Consolas" FontSize="11"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" IsTextSelectionEnabled="True" />
+            </Expander>
+        </StackPanel>
+    </ScrollViewer>
 </ContentDialog>

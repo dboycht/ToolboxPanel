@@ -28,17 +28,10 @@ public sealed partial class AboutDialog : ContentDialog
 
         ProjectLink.Content = info.ProjectUrl;
 
-        // 操作提示：每条一个「• 文案」（原版的纯文本列表在这里用控件铺出来）
-        foreach (var feature in info.Features)
-        {
-            FeatureList.Children.Add(new TextBlock
-            {
-                Text = "• " + feature,
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Margin = new Thickness(2, 0, 0, 0),
-            });
-        }
+        // 操作提示：原版的纯文本列表在这里用 XAML 模板铺出来（"• " 前缀也在这里加）
+        FeatureList.ItemsSource = info.Features
+            .Select(feature => "• " + feature)
+            .ToList();
 
         DiagnosticsText.Text = string.Join(
             Environment.NewLine,
