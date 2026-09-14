@@ -165,24 +165,46 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     }
 }
 
-/// <summary>网格页里的一个图块。</summary>
-public sealed class IconTileViewModel
+/// <summary>网格页里的一个图块。编辑属性/改名后由 <see cref="Refresh"/> 更新显示。</summary>
+public sealed class IconTileViewModel : INotifyPropertyChanged
 {
+    private string _displayName;
+    private ImageSource? _iconSource;
+
     public IconTileViewModel(IconModel model, ImageSource? iconSource)
     {
         Model = model;
-        DisplayName = string.IsNullOrWhiteSpace(model.DisplayName)
-            ? FallbackName(model)
-            : model.DisplayName;
-        IconSource = iconSource;
+        _displayName = ResolveName(model);
+        _iconSource = iconSource;
     }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 
     public IconModel Model { get; }
 
-    public string DisplayName { get; }
+    public string DisplayName
+    {
+        get => _displayName;
+        private set => SetField(ref _displayName, value, nameof(DisplayName));
+    }
 
     /// <summary>缓存图标的图片源；拿不到时为 null，模板会退回显示字形图标。</summary>
-    public ImageSource? IconSource { get; }
+    public ImageSource? IconSource
+    {
+        get => _iconSource;
+        private set
+        {
+            if (ReferenceEquals(_iconSource, value))
+            {
+                return;
+            }
+
+            _iconSource = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IconSource)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasIcon)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNoIcon)));
+        }
+    }
 
     public bool HasIcon => IconSource is not null;
 
@@ -207,9 +229,23 @@ public sealed class IconTileViewModel
         _ => "文件",
     };
 
-    /// <summary>没写名字时用路径/命令的第一段兜底（原版也是这么显示的）。</summary>
-    private static string FallbackName(IconModel model)
+    /// <summary>
+    /// 编辑属性 / 改图标之后刷新图块的显示（名称可能随路径变化，图标可能换了新缓存）。
+    /// </summary>
+    public void Refresh(ImageSource? iconSource)
     {
+        IconSource = iconSource;
+        DisplayName = ResolveName(Model);
+    }
+
+    /// <summary>没写名字时用路径/命令的第一段兜底（原版也是这么显示的）。</summary>
+    private static string ResolveName(IconModel model)
+    {
+        if (!string.IsNullOrWhiteSpace(model.DisplayName))
+        {
+            return model.DisplayName;
+        }
+
         var source = !string.IsNullOrWhiteSpace(model.SourcePath) ? model.SourcePath : model.TargetPath;
         if (string.IsNullOrWhiteSpace(source))
         {
@@ -225,6 +261,17 @@ public sealed class IconTileViewModel
         {
             return source;
         }
+    }
+
+    private void SetField<T>(ref T field, T value, string propertyName)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value))
+        {
+            return;
+        }
+
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
 

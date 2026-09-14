@@ -1,7 +1,8 @@
 // GridPage.xaml.cs —— 网格页
 //
-// 职责：铺出该标签页的图标集合、点击打开、入场动效、**拖拽排序（W3）**。
-// 新建/编辑/右键菜单/批量管理属于 W5。
+// 职责：铺出该标签页的图标集合、点击打开、入场动效、**拖拽排序（W3）**、
+// **右键菜单入口（W5：空白处新建 / 图块编辑属性）**。
+// 菜单里的其余项（打开 / 用其他应用打开 / 打开文件位置 / 重命名 / 删除）与批量管理属于后续。
 //
 // ────────────────────────── 为什么不用 GridView 内置的 CanReorderItems ──────────────────────────
 // 内置排序只能覆盖"同页重排"，而且**它直接改 ItemsSource 的集合**，不会经过 Core，
@@ -17,6 +18,8 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
@@ -44,10 +47,18 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>
     public event EventHandler<IconModel>? IconActivated;
 
+    /// <summary>在空白处选了「新建 XX 图标…」—— 交给宿主窗口（选文件 → 弹对话框 → 落库）。</summary>
+    public event EventHandler<IconType>? NewIconRequested;
+
+    /// <summary>在某个图块上选了「编辑属性…」—— 交给宿主窗口。</summary>
+    public event EventHandler<IconModel>? EditIconRequested;
+
     /// <summary>拖放落下 —— 交给宿主窗口落库（页面自己不改数据）。</summary>
     public event EventHandler<DragDropRequest>? ItemDropped;
 
-    /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽（避免"看着能拖、其实存不下来"）。</summary>
+    /// <summary>
+    /// 演示模式下不写盘：由宿主窗口置为 false 关掉拖拽（避免"看着能拖、其实存不下来"）。
+    /// </summary>
     public bool DragDropEnabled
     {
         get => TileGrid.CanDrag;
@@ -57,6 +68,11 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
             TileGrid.AllowDrop = value;
         }
     }
+
+    /// <summary>
+    /// 演示模式下同样关掉「新建 / 编辑属性」菜单：假数据不会落库，菜单点了只会误导用户。
+    /// </summary>
+    public bool IconEditingEnabled { get; set; } = true;
 
     public void ApplyAnimationSpec(AnimationSpec spec) => _entrance.ApplySpec(spec);
 
@@ -74,6 +90,95 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         {
             IconActivated?.Invoke(this, tile.Model);
         }
+    }
+
+    // ────────────────────────────── 右键菜单（W5：新建 / 编辑属性）──────────────────────────────
+    //
+    // 交互照原版 v1.11.6：
+    //   · 空白处右键 → 新建文件 / 文件夹 / 快捷方式 / （分隔）网址 / 命令图标…
+    //   · 图块上右键 → 编辑属性…
+    //
+    // ⚠️ 页面**只发事件**：开文件选择框、弹对话框、落库都在宿主窗口（MainWindow）里做 ——
+    //    页面拿不到 DataStore，这样也就不可能"界面改了、数据没改"。
+
+    private void OnContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        if (!IconEditingEnabled)
+        {
+            return;
+        }
+
+        // 键盘菜单键（Shift+F10）时拿不到坐标，退回左上角；右键时就是鼠标位置
+        var position = args.TryGetPosition(TileGrid, out var point) ? point : new Windows.Foundation.Point(0, 0);
+
+        var tile = FindTileFromSource(args.OriginalSource);
+        (tile is null ? BuildNewIconMenu() : BuildTileMenu(tile)).ShowAt(TileGrid, position);
+        args.Handled = true;
+    }
+
+    /// <summary>空白处菜单：新建五类（顺序与分隔线照原版）。</summary>
+    private MenuFlyout BuildNewIconMenu()
+    {
+        var menu = new MenuFlyout();
+
+        AddNew("新建文件图标…", IconType.File);
+        AddNew("新建文件夹图标…", IconType.Folder);
+        AddNew("新建快捷方式图标…", IconType.Shortcut);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        AddNew("新建网址图标…", IconType.Url);
+        AddNew("新建命令图标…", IconType.Command);
+
+        return menu;
+
+        void AddNew(string text, IconType type)
+        {
+            var item = new MenuFlyoutItem { Text = text };
+            item.Click += (_, _) => NewIconRequested?.Invoke(this, type);
+            menu.Items.Add(item);
+        }
+    }
+
+    /// <summary>
+    /// 图块菜单。
+    ///
+    /// <para>⚠️ 本轮只放「编辑属性…」：原版这里还有 打开 / 用其他应用打开… / 打开文件位置 /
+    /// 重命名 / 删除 —— 那几项属于下一轮「右键菜单」功能，等它上齐了这张菜单才完整。</para>
+    /// </summary>
+    private MenuFlyout BuildTileMenu(IconTileViewModel tile)
+    {
+        var menu = new MenuFlyout();
+
+        var edit = new MenuFlyoutItem { Text = "编辑属性…" };
+        edit.Click += (_, _) => EditIconRequested?.Invoke(this, tile.Model);
+        menu.Items.Add(edit);
+
+        return menu;
+    }
+
+    /// <summary>右键点在哪 —— 往上找到承载图块的 GridViewItem；点在空白处返回 null。</summary>
+    private static IconTileViewModel? FindTileFromSource(object? source)
+    {
+        var current = source as DependencyObject;
+
+        while (current is not null)
+        {
+            if (current is GridViewItem { DataContext: IconTileViewModel tile })
+            {
+                return tile;
+            }
+
+            try
+            {
+                current = VisualTreeHelper.GetParent(current);
+            }
+            catch (Exception)
+            {
+                // 命中的不是可视元素（例如 Run/TextElement）：当作"点在空白处"
+                return null;
+            }
+        }
+
+        return null;
     }
 
     // ────────────────────────────── 拖拽排序 ──────────────────────────────

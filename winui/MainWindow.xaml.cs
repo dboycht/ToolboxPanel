@@ -22,6 +22,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 using ToolboxPanel.Views;
@@ -1062,9 +1063,11 @@ public sealed partial class MainWindow : Window
             return listPage;
         }
 
-        var gridPage = new GridPage(tab) { DragDropEnabled = !_isDemo };
+        var gridPage = new GridPage(tab) { DragDropEnabled = !_isDemo, IconEditingEnabled = !_isDemo };
         gridPage.IconActivated += OnIconActivated;
         gridPage.ItemDropped += OnItemDropped;
+        gridPage.NewIconRequested += OnNewIconRequested;
+        gridPage.EditIconRequested += OnEditIconRequested;
         return gridPage;
     }
 
@@ -1165,6 +1168,189 @@ public sealed partial class MainWindow : Window
             .SelectMany(t => t.ListItems)
             .FirstOrDefault(i => i.Model.Id == payload.ItemId);
         return row?.Description ?? payload.ItemId;
+    }
+
+    // ────────────────────────────── 新建 / 编辑图标（W5）──────────────────────────────
+    //
+    // 交互照原版 v1.11.6（icon_grid._show_icon_context_menu / tab_widget._show_grid_context_menu）：
+    //   ① 空白处右键 → 选类型；
+    //   ② 文件 / 文件夹 / 快捷方式**先弹系统选择框**，选完把名称与路径预填进字段对话框
+    //      （网址 / 命令没有对应的选择框，直接进对话框）；
+    //   ③ 「确定」→ Core（IconEditor）校验 → 落库 → 按 Core 给的刷新计划重取图标。
+    //
+    // ⚠️ 校验规则的唯一来源是 Core；对话框里校验不过**不关窗**，所以这里拿到的 Draft 一定是合法的。
+
+    /// <summary>空白处菜单选了「新建 XX 图标…」。</summary>
+    private async void OnNewIconRequested(object? sender, IconType type)
+    {
+        if (sender is not GridPage page || _viewModel is null)
+        {
+            return;
+        }
+
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var prefill = await BuildCreatePrefillAsync(type);
+            if (prefill is null)
+            {
+                return;   // 用户在系统选择框里取消了
+            }
+
+            var dialog = IconEditDialog.ForCreate(type, prefill, AppWindow.Id);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Draft is not { } draft)
+            {
+                return;
+            }
+
+            var result = _viewModel.CreateIcon(page.Tab.Id, draft);
+            ReportIconEdit(result, draft.DisplayName, created: true);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnNewIconRequested", ex);
+            ReportTransient("新建图标失败：" + ex.Message);
+        }
+    }
+
+    /// <summary>图块菜单选了「编辑属性…」。</summary>
+    private async void OnEditIconRequested(object? sender, IconModel icon)
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var dialog = IconEditDialog.ForEdit(icon, AppWindow.Id);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Draft is not { } draft)
+            {
+                return;
+            }
+
+            var result = _viewModel.UpdateIcon(icon, draft);
+            ReportIconEdit(result, draft.DisplayName, created: false);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnEditIconRequested", ex);
+            ReportTransient("编辑图标失败：" + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 新建时先选目标（原版也是这样：选择框在对话框**之前**），返回预填好的草稿。
+    /// 返回 null = 用户取消，什么都不做。
+    /// </summary>
+    private async Task<IconEditDraft?> BuildCreatePrefillAsync(IconType type)
+    {
+        switch (type)
+        {
+            case IconType.File:
+            {
+                var path = await FilePickers.PickFileAsync(AppWindow.Id, null);
+                return path is null
+                    ? null
+                    : new IconEditDraft { Type = IconType.File, DisplayName = StemOf(path), Path = path };
+            }
+
+            case IconType.Folder:
+            {
+                var path = await FilePickers.PickFolderAsync(AppWindow.Id);
+                return path is null
+                    ? null
+                    : new IconEditDraft { Type = IconType.Folder, DisplayName = FolderNameOf(path), Path = path };
+            }
+
+            case IconType.Shortcut:
+            {
+                var lnk = await FilePickers.PickFileAsync(AppWindow.Id, new[] { ".lnk" });
+                if (lnk is null)
+                {
+                    return null;
+                }
+
+                // 解析 .lnk 拿目标/参数/工作目录做预填；解析失败也不拦着用户（目标退回 .lnk 自己）
+                var info = WindowsShortcut.Resolve(lnk);
+                return new IconEditDraft
+                {
+                    Type = IconType.Shortcut,
+                    DisplayName = StemOf(lnk),
+                    Path = string.IsNullOrWhiteSpace(info?.TargetPath) ? lnk : info!.TargetPath,
+                    ShortcutSourcePath = lnk,
+                    Arguments = info?.Arguments ?? string.Empty,
+                    WorkingDir = info?.WorkingDirectory ?? string.Empty,
+                };
+            }
+
+            default:
+                // 网址 / 命令：没有对应的系统选择框，直接进对话框（原版一致）
+                return new IconEditDraft { Type = type };
+        }
+    }
+
+    private string StemOf(string path)
+    {
+        try
+        {
+            var stem = Path.GetFileNameWithoutExtension(path);
+            return string.IsNullOrEmpty(stem) ? path : stem;
+        }
+        catch (ArgumentException)
+        {
+            return path;
+        }
+    }
+
+    private string FolderNameOf(string path)
+    {
+        try
+        {
+            var name = Path.GetFileName(path.TrimEnd('\\', '/'));
+            return string.IsNullOrEmpty(name) ? path : name;
+        }
+        catch (ArgumentException)
+        {
+            return path;
+        }
+    }
+
+    /// <summary>把一次新建/编辑的结果写进状态栏与自检日志（成功/失败都写）。</summary>
+    private void ReportIconEdit(IconEditResult result, string name, bool created)
+    {
+        if (!result.Success)
+        {
+            ReportTransient(result.ErrorMessage ?? "操作失败");
+            _log.AppendLine($"{(created ? "新建" : "编辑")}图标失败：{result.ErrorMessage}");
+            FlushLog();
+            return;
+        }
+
+        _log.AppendLine($"{(created ? "新建" : "编辑")}图标：{name}（图标刷新={result.Refresh.Kind}）");
+        ReportTransient(created ? $"已添加: {name}" : $"已编辑: {name}");
+    }
+
+    private void ReportTransient(string message)
+    {
+        _transientStatus = message;
+        UpdateStatusBar();
+        FlushLog();
     }
 
     // ────────────────────────────── 打开动作 ──────────────────────────────

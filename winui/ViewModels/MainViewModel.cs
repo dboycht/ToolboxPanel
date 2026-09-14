@@ -183,6 +183,152 @@ public sealed class MainViewModel
     private TabItemViewModel? FindTab(string tabId)
         => Tabs.FirstOrDefault(t => t.Id == tabId);
 
+    // ────────────────────────────── 新建 / 编辑图标（W5）──────────────────────────────
+    //
+    // 四条纪律（与拖拽排序同一套思路）：
+    //   ① **校验与字段语义全在 Core**（IconEditor）—— 这里只把草稿递过去、把结果搬进界面；
+    //   ② **先落库、再改界面集合**（Core 是唯一事实源，界面的顺序/内容跟着它走）；
+    //   ③ 图标缓存按 Core 给的「刷新计划」提取（不要再在 UI 里写 if 判断类型）；
+    //   ④ 演示模式下什么都不写（返回失败），绝不产生持久化副作用。
+
+    private const string DemoNoSave = "演示模式：不会真的保存";
+
+    /// <summary>
+    /// 新建一个图标：校验 → 提取图标 → Core 落库 → 加进界面集合。
+    /// </summary>
+    public IconEditResult CreateIcon(string tabId, IconEditDraft draft)
+    {
+        if (_store is null)
+        {
+            return IconEditResult.Fail(DemoNoSave);
+        }
+
+        var tab = FindTab(tabId);
+        if (tab is null || tab.IsList)
+        {
+            return IconEditResult.Fail("目标标签页不存在或不是网格页");
+        }
+
+        var result = IconEditor.Create(draft);
+        if (!result.Success || result.Icon is null)
+        {
+            return result;
+        }
+
+        var icon = result.Icon;
+        var source = RefreshIconCache(icon, result.Refresh);
+
+        _store.AddIcon(tabId, icon);        // 顺序号由 Core 给（= 当前数量），界面直接追加即可
+        tab.Icons.Add(new IconTileViewModel(icon, source));
+        tab.NotifyCountLabel();
+        return result;
+    }
+
+    /// <summary>
+    /// 把编辑结果写回：校验 → 就地改模型 → 按需重取图标 → Core 落库 → 刷新那个图块。
+    /// </summary>
+    public IconEditResult UpdateIcon(IconModel icon, IconEditDraft draft)
+    {
+        if (_store is null)
+        {
+            return IconEditResult.Fail(DemoNoSave);
+        }
+
+        var result = IconEditor.Edit(icon, draft);   // 成功时**就地**改的就是界面上那个模型
+        if (!result.Success)
+        {
+            return result;
+        }
+
+        var source = RefreshIconCache(icon, result.Refresh);
+        _store.UpdateIcon(icon);
+        FindTile(icon.Id)?.Refresh(source);
+        return result;
+    }
+
+    private IconTileViewModel? FindTile(string iconId)
+        => Tabs.SelectMany(tab => tab.Icons).FirstOrDefault(tile => tile.Model.Id == iconId);
+
+    /// <summary>
+    /// 按 Core 给的刷新计划重取图标缓存，写回 <see cref="IconModel.IconCacheFile"/>，返回可显示的图片源。
+    ///
+    /// <para>⚠️ 与原版一致：**提取成功之后才删旧缓存**（原版是 extract → <c>_delete_cache</c> → 换名）；
+    /// 删文件失败只当没删掉 —— 绝不因为一个缓存文件让"改属性"整件事失败。</para>
+    /// </summary>
+    private ImageSource? RefreshIconCache(IconModel icon, IconRefreshPlan plan)
+    {
+        if (_iconExtractor is null)
+        {
+            return null;
+        }
+
+        if (plan.Kind == IconRefreshKind.None)
+        {
+            // 图标不用重取：沿用已缓存的那张（文件没了就返回 null，模板走字形兜底）
+            return CachedImageSource(icon);
+        }
+
+        try
+        {
+            var cacheName = plan.Kind switch
+            {
+                IconRefreshKind.ReextractFromSource =>
+                    _iconExtractor.ExtractAndCache(plan.SourcePath, icon.Type),
+                IconRefreshKind.CustomIndex =>
+                    _iconExtractor.ExtractAndCacheFromIconFile(plan.IconFile, plan.IconIndex, icon.Type),
+                _ => _iconExtractor.CreateFallbackCache(icon.Type),
+            };
+
+            if (string.IsNullOrEmpty(cacheName))
+            {
+                return null;
+            }
+
+            var oldCacheFile = icon.IconCacheFile;
+            icon.IconCacheFile = cacheName;
+
+            if (!string.IsNullOrEmpty(oldCacheFile)
+                && !string.Equals(oldCacheFile, cacheName, StringComparison.OrdinalIgnoreCase))
+            {
+                DeleteCacheFileQuietly(_iconExtractor.CachePath(oldCacheFile));
+            }
+
+            return CreateImageSource(_iconExtractor.CachePath(cacheName));
+        }
+        catch (Exception ex)
+        {
+            // 提取失败不该把"改属性"整件事搞失败：退回字形兜底，数据照常落库
+            App.WriteCrash("MainViewModel.RefreshIconCache", ex);
+            return null;
+        }
+    }
+
+    private ImageSource? CachedImageSource(IconModel icon)
+    {
+        if (_iconExtractor is null || string.IsNullOrEmpty(icon.IconCacheFile))
+        {
+            return null;
+        }
+
+        var path = _iconExtractor.CachePath(icon.IconCacheFile);
+        return File.Exists(path) ? CreateImageSource(path) : null;
+    }
+
+    private static void DeleteCacheFileQuietly(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 旧缓存删不掉不影响结果（下次清孤儿缓存会处理）
+        }
+    }
+
     // ────────────────────────────── 纯 UI 演示内容 ──────────────────────────────
 
     /// <summary>

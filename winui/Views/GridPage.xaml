@@ -39,17 +39,18 @@
                 <StackPanel VerticalAlignment="Top" Spacing="2">
 
                     <!-- 真图标（data/icons/*.png 缓存） -->
-                    <Image Source="{x:Bind IconSource}"
+                    <!-- ⚠️ 四处 Mode=OneWay：编辑属性之后要能就地刷新（x:Bind 默认是 OneTime） -->
+                    <Image Source="{x:Bind IconSource, Mode=OneWay}"
                            Width="30" Height="30"
                            VerticalAlignment="Center"
-                           Visibility="{x:Bind HasIcon}" />
+                           Visibility="{x:Bind HasIcon, Mode=OneWay}" />
 
                     <!-- 拿不到图标时的字形兜底 -->
                     <FontIcon Glyph="{x:Bind Glyph}" FontSize="24"
                               HorizontalAlignment="Center"
-                              Visibility="{x:Bind HasNoIcon}" />
+                              Visibility="{x:Bind HasNoIcon, Mode=OneWay}" />
 
-                    <TextBlock Text="{x:Bind DisplayName}"
+                    <TextBlock Text="{x:Bind DisplayName, Mode=OneWay}"
                                FontSize="10.5"
                                LineHeight="12.5"
                                MaxLines="2"
@@ -63,6 +64,13 @@
     </UserControl.Resources>
 
     <Grid>
+        <!--
+            右键菜单（照原版 v1.11.6 的交互）：
+              · 空白处右键 → 新建文件/文件夹/快捷方式/网址/命令图标
+              · 图块上右键 → 编辑属性…
+            用 ContextRequested（而不是 RightTapped）：右键与键盘「菜单键 / Shift+F10」都能触发。
+            菜单项由托管窗口处理（页面只发事件，不自己开对话框、不碰数据）。
+        -->
         <GridView x:Name="TileGrid"
                   ItemTemplate="{StaticResource IconTileTemplate}"
                   ItemContainerStyle="{StaticResource CompactTileStyle}"
@@ -75,6 +83,7 @@
                   DragOver="OnTileDragOver"
                   Drop="OnTileDrop"
                   DragItemsCompleted="OnTileDragItemsCompleted"
+                  ContextRequested="OnContextRequested"
                   Padding="4,3"
                   Background="Transparent" />
 
@@ -84,7 +93,7 @@
                     Spacing="6" Visibility="Collapsed">
             <FontIcon Glyph="&#xE8A5;" FontSize="32" Opacity="0.45" />
             <TextBlock Text="这一页还没有图标" Opacity="0.65" FontSize="12" />
-            <TextBlock Text="（新建 / 拖入图标在 W5 实现）" Opacity="0.4" FontSize="10.5" />
+            <TextBlock Text="在空白处点右键即可新建" Opacity="0.4" FontSize="10.5" />
         </StackPanel>
 
         <!--
