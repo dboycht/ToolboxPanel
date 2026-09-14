@@ -144,6 +144,23 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     private bool _suppressNextClick;
     private FrameworkElement? _liftedContainer;
+    private string? _pressedTileId;      // 按下时落在哪个图块上（DragStarting 用它解析被拖项）
+    private int _lastTracedIndex = -1;   // 拖动中只在落点变化时打一条日志，别刷屏
+
+    /// <summary>拖动链路诊断 —— 写 `%TEMP%\toolboxpanel-probe.log`（手感类问题只能用户手试，
+    /// 有了这条链路日志，用户试一次就能定位"哪一步断了"）。</summary>
+    private static void DragTrace(string message)
+        => App.ProbeLog($"[拖动 {DateTime.Now:HH:mm:ss.fff}] {message}");
+
+    private void OnTilePressedForDrag(object sender, PointerRoutedEventArgs e)
+    {
+        var tile = FindTileFromSource(e.OriginalSource);
+        _pressedTileId = tile?.Model.Id;
+        DragTrace($"按下：{tile?.DisplayName ?? "(空白处)"}");
+    }
+
+    private IconTileViewModel? FindTileById(string? iconId)
+        => iconId is null ? null : _tab.Icons.FirstOrDefault(t => t.Model.Id == iconId);
 
     /// <summary>"浮起"反馈：只用合成变换（Scale / Opacity），不碰布局 —— 不会把相邻图块挤走。</summary>
     private void ApplyLift(FrameworkElement container, bool lifted)
@@ -318,10 +335,19 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     /// <summary>把"拖的是谁、从哪一页拖的"写进 DataPackage。</summary>
     private void OnTileDragStarting(UIElement sender, DragStartingEventArgs args)
     {
-        var tile = FindTileFromArgs(args);
+        // ⚠️ 双保险解析：先看事件源，再退回"按下时记下的那个图块"
+        //    （ListViewBase 自己起拖时事件源可能不是容器 ⇒ 只用前者会把拖动整次取消）
+        var fromArgs = FindTileFromArgs(args);
+        var tile = fromArgs ?? FindTileById(_pressedTileId);
+
+        DragTrace($"DragStarting：事件源={args.OriginalSource?.GetType().Name} "
+                  + $"事件源解析={(fromArgs is null ? "null" : fromArgs.DisplayName)} "
+                  + $"按下记录={FindTileById(_pressedTileId)?.DisplayName ?? "null"}");
+
         if (tile is null)
         {
             args.Cancel = true;
+            DragTrace("→ 解析不到被拖项，取消这次拖动");
             return;
         }
 
@@ -353,6 +379,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
             e.DragUIOverride.IsCaptionVisible = false;
 
             var insertIndex = ComputeInsertIndex(e);
+
+            if (insertIndex != _lastTracedIndex)
+            {
+                _lastTracedIndex = insertIndex;
+                DragTrace($"DragOver：落点索引={insertIndex}");
+            }
 
             // 优先"实时让位"（手机那种插入效果）；让不了位（跨页拖过来）才退回画一条指示线
             if (!TryLivePreview(insertIndex))
@@ -390,6 +422,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
             var insertIndex = ComputeInsertIndex(e);
             HideDropIndicator();
             _dropHandled = true;
+            DragTrace($"Drop：落点={insertIndex} 让位过={_livePreviewed}");
 
             if (TryLivePreview(insertIndex))
             {
@@ -454,15 +487,36 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         HideDropIndicator();
         EndLiftForDrag();
 
-        if (!_dropHandled && _livePreviewed)
-        {
-            RevertLivePreview();
-        }
+        var dropped = args.DropResult == DataPackageOperation.Move;
+        DragTrace($"DragItemsCompleted：DropResult={args.DropResult} 已处理过={_dropHandled} "
+                  + $"让位过={_livePreviewed}");
 
-        _dragOrderSnapshot = null;
-        _draggingId = null;
-        _livePreviewed = false;
-        _dropHandled = false;
+        // ⚠️ `Drop` 与 `DragItemsCompleted` 的**先后顺序不保证**（也可能只有后者），
+        //    所以结算**延后一拍**：Drop 若也来了，`_dropHandled` 那时已经是 true。
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_dropHandled)
+            {
+                DragTrace("结算：Drop 已处理（顺序已落库）");
+            }
+            else if (_livePreviewed && dropped)
+            {
+                // Drop 没来但确实是"落在本页" ⇒ 不能让这次让位白让，按界面顺序落库
+                DragTrace("结算：Drop 事件没来但 DropResult=Move ⇒ 按界面顺序补落库");
+                OrderCommitted?.Invoke(this, _tab.Icons.Select(t => t.Model.Id).ToList());
+            }
+            else if (_livePreviewed)
+            {
+                DragTrace("结算：拖动被取消 ⇒ 还原界面顺序");
+                RevertLivePreview();
+            }
+
+            _dragOrderSnapshot = null;
+            _draggingId = null;
+            _livePreviewed = false;
+            _dropHandled = false;
+            _lastTracedIndex = -1;
+        });
     }
 
     // ────────────────────────────── 实时让位（"插入效果"，2026-09-14）──────────────────────────────

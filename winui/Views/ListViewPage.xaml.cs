@@ -38,6 +38,8 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         _entrance = new EntranceAnimator(Rows);
 
+        // 只为"记下用户按在哪一行上"（无定时器、无门控）—— 见 GridPage 同名注释。
+        Rows.AddHandler(PointerPressedEvent, new PointerEventHandler(OnRowPressedForDrag), handledEventsToo: true);
     }
 
     /// <summary>点了一行 —— 把该行的路径交给宿主窗口打开。</summary>
@@ -107,6 +109,29 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     private bool _suppressNextClick;
     private FrameworkElement? _liftedContainer;
+    private string? _pressedItemId;
+    private int _lastTracedIndex = -1;
+
+    /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）。</summary>
+    private static void DragTrace(string message)
+        => App.ProbeLog($"[拖动 {DateTime.Now:HH:mm:ss.fff}] {message}");
+
+    private void OnRowPressedForDrag(object sender, PointerRoutedEventArgs e)
+    {
+        var row = (e.OriginalSource as FrameworkElement)?.DataContext as ListRowViewModel;
+        var item = row ?? FindRowById(FindRowIdFromSource(e.OriginalSource));
+        _pressedItemId = item?.Model.Id;
+        DragTrace($"按下：{item?.Description ?? "(空白处)"}");
+    }
+
+    private ListRowViewModel? FindRowById(string? itemId)
+        => itemId is null ? null : _tab.ListItems.FirstOrDefault(r => r.Model.Id == itemId);
+
+    private static string? FindRowIdFromSource(object? source)
+    {
+        var container = FindContainerFromSource(source);
+        return (container?.DataContext as ListRowViewModel)?.Model.Id;
+    }
 
     private void ApplyLift(FrameworkElement container, bool lifted)
     {
@@ -170,10 +195,17 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     private void OnRowDragStarting(UIElement sender, DragStartingEventArgs args)
     {
-        var row = (args.OriginalSource as FrameworkElement)?.DataContext as ListRowViewModel;
+        // ⚠️ 双保险解析：事件源 → 退回"按下时记下的那一行"（否则会把整次拖动取消掉）
+        var fromArgs = (args.OriginalSource as FrameworkElement)?.DataContext as ListRowViewModel;
+        var row = fromArgs ?? FindRowById(_pressedItemId) ?? FindRowById(FindRowIdFromSource(args.OriginalSource));
+
+        DragTrace($"DragStarting：事件源={args.OriginalSource?.GetType().Name} "
+                  + $"事件源解析={fromArgs?.Description ?? "null"} 按下记录={FindRowById(_pressedItemId)?.Description ?? "null"}");
+
         if (row is null)
         {
             args.Cancel = true;
+            DragTrace("→ 解析不到被拖项，取消这次拖动");
             return;
         }
 
@@ -204,6 +236,12 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         var insertIndex = ComputeInsertIndex(e);
 
+        if (insertIndex != _lastTracedIndex)
+        {
+            _lastTracedIndex = insertIndex;
+            DragTrace($"DragOver：落点索引={insertIndex}");
+        }
+
         // 优先实时让位（行往下/上让开）；让不了位（跨页拖过来）才画指示线
         if (!TryLivePreview(insertIndex))
         {
@@ -222,6 +260,7 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
 
         _dropHandled = true;
+        DragTrace($"Drop：落点={insertIndex} 让位过={_livePreviewed}");
 
         if (TryLivePreview(insertIndex))
         {
@@ -239,15 +278,33 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         HideDropIndicator();
         EndLiftForDrag();
 
-        if (!_dropHandled && _livePreviewed)
-        {
-            RevertLivePreview();
-        }
+        var dropped = args.DropResult == DataPackageOperation.Move;
+        DragTrace($"DragItemsCompleted：DropResult={args.DropResult} 已处理过={_dropHandled} 让位过={_livePreviewed}");
 
-        _dragOrderSnapshot = null;
-        _draggingId = null;
-        _livePreviewed = false;
-        _dropHandled = false;
+        // ⚠️ Drop 与 DragItemsCompleted 的先后顺序不保证 ⇒ 结算延后一拍（同网格页）
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (_dropHandled)
+            {
+                DragTrace("结算：Drop 已处理（顺序已落库）");
+            }
+            else if (_livePreviewed && dropped)
+            {
+                DragTrace("结算：Drop 没来但 DropResult=Move ⇒ 按界面顺序补落库");
+                OrderCommitted?.Invoke(this, _tab.ListItems.Select(r => r.Model.Id).ToList());
+            }
+            else if (_livePreviewed)
+            {
+                DragTrace("结算：拖动被取消 ⇒ 还原界面顺序");
+                RevertLivePreview();
+            }
+
+            _dragOrderSnapshot = null;
+            _draggingId = null;
+            _livePreviewed = false;
+            _dropHandled = false;
+            _lastTracedIndex = -1;
+        });
     }
 
     // ────────────────────────────── 实时让位（"插入效果"）──────────────────────────────

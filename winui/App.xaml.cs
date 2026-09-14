@@ -115,8 +115,11 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// ⚠️ 临时诊断通道（%TEMP%\toolboxpanel-probe.log）：给"看不见的观感问题"留证据。
-    /// 只由开发期的探针调用，定位完随探针一起删掉。
+    /// 诊断通道（%TEMP%\toolboxpanel-probe.log）：给"看不见的观感问题"留证据。
+    ///
+    /// <para>两个用途：① 开发期探针（定位完随探针一起删）；② **常驻的拖动链路日志**
+    /// （见 GridPage/ListViewPage 的 DragTrace）—— 拖放手感只能由用户手动试，
+    /// 有了链路日志，用户试一次就能定位"哪一步断了"。</para>
     /// </summary>
     internal static void ProbeLog(string message)
     {
