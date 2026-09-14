@@ -162,6 +162,49 @@ public static class IconEditor
     public const string ErrorCommandRequired = "命令不能为空";
 
     /// <summary>
+    /// 新建模式的校验（**不改任何东西**，只回答"能不能存"）。
+    ///
+    /// <para>为什么单独开一个方法：界面上「确定」按下的那一刻要先校验，
+    /// 不通过就**不关对话框**、把消息显示在对话框里（原版是关掉窗口后写在状态栏，体验差一截）。
+    /// <see cref="Create"/> 内部也调它，保证校验规则只有一处。</para>
+    /// </summary>
+    /// <returns>合法返回 null，否则返回给用户看的消息。</returns>
+    public static string? ValidateCreate(IconEditDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(draft);
+
+        if (Trim(draft.DisplayName).Length == 0)
+        {
+            return ErrorNameRequired;
+        }
+
+        if (Trim(draft.Path).Length > 0)
+        {
+            return null;   // 名称 + 主字段都有了
+        }
+
+        // 五类的主字段都必填，只是消息不同
+        return draft.Type switch
+        {
+            IconType.Url => ErrorUrlRequired,
+            IconType.Command => ErrorCommandRequired,
+            _ => ErrorPathRequired,
+        };
+    }
+
+    /// <summary>
+    /// 编辑模式的校验：**只有名称必填**（原版 <c>apply()</c> 里 <c>is_creating</c> 为假的那条路）。
+    /// 类型以 <paramref name="icon"/> 上的为准（编辑对话框不给改类型）。
+    /// </summary>
+    public static string? ValidateEdit(IconModel icon, IconEditDraft draft)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+        ArgumentNullException.ThrowIfNull(draft);
+
+        return Trim(draft.DisplayName).Length == 0 ? ErrorNameRequired : null;
+    }
+
+    /// <summary>
     /// 新建（原版 <c>IconEditDialog.create_for_type</c> + <c>apply(creation_mode=True)</c>）：
     /// **名称 + 对应类型的主字段**都必填。
     /// </summary>
@@ -169,34 +212,24 @@ public static class IconEditor
     {
         ArgumentNullException.ThrowIfNull(draft);
 
-        var name = Trim(draft.DisplayName);
-        if (name.Length == 0)
+        var error = ValidateCreate(draft);
+        if (error is not null)
         {
-            return IconEditResult.Fail(ErrorNameRequired);
+            return IconEditResult.Fail(error);
         }
 
-        var icon = new IconModel { Type = draft.Type, DisplayName = name };
+        var icon = new IconModel { Type = draft.Type, DisplayName = Trim(draft.DisplayName) };
         var raw = Trim(draft.Path);
 
         switch (draft.Type)
         {
             case IconType.File:
             case IconType.Folder:
-                if (raw.Length == 0)
-                {
-                    return IconEditResult.Fail(ErrorPathRequired);
-                }
-
                 icon.SourcePath = raw;
                 icon.TargetPath = raw;
                 return IconEditResult.Ok(icon, IconRefreshPlan.FromSource(raw));
 
             case IconType.Shortcut:
-                if (raw.Length == 0)
-                {
-                    return IconEditResult.Fail(ErrorPathRequired);
-                }
-
                 // ⚠️ 与原版一致：这个框里填的是**目标**；.lnk 自己的路径来自文件选择框的 prefill
                 icon.TargetPath = raw;
                 icon.SourcePath = Trim(draft.ShortcutSourcePath);
@@ -208,23 +241,14 @@ public static class IconEditor
                 return IconEditResult.Ok(icon, draft.HasCustomIcon
                     ? IconRefreshPlan.CustomIcon(Trim(draft.CustomIconPath), draft.CustomIconIndex)
                     : IconRefreshPlan.FromSource(icon.SourcePath));
-            case IconType.Url:
-                if (raw.Length == 0)
-                {
-                    return IconEditResult.Fail(ErrorUrlRequired);
-                }
 
+            case IconType.Url:
                 var url = NormalizeUrl(raw);
                 icon.SourcePath = url;
                 icon.TargetPath = url;
                 return IconEditResult.Ok(icon, IconRefreshPlan.Standard);
 
             case IconType.Command:
-                if (raw.Length == 0)
-                {
-                    return IconEditResult.Fail(ErrorCommandRequired);
-                }
-
                 icon.TargetPath = raw;
                 icon.Arguments = Trim(draft.Arguments);
                 icon.WorkingDir = Trim(draft.WorkingDir);
@@ -250,11 +274,13 @@ public static class IconEditor
         ArgumentNullException.ThrowIfNull(icon);
         ArgumentNullException.ThrowIfNull(draft);
 
-        var name = Trim(draft.DisplayName);
-        if (name.Length == 0)
+        var error = ValidateEdit(icon, draft);
+        if (error is not null)
         {
-            return IconEditResult.Fail(ErrorNameRequired);
+            return IconEditResult.Fail(error);
         }
+
+        var name = Trim(draft.DisplayName);
 
         // 原版在弹对话框**之前**记下 old_path，改完再比 —— 这里同样在改动前取
         var oldPath = PreferTarget(icon);

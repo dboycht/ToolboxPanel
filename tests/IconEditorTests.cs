@@ -444,6 +444,49 @@ public class IconEditorTests
         Assert.False(store.UpdateIcon(new IconModel { Id = "no-such-id", DisplayName = "x" }));
     }
 
+    // ────────────────────────────── 非变异校验（对话框点「确定」时用）──────────────────────────────
+
+    [Fact]
+    public void ValidateCreate_只回答能不能存_不动草稿()
+    {
+        var draft = new IconEditDraft { Type = IconType.Url, DisplayName = "x", Path = "" };
+
+        Assert.Equal(IconEditor.ErrorUrlRequired, IconEditor.ValidateCreate(draft));
+        Assert.Equal("x", draft.DisplayName);   // 草稿一个字段都没被改
+        Assert.Equal(string.Empty, draft.Path);
+
+        draft.Path = "a.com";
+        Assert.Null(IconEditor.ValidateCreate(draft));
+    }
+
+    [Fact]
+    public void ValidateCreate_五类型的主字段消息各不相同()
+    {
+        Assert.Equal(IconEditor.ErrorNameRequired,
+            IconEditor.ValidateCreate(new IconEditDraft { Type = IconType.File }));
+        Assert.Equal(IconEditor.ErrorPathRequired,
+            IconEditor.ValidateCreate(new IconEditDraft { Type = IconType.File, DisplayName = "x" }));
+        Assert.Equal(IconEditor.ErrorPathRequired,
+            IconEditor.ValidateCreate(new IconEditDraft { Type = IconType.Folder, DisplayName = "x" }));
+        Assert.Equal(IconEditor.ErrorPathRequired,
+            IconEditor.ValidateCreate(new IconEditDraft { Type = IconType.Shortcut, DisplayName = "x" }));
+        Assert.Equal(IconEditor.ErrorUrlRequired,
+            IconEditor.ValidateCreate(new IconEditDraft { Type = IconType.Url, DisplayName = "x" }));
+        Assert.Equal(IconEditor.ErrorCommandRequired,
+            IconEditor.ValidateCreate(new IconEditDraft { Type = IconType.Command, DisplayName = "x" }));
+    }
+
+    [Fact]
+    public void ValidateEdit_只要求名称_主字段可空()
+    {
+        var icon = new IconModel { Type = IconType.File, DisplayName = "x", TargetPath = @"C:\a.exe" };
+
+        Assert.Equal(IconEditor.ErrorNameRequired,
+            IconEditor.ValidateEdit(icon, new IconEditDraft { DisplayName = "   " }));
+        Assert.Null(IconEditor.ValidateEdit(icon, new IconEditDraft { DisplayName = "新名" }));
+        Assert.Null(IconEditor.ValidateEdit(icon, new IconEditDraft { DisplayName = "新名", Path = string.Empty }));
+    }
+
     [Fact]
     public void Create_经AddIcon落库_重载后字段完整()
     {
