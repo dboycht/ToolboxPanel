@@ -21,6 +21,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
@@ -50,8 +51,8 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     /// <summary>在空白处选了「新建 XX 图标…」—— 交给宿主窗口（选文件 → 弹对话框 → 落库）。</summary>
     public event EventHandler<IconType>? NewIconRequested;
 
-    /// <summary>在某个图块上选了「编辑属性…」—— 交给宿主窗口。</summary>
-    public event EventHandler<IconModel>? EditIconRequested;
+    /// <summary>图块右键菜单选了某一项 —— 交给宿主窗口执行（**页面不碰数据、不开对话框**）。</summary>
+    public event EventHandler<IconMenuRequest>? IconMenuActionRequested;
 
     /// <summary>拖放落下 —— 交给宿主窗口落库（页面自己不改数据）。</summary>
     public event EventHandler<DragDropRequest>? ItemDropped;
@@ -149,25 +150,33 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     }
 
     /// <summary>
-    /// 图块菜单。
+    /// 图块菜单：**按 Core 的 <see cref="IconContextMenu.Build"/> 规格铺**。
     ///
-    /// <para>⚠️ 本轮只放「编辑属性…」：原版这里还有 打开 / 用其他应用打开… / 打开文件位置 /
-    /// 重命名 / 删除 —— 那几项属于下一轮「右键菜单」功能，等它上齐了这张菜单才完整。</para>
+    /// <para>顺序、按类型的门控（"用其他应用打开…"只对文件/文件夹/快捷方式出现）、
+    /// 分隔线位置与文案全部来自 Core（有单测钉住），这里只负责把它们变成 <see cref="MenuFlyoutItem"/>。</para>
     /// </summary>
     private MenuFlyout BuildTileMenu(IconTileViewModel tile)
     {
         var menu = new MenuFlyout();
 
-        var edit = new MenuFlyoutItem { Text = "编辑属性…" };
-        edit.Click += (_, _) => EditIconRequested?.Invoke(this, tile.Model);
-        menu.Items.Add(edit);
+        foreach (var item in IconContextMenu.Build(tile.Model.Type))
+        {
+            if (item.SeparatorBefore)
+            {
+                menu.Items.Add(new MenuFlyoutSeparator());
+            }
+
+            var action = item.Action;
+            var menuItem = new MenuFlyoutItem { Text = item.Label };
+            menuItem.Click += (_, _) => IconMenuActionRequested?.Invoke(this, new IconMenuRequest(tile.Model, action));
+            menu.Items.Add(menuItem);
+        }
 
         return menu;
     }
 
     /// <summary>右键点在哪 —— 往上找到承载图块的 GridViewItem；点在空白处返回 null。</summary>
-    private static IconTileViewModel? FindTileFromSource(object? source)
-    {
+    private static IconTileViewModel? FindTileFromSource(object? source)    {
         var current = source as DependencyObject;
 
         while (current is not null)
@@ -336,3 +345,9 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     private static IconTileViewModel? FindTileFromArgs(DragStartingEventArgs args)
         => (args.OriginalSource as FrameworkElement)?.DataContext as IconTileViewModel;
 }
+
+/// <summary>
+/// 一次右键菜单动作请求（页面 → 宿主窗口）。
+/// 用"一个事件 + 动作枚举"而不是给每个动作开一个事件：菜单项以后再加也不会到处改签名。
+/// </summary>
+public sealed record IconMenuRequest(IconModel Icon, IconMenuAction Action);

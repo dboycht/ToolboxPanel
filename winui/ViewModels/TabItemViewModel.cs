@@ -238,6 +238,9 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
         DisplayName = ResolveName(Model);
     }
 
+    /// <summary>只改了名字（重命名）时刷新 —— 不动图标图片源，省一次无谓的图片重设。</summary>
+    public void RefreshName() => DisplayName = ResolveName(Model);
+
     /// <summary>没写名字时用路径/命令的第一段兜底（原版也是这么显示的）。</summary>
     private static string ResolveName(IconModel model)
     {

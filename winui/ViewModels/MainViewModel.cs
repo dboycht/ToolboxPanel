@@ -128,6 +128,67 @@ public sealed class MainViewModel
     public LaunchResult LaunchListItem(ListItemModel item)
         => _isDemo ? LaunchResult.Fail("演示模式：不会真的打开") : _launcher!.OpenFileOrFolder(item.Path);
 
+    // ────────────────────────────── 右键菜单的四个动作（W5）──────────────────────────────
+
+    /// <summary>「用其他应用打开…」（原版 <c>_open_with</c>：rundll32 的「打开方式」对话框）。</summary>
+    public LaunchResult OpenWith(IconModel icon)
+        => _isDemo ? LaunchResult.Fail("演示模式：不会真的打开") : _launcher!.OpenWith(icon);
+
+    /// <summary>「打开文件位置」（原版 <c>_open_file_location</c>：文件 → explorer /select；文件夹 → 打开它）。</summary>
+    public LaunchResult OpenFileLocation(IconModel icon)
+        => _isDemo ? LaunchResult.Fail("演示模式：不会真的打开") : _launcher!.OpenFileLocation(icon);
+
+    /// <summary>
+    /// 「重命名」：Core 校验（名称必填）→ 落库 → 刷新图块上的名字。
+    /// 只改名字，**不重取图标**（与原版一致）。
+    /// </summary>
+    public IconEditResult RenameIcon(IconModel icon, string? newName)
+    {
+        if (_store is null)
+        {
+            return IconEditResult.Fail(DemoNoSave);
+        }
+
+        var result = IconEditor.Rename(icon, newName);
+        if (!result.Success)
+        {
+            return result;
+        }
+
+        _store.RenameIcon(icon.Id, icon.DisplayName);
+        FindTile(icon.Id)?.RefreshName();
+        return result;
+    }
+
+    /// <summary>
+    /// 「删除」：Core 落库（连带删掉图标缓存文件）→ 从界面集合里移除 → 刷新标签栏数量。
+    /// 返回 false 表示演示模式或找不到该图标（此时**什么都不做**）。
+    /// </summary>
+    public bool RemoveIcon(IconModel icon)
+    {
+        if (_store is null)
+        {
+            return false;
+        }
+
+        var tab = Tabs.FirstOrDefault(t => t.Icons.Any(tile => tile.Model.Id == icon.Id));
+        if (tab is null)
+        {
+            return false;
+        }
+
+        _store.RemoveIcon(icon.Id);
+
+        var tile = tab.Icons.FirstOrDefault(t => t.Model.Id == icon.Id);
+        if (tile is not null)
+        {
+            tab.Icons.Remove(tile);
+        }
+
+        tab.NotifyCountLabel();
+        return true;
+    }
+
     /// <summary>图标缓存目录（界面上要显示"图标从哪来"时用）。</summary>
     public string IconsDirectory => _iconExtractor?.CacheDirectory ?? string.Empty;
 

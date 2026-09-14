@@ -1243,7 +1243,7 @@ public sealed partial class MainWindow : Window
         gridPage.IconActivated += OnIconActivated;
         gridPage.ItemDropped += OnItemDropped;
         gridPage.NewIconRequested += OnNewIconRequested;
-        gridPage.EditIconRequested += OnEditIconRequested;
+        gridPage.IconMenuActionRequested += OnIconMenuActionRequested;
         ApplyThemeIfAnimated(gridPage);
         return gridPage;
     }
@@ -1398,14 +1398,70 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>图块菜单选了「编辑属性…」。</summary>
-    private async void OnEditIconRequested(object? sender, IconModel icon)
+    /// <summary>
+    /// 图块右键菜单的**统一入口**：按 Core 给的动作分发。
+    ///
+    /// <para>菜单项的顺序、按类型的门控、文案都在 Core（<see cref="IconContextMenu"/>，有单测），
+    /// 这里只管"每个动作具体怎么做"。</para>
+    /// </summary>
+    private async void OnIconMenuActionRequested(object? sender, IconMenuRequest request)
     {
         if (_viewModel is null)
         {
             return;
         }
 
+        switch (request.Action)
+        {
+            case IconMenuAction.Open:
+                OnIconActivated(this, request.Icon);      // 与"点一下图块"完全同一条路
+                return;
+
+            case IconMenuAction.OpenWith:
+                ReportMenuLaunch(_viewModel.OpenWith(request.Icon), request.Icon, "用其他应用打开");
+                return;
+
+            case IconMenuAction.OpenLocation:
+                ReportMenuLaunch(_viewModel.OpenFileLocation(request.Icon), request.Icon, "打开文件位置");
+                return;
+
+            case IconMenuAction.EditProperties:
+                await ShowEditIconAsync(request.Icon);
+                return;
+
+            case IconMenuAction.Rename:
+                await ShowRenameIconAsync(request.Icon);
+                return;
+
+            case IconMenuAction.Remove:
+                await ConfirmRemoveIconAsync(request.Icon);
+                return;
+        }
+    }
+
+    /// <summary>
+    /// 打开类动作的反馈：**成功不打扰**（资源管理器/「打开方式」窗口本身就是反馈，与原版一致 ——
+    /// 原版这两个动作成功时不发状态消息），失败才写状态栏，文案来自 Core（与原版 i18n 一致）。
+    /// </summary>
+    private void ReportMenuLaunch(LaunchResult result, IconModel icon, string actionLabel)
+    {
+        var name = string.IsNullOrWhiteSpace(icon.DisplayName) ? icon.SourcePath : icon.DisplayName;
+
+        if (result.Success)
+        {
+            _log.AppendLine($"{actionLabel}：{name}");
+            FlushLog();
+            return;
+        }
+
+        ReportTransient(result.Error ?? $"{actionLabel}失败");
+        _log.AppendLine($"{actionLabel}失败：{name} → {result.Error}");
+        FlushLog();
+    }
+
+    /// <summary>图块菜单选了「编辑属性…」。</summary>
+    private async Task ShowEditIconAsync(IconModel icon)
+    {
         if (_isDemo)
         {
             ReportTransient("演示模式：不会真的保存");
@@ -1422,14 +1478,102 @@ public sealed partial class MainWindow : Window
                 return;
             }
 
-            var result = _viewModel.UpdateIcon(icon, draft);
+            var result = _viewModel!.UpdateIcon(icon, draft);
             ReportIconEdit(result, draft.DisplayName, created: false);
         }
         catch (Exception ex)
         {
-            App.WriteCrash("MainWindow.OnEditIconRequested", ex);
+            App.WriteCrash("MainWindow.ShowEditIconAsync", ex);
             ReportTransient("编辑图标失败：" + ex.Message);
         }
+    }
+
+    /// <summary>图块菜单选了「重命名」（原版是标签内联编辑，这里用迷你对话框）。</summary>
+    private async Task ShowRenameIconAsync(IconModel icon)
+    {
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var dialog = RenameIconDialog.Create(icon.DisplayName);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 同 E18
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.NewName is not { } newName)
+            {
+                return;
+            }
+
+            var result = _viewModel!.RenameIcon(icon, newName);
+            if (!result.Success)
+            {
+                ReportTransient(result.ErrorMessage ?? "重命名失败");
+                return;
+            }
+
+            _log.AppendLine($"重命名图标：{newName}");
+            ReportTransient(IconContextMenu.RenamedStatus(newName));
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ShowRenameIconAsync", ex);
+            ReportTransient("重命名失败：" + ex.Message);
+        }
+    }
+
+    /// <summary>图块菜单选了「删除」：**先确认再删**（原版是 QMessageBox 的 Yes/No，文案照抄）。</summary>
+    private async Task ConfirmRemoveIconAsync(IconModel icon)
+    {
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var confirmed = await ConfirmAsync(
+                IconContextMenu.RemoveTitle,
+                IconContextMenu.ConfirmRemoveText(icon.DisplayName),
+                "删除");
+
+            if (!confirmed || !_viewModel!.RemoveIcon(icon))
+            {
+                return;
+            }
+
+            _log.AppendLine($"删除图标：{icon.DisplayName}");
+            ReportTransient(IconContextMenu.RemovedStatus(icon.DisplayName));
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ConfirmRemoveIconAsync", ex);
+            ReportTransient("删除失败：" + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 通用确认框（是/否）。
+    /// ⚠️ 同样是 ContentDialog ⇒ 必须显式设 `XamlRoot` 与 `RequestedTheme`（否则不跟主题，ERROR.md E18）；
+    /// 默认按钮设成"取消"，避免回车误删。
+    /// </summary>
+    private async Task<bool> ConfirmAsync(string title, string message, string primaryText)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = title,
+            Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+            PrimaryButtonText = primaryText,
+            CloseButtonText = "取消",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = RootGrid.XamlRoot,
+            RequestedTheme = CurrentElementTheme,
+        };
+
+        return await dialog.ShowAsync() == ContentDialogResult.Primary;
     }
 
     /// <summary>

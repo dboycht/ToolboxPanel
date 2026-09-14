@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    RenameIconDialog.xaml —— 「重命名」小对话框（原版是标签内联编辑，WinUI 用一个迷你对话框代替）
+
+    主题纪律（与其它对话框一致，见 ERROR.md E18）：
+    · 文字颜色显式用框架主题资源（跟随元素主题）；
+    · RequestedTheme 由调用方（MainWindow）在 ShowAsync 前显式设置，
+      不设的话它永远按系统主题解析。
+-->
+<ContentDialog
+    x:Class="ToolboxPanel.Views.RenameIconDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="重命名"
+    PrimaryButtonText="确定"
+    CloseButtonText="取消"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryButtonClick">
+
+    <StackPanel Width="340" Spacing="8">
+        <TextBlock Text="新名称:"
+                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+        <TextBox x:Name="NameBox" MaxLength="120" />
+        <TextBlock x:Name="ErrorText"
+                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                   FontSize="11" Visibility="Collapsed" TextWrapping="Wrap" />
+    </StackPanel>
+</ContentDialog>
