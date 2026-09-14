@@ -9,6 +9,7 @@
 //   ② 插入位置是**行与行之间的横线**，不是竖线。
 // 落点判定仍然用 Core 的 DropIndexCalculator（单列布局它能自动只按 Y 判）。
 
+using System.Numerics;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -40,7 +41,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         // 长按起拖要用**指针事件**；ListViewBase 自己也会处理这些事件，
         // 所以必须 handledEventsToo: true —— 否则我们根本收不到（内部已经把按下吃掉了）。
         Rows.AddHandler(PointerPressedEvent, new PointerEventHandler(OnRowPointerPressed), handledEventsToo: true);
-        Rows.AddHandler(PointerMovedEvent, new PointerEventHandler(OnRowPointerMoved), handledEventsToo: true);
         Rows.AddHandler(PointerReleasedEvent, new PointerEventHandler(OnRowPointerReleased), handledEventsToo: true);
         Rows.AddHandler(PointerCanceledEvent, new PointerEventHandler(OnRowPointerAborted), handledEventsToo: true);
         Rows.AddHandler(PointerCaptureLostEvent, new PointerEventHandler(OnRowPointerAborted), handledEventsToo: true);
@@ -98,11 +98,11 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
     }
 
-    // ────────────────────────────── 长按起拖（与网格页同一套，2026-09-14）──────────────────────────────
+    // ────────────────────────────── 长按起拖（与网格页同一套，2026-09-14 第二版）──────────────────────────────
     //
-    // 判定逻辑在 Core 的 `LongPressGesture`（有单测）：按下 → 350ms 到点且没移动 ⇒ 起拖；
-    // 起拖后**原地松手** ⇒ 这一行没有菜单，直接不做事（列表页本轮只有"打开"语义）；
-    // 阈值前移动超容差 ⇒ 手势作废。
+    // 手感与网格页一致：**按住 350ms ⇒ 行"浮起"跟手拖**；
+    // 没有"长按原地松手弹菜单"，也不因"按住期间移动过"而取消（详见 GridPage 的注释）。
+    // ⚠️ 早到的定时器必须按 RemainingMs 重排再试，否则这次长按会被静默丢掉。
 
     private readonly LongPressGesture _longPress = new();
 
@@ -134,43 +134,22 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         _pressedContainer = container;
         _pressedPoint = point;
-        _longPress.Press(point.Position.X, point.Position.Y, Environment.TickCount64);
-        EnsureLongPressTimer().Start();
-    }
-
-    private void OnRowPointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_longPress.IsPressed)
-        {
-            return;
-        }
-
-        var position = e.GetCurrentPoint(Rows).Position;
-        if (_longPress.Move(position.X, position.Y))
-        {
-            CancelLongPress();
-        }
+        _longPress.Press(Environment.TickCount64);
+        RestartLongPressTimer(_longPress.ThresholdMs);
     }
 
     private void OnRowPointerReleased(object sender, PointerRoutedEventArgs e)
     {
         _longPressTimer?.Stop();
-
-        if (!_longPress.HasDragStarted)
-        {
-            _longPress.Reset();
-            ResetPressedRow();
-        }
+        _longPress.Release();
+        ResetPressedRow();
     }
 
     private void OnRowPointerAborted(object sender, PointerRoutedEventArgs e)
     {
-        if (_longPress.HasDragStarted)
-        {
-            return;                     // 拖动自己会收尾
-        }
-
-        CancelLongPress();
+        _longPressTimer?.Stop();
+        _longPress.Reset();
+        ResetPressedRow();
     }
 
     private DispatcherQueueTimer EnsureLongPressTimer()
@@ -178,7 +157,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         if (_longPressTimer is null)
         {
             _longPressTimer = DispatcherQueue.CreateTimer();
-            _longPressTimer.Interval = TimeSpan.FromMilliseconds(_longPress.ThresholdMs);
             _longPressTimer.IsRepeating = false;
             _longPressTimer.Tick += async (_, _) => await StartLongPressDragAsync();
         }
@@ -186,22 +164,43 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         return _longPressTimer;
     }
 
+    /// <summary>（重新）排一次定时器 —— 早到时按剩余毫秒再来一次。</summary>
+    private void RestartLongPressTimer(int delayMs)
+    {
+        var timer = EnsureLongPressTimer();
+        timer.Stop();
+        timer.Interval = TimeSpan.FromMilliseconds(Math.Max(1, delayMs));
+        timer.Start();
+    }
+
     private async Task StartLongPressDragAsync()
     {
-        _longPressTimer?.Stop();
+        var now = Environment.TickCount64;
+
+        if (!_longPress.Tick(now))
+        {
+            if (_longPress.IsPressed)
+            {
+                RestartLongPressTimer(_longPress.RemainingMs(now));   // 早到 ⇒ 重排再试
+            }
+
+            return;
+        }
 
         var container = _pressedContainer;
         var point = _pressedPoint;
-        if (container is null || point is null || !_longPress.Tick(Environment.TickCount64))
+        if (container is null || point is null)
         {
             return;
         }
 
         try
         {
-            container.CanDrag = true;                 // StartDragAsync 要求 CanDrag=true，起拖前临时开
+            container.CanDrag = true;                 // StartDragAsync 要求 CanDrag=true
             _suppressNextClick = true;
-            await container.StartDragAsync(point);
+            ApplyLift(container, lifted: true);
+
+            await container.StartDragAsync(point);    // 拖拽视觉 = 行快照，跟着鼠标走
         }
         catch (Exception ex)
         {
@@ -210,17 +209,27 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         finally
         {
             container.CanDrag = false;
+            ApplyLift(container, lifted: false);
             HideDropIndicator();
-            _longPress.Complete();                    // 列表页没有"长按要菜单"，结论不用
+            _longPress.Release();
             ResetPressedRow();
         }
     }
 
-    private void CancelLongPress()
+    /// <summary>"浮起"反馈：只用合成变换（Scale / Opacity），不碰布局。</summary>
+    private void ApplyLift(FrameworkElement container, bool lifted)
     {
-        _longPressTimer?.Stop();
-        _longPress.Reset();
-        ResetPressedRow();
+        try
+        {
+            container.CenterPoint = new Vector3(
+                (float)(container.ActualWidth / 2), (float)(container.ActualHeight / 2), 0f);
+            container.Scale = lifted ? new Vector3(1.02f, 1.06f, 1f) : new Vector3(1f, 1f, 1f);
+            container.Opacity = lifted ? 0.35 : 1.0;
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("ListViewPage.ApplyLift", ex);
+        }
     }
 
     private void ResetPressedRow()
@@ -278,9 +287,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
             return;
         }
 
-        // 拖动期间的"有没有移动"喂给长按状态机（与网格页同款；拖动中指针事件不保证还来）
-        var pointer = e.GetPosition(Rows);
-        _longPress.Move(pointer.X, pointer.Y);
 
         e.AcceptedOperation = DataPackageOperation.Move;
         e.DragUIOverride.IsCaptionVisible = false;

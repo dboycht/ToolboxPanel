@@ -1,156 +1,93 @@
-// LongPressGesture.cs —— 「长按起拖」的手势判定（纯逻辑，可单测）
+// LongPressGesture.cs —— 「长按起拖」的判定（纯逻辑，可单测）
 //
-// 目标手感（用户 2026-09-14 选定，手机桌面式）：
-//   · 按住 **350ms**（默认）→ 图块"拎起"、开始跟手拖动；
-//   · 起拖后**全程没移动就松手** → 认为用户是"长按要菜单"，弹出该图块的右键菜单；
-//   · 阈值**之前**移动超过容差 → 这次手势作废（既不重排也不弹菜单，避免"想点却拖动了"）；
-//   · 阈值之前就松手 → 普通点击（打开图标，由 UI 的 ItemClick 负责，这里什么都不做）。
+// 用户 2026-09-14 明确要的手感（手机桌面）：
+//   **按住 350ms → 立刻"浮起"跟手拖，像磁贴一样；松手落在哪就排到哪。**
+//   **没有"长按原地松手 = 弹菜单"那套判定**（那是上一版我自己加的，用户明确要求去掉）；
+//   **也不因"按住期间移动过"而取消**（上一版会因为鼠标抖了几下就把长按废掉，反而像"没反应"）。
 //
-// 为什么放 Core：这套判定是**纯逻辑**（时间 + 距离 + 状态），天生可单测；
-// 放到 UI 里就只能靠手点 + 手感描述来验，而"手感"恰恰是最难复现的。
+// 所以这里的判定只剩一条：**按住够久 ⇒ 起拖**。
+//   按下 → 到点 Tick() 返回 true（调用方据此起拖）
+//   阈值前松手 → 什么都不做（那就是一次普通点击，由 UI 的 ItemClick 去"打开"）
 //
-// ⚠️ 用调用方传进来的毫秒时间戳（而不是内部读时钟）：单测可以完全确定地推进时间，
-//    不依赖真实计时器（Windows 定时器精度本来就不可靠，实测抖动可达十几毫秒）。
+// ⚠️ 时间戳由调用方传入（不在内部读时钟）：单测可以确定地推进时间。
+// ⚠️ **RemainingMs 是必需的**：Windows 定时器会**早到**（不是精确计时）。
+//    上一版的 bug 就是"早到 ⇒ Tick 返回 false ⇒ 什么都不做"，于是长按偶发完全没反应。
+//    调用方应当在早到时按 RemainingMs 重排定时器（见 GridPage/ListViewPage 的用法）。
 
 namespace ToolboxPanel.Core.Storage;
 
-/// <summary>一次长按手势的结论。</summary>
-public enum LongPressOutcome
-{
-    /// <summary>什么都不用做（普通点击、被取消、或已处理过）。</summary>
-    None,
-
-    /// <summary>该起拖了（按住已超过阈值）。</summary>
-    DragStarted,
-
-    /// <summary>起拖后原地松手 → 弹该图块的右键菜单。</summary>
-    MenuRequested,
-}
-
-/// <summary>
-/// 长按手势状态机：按住 → 超阈值起拖 → 原地松手要菜单。
-/// 一次手势的生命周期：<see cref="Press"/> →（<see cref="Move"/> / <see cref="Tick"/>）→ <see cref="Complete"/>。
-/// </summary>
+/// <summary>长按判定状态机：按住够久就该起拖。</summary>
 public sealed class LongPressGesture
 {
-    /// <summary>默认阈值：350ms（用户选定；比系统默认的"按住再拖"更短，接近手机桌面手感）。</summary>
+    /// <summary>默认阈值：350ms（用户选定；接近手机桌面的手感）。</summary>
     public const int DefaultThresholdMs = 350;
 
-    /// <summary>默认移动容差（DIP）：超过它就算"用户在拖/滑"，不再算长按。</summary>
-    public const double DefaultMoveTolerance = 8.0;
-
-    private double _startX;
-    private double _startY;
     private long _pressedAtMs;
-    private bool _tickHandled;
 
-    public LongPressGesture(
-        int thresholdMs = DefaultThresholdMs,
-        double moveTolerance = DefaultMoveTolerance)
+    public LongPressGesture(int thresholdMs = DefaultThresholdMs)
     {
         ThresholdMs = Math.Max(1, thresholdMs);
-        MoveTolerance = Math.Max(0.5, moveTolerance);
     }
 
     public int ThresholdMs { get; }
 
-    public double MoveTolerance { get; }
-
-    /// <summary>当前是否按着（按下到 <see cref="Complete"/> 之间为 true）。</summary>
+    /// <summary>当前是否按着（按下 → Release/Reset 之间为 true）。</summary>
     public bool IsPressed { get; private set; }
 
-    /// <summary>本次手势是否已经起拖。</summary>
+    /// <summary>本次"按住"是否已经起拖（UI 用它决定松手时要不要走点击逻辑）。</summary>
     public bool HasDragStarted { get; private set; }
 
-    /// <summary>本次手势是否已经移动超过容差。</summary>
-    public bool MovedBeyondTolerance { get; private set; }
-
-    /// <summary>按下（记录起点与时刻）。再次按下会重置上一次手势。</summary>
-    public void Press(double x, double y, long nowMs)
+    /// <summary>按下（再次按下会开一次新手势）。</summary>
+    public void Press(long nowMs)
     {
-        _startX = x;
-        _startY = y;
         _pressedAtMs = nowMs;
-        _tickHandled = false;
         IsPressed = true;
         HasDragStarted = false;
-        MovedBeyondTolerance = false;
     }
 
-    /// <summary>
-    /// 指针移动（相对按下点的**当前**坐标）。
-    /// </summary>
-    /// <returns>true 表示"这次移动取消了长按"（还没起拖、且已超出容差）。</returns>
-    public bool Move(double x, double y)
+    /// <summary>距离阈值还差多少毫秒（已到点或没按下时返回 0，不会是负数）。</summary>
+    public int RemainingMs(long nowMs)
     {
         if (!IsPressed)
         {
-            return false;
+            return 0;
         }
 
-        if (MovedBeyondTolerance)
-        {
-            return !HasDragStarted;   // 已经判过取消：仍按"取消"回答（幂等）
-        }
-
-        var dx = x - _startX;
-        var dy = y - _startY;
-
-        if ((dx * dx) + (dy * dy) <= MoveTolerance * MoveTolerance)
-        {
-            return false;
-        }
-
-        MovedBeyondTolerance = true;
-
-        // 已经起拖之后再移动是**正常拖动**，不算取消
-        return !HasDragStarted;
+        var remaining = ThresholdMs - (nowMs - _pressedAtMs);
+        return remaining > 0 ? (int)remaining : 0;
     }
 
     /// <summary>
-    /// 定时器到点（调用方按 <see cref="ThresholdMs"/> 起一个一次性定时器）。
+    /// 定时器到点：该起拖返回 true。
+    /// **只会返回一次 true**（重复 Tick 幂等）；**早到返回 false**，调用方应按
+    /// <see cref="RemainingMs"/> 重排定时器再试。
     /// </summary>
-    /// <returns>true 表示"该起拖了"；只会返回一次 true（重复 Tick 幂等）。</returns>
     public bool Tick(long nowMs)
     {
-        if (!IsPressed || _tickHandled || HasDragStarted || MovedBeyondTolerance)
+        if (!IsPressed || HasDragStarted)
         {
             return false;
         }
 
         if (nowMs - _pressedAtMs < ThresholdMs)
         {
-            return false;   // 定时器早到了（或时间戳没推进）：再等等
+            return false;   // 早到：还差 RemainingMs 毫秒
         }
 
-        _tickHandled = true;
         HasDragStarted = true;
         return true;
     }
 
     /// <summary>
-    /// 手势结束（松手 / 拖动完成 / 指针取消）。
+    /// 松手 / 指针被取消：清掉"按着"的状态。
+    /// <see cref="HasDragStarted"/> 保留到下一次 <see cref="Press"/>（拖动收尾时还要读它）。
     /// </summary>
-    /// <returns>
-    /// 起拖过且**全程没移动** → <see cref="LongPressOutcome.MenuRequested"/>（原地长按 = 要菜单）；
-    /// 其余一律 <see cref="LongPressOutcome.None"/>。
-    /// </returns>
-    public LongPressOutcome Complete()
-    {
-        var menuRequested = IsPressed && HasDragStarted && !MovedBeyondTolerance;
+    public void Release() => IsPressed = false;
 
-        IsPressed = false;
-        _tickHandled = false;
-
-        return menuRequested ? LongPressOutcome.MenuRequested : LongPressOutcome.None;
-    }
-
-    /// <summary>把状态清干净（例如指针捕获丢失、页面切走）。</summary>
+    /// <summary>彻底清干净（切页、捕获丢失等）。</summary>
     public void Reset()
     {
         IsPressed = false;
         HasDragStarted = false;
-        MovedBeyondTolerance = false;
-        _tickHandled = false;
     }
 }
