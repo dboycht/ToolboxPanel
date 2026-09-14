@@ -347,6 +347,35 @@ public sealed class DataStore
         Save();
     }
 
+    /// <summary>
+    /// 用编辑后的字段覆盖某个已有图标（按 id 找）。
+    ///
+    /// <para>为什么需要它而不是"直接改模型引用 + Save"：界面上的图标集合持有的是模型实例，
+    /// 正常情况下是同一个对象，但这里**不依赖引用相等** —— 按 id 找到库里那份，逐字段复制，
+    /// 保证"库里那份"永远是唯一事实源；id / sort_order / 未知扩展字段保持不变。</para>
+    /// </summary>
+    /// <returns>找不到该图标时返回 false（不落盘、什么都不改）。</returns>
+    public bool UpdateIcon(IconModel updated)
+    {
+        var found = FindIcon(updated.Id);
+        if (found is null)
+        {
+            return false;
+        }
+
+        var target = found.Value.Icon;
+        target.Type = updated.Type;
+        target.DisplayName = updated.DisplayName;
+        target.SourcePath = updated.SourcePath;
+        target.TargetPath = updated.TargetPath;
+        target.Arguments = updated.Arguments;
+        target.WorkingDir = updated.WorkingDir;
+        target.Description = updated.Description;
+        target.IconCacheFile = updated.IconCacheFile;
+        Save();
+        return true;
+    }
+
     private static void RenumberIcons(TabModel tab)
     {
         for (int i = 0; i < tab.Icons.Count; i++)
