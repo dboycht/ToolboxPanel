@@ -113,4 +113,22 @@ public partial class App : Application
             // 记日志失败不再抛，避免掩盖原始异常
         }
     }
+
+    /// <summary>
+    /// ⚠️ 临时诊断通道（%TEMP%\toolboxpanel-probe.log）：给"看不见的观感问题"留证据。
+    /// 只由开发期的探针调用，定位完随探针一起删掉。
+    /// </summary>
+    internal static void ProbeLog(string message)
+    {
+        try
+        {
+            File.AppendAllText(
+                Path.Combine(Path.GetTempPath(), "toolboxpanel-probe.log"),
+                message + Environment.NewLine);
+        }
+        catch
+        {
+            // 探针写不进去不影响程序
+        }
+    }
 }

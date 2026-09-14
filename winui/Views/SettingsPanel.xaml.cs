@@ -45,6 +45,7 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>外部（如命令行的临时覆盖）改了模型后，让面板重新显示一次。</summary>
     public void Refresh() => SyncUiFromModel();
 
+
     // ────────────────────────────── 模型 → 控件 ──────────────────────────────
 
     private void SyncUiFromModel()
