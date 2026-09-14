@@ -31,6 +31,18 @@ public interface IShellHost
 
     /// <summary>启动可执行文件（不经过 shell，参数按 Windows 规则重新加引号）。</summary>
     void StartProcess(string executable, IReadOnlyList<string> arguments, string? workingDirectory);
+
+    /// <summary>
+    /// 调出 Windows 的「打开方式」对话框（原版 v1.11.6 <c>icon_grid._open_with</c>）：
+    /// <c>rundll32.exe shell32.dll,OpenAs_RunDLL &lt;path&gt;</c>。
+    /// </summary>
+    void ShellOpenWith(string path);
+
+    /// <summary>
+    /// 在资源管理器中**定位**该文件（选中它本身，原版 <c>icon_grid._open_file_location</c>）：
+    /// <c>explorer.exe /select,&lt;path&gt;</c>。
+    /// </summary>
+    void ShellRevealInExplorer(string path);
 }
 
 /// <summary>真实实现：ShellExecute 与 Process.Start。</summary>
@@ -72,6 +84,37 @@ public sealed class WindowsShellHost : IShellHost
         {
             startInfo.ArgumentList.Add(argument);
         }
+
+        Process.Start(startInfo);
+    }
+
+    public void ShellOpenWith(string path)
+    {
+        // 原版：subprocess.Popen(['rundll32.exe', 'shell32.dll,OpenAs_RunDLL', path])
+        // ⚠️ 用 ArgumentList 而不是自己拼字符串：路径含空格/中文时由 .NET 负责加引号。
+        var startInfo = new ProcessStartInfo("rundll32.exe")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+
+        startInfo.ArgumentList.Add("shell32.dll,OpenAs_RunDLL");
+        startInfo.ArgumentList.Add(path);
+
+        Process.Start(startInfo);
+    }
+
+    public void ShellRevealInExplorer(string path)
+    {
+        // 原版：subprocess.Popen(['explorer', '/select,', path])
+        // `/select,` 与路径分两个参数是 Windows 支持的写法（explorer 会自己拼回去）。
+        var startInfo = new ProcessStartInfo("explorer.exe")
+        {
+            UseShellExecute = false,
+        };
+
+        startInfo.ArgumentList.Add("/select,");
+        startInfo.ArgumentList.Add(path);
 
         Process.Start(startInfo);
     }
@@ -204,6 +247,77 @@ public sealed class Launcher
         }
 
         return LaunchResult.Fail($"快捷方式目标不存在: {icon.SourcePath}");
+    }
+
+    /// <summary>
+    /// 在资源管理器中定位文件（原版 <c>icon_grid._open_file_location</c>）：
+    /// **文件 → `explorer /select`（选中它）；文件夹 → 直接打开该文件夹**；
+    /// 两者都不是（例如 URL / 命令类型的"路径"）→ 失败，文案与原版一致（`status.path_missing`）。
+    /// </summary>
+    public LaunchResult OpenFileLocation(IconModel icon)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+
+        var path = PreferTarget(icon);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return LaunchResult.Fail("路径为空");
+        }
+
+        try
+        {
+            if (File.Exists(path))
+            {
+                _shell.ShellRevealInExplorer(path);
+                return LaunchResult.Ok;
+            }
+
+            if (Directory.Exists(path))
+            {
+                // 原版对文件夹用的是 os.startfile(path)（打开文件夹本身），不是 /select
+                _shell.ShellOpen(path);
+                return LaunchResult.Ok;
+            }
+
+            return LaunchResult.Fail(IconContextMenu.PathMissingMessage(path));
+        }
+        catch (Exception ex)
+        {
+            return LaunchResult.Fail(ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 用其他应用打开（原版 <c>icon_grid._open_with</c>）：**路径必须存在**（文件或文件夹）才会
+    /// 调出 Windows 的「打开方式」对话框；失败文案与原版一致（`status.path_missing` / `status.open_with_failed`）。
+    ///
+    /// <para>调用方（右键菜单）应只在 FILE / FOLDER / SHORTCUT 三类上提供这一项 ——
+    /// 门控写在 <see cref="IconContextMenu.Build"/> 里，有单测。</para>
+    /// </summary>
+    public LaunchResult OpenWith(IconModel icon)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+
+        var path = PreferTarget(icon);
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return LaunchResult.Fail("路径为空");
+        }
+
+        if (!File.Exists(path) && !Directory.Exists(path))
+        {
+            return LaunchResult.Fail(IconContextMenu.PathMissingMessage(path));
+        }
+
+        try
+        {
+            _shell.ShellOpenWith(path);
+            return LaunchResult.Ok;
+        }
+        catch (Exception ex)
+        {
+            return LaunchResult.Fail(IconContextMenu.OpenWithFailedMessage(ex.Message));
+        }
     }
 
     private static string? PreferTarget(IconModel icon)

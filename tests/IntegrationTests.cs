@@ -184,16 +184,5 @@ public class IntegrationTests
         Assert.Equal(temp.Path, cwd);
     }
 
-    /// <summary>与 LauncherTests 里同款的假宿主（这里再写一份，避免测试类之间互相依赖）。</summary>
-    private sealed class RecordingShellHost : IShellHost
-    {
-        public List<string> Opened { get; } = new();
-
-        public List<(string Executable, IReadOnlyList<string> Arguments, string? WorkingDirectory)> Started { get; } = new();
-
-        public void ShellOpen(string path) => Opened.Add(path);
-
-        public void StartProcess(string executable, IReadOnlyList<string> arguments, string? workingDirectory)
-            => Started.Add((executable, arguments, workingDirectory));
-    }
+    /// <summary>假宿主现在共用 tests/RecordingShellHost.cs（本项目共用一份，避免接口加动作时每个测试类都要改）。</summary>
 }

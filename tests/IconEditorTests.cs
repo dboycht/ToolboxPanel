@@ -444,6 +444,44 @@ public class IconEditorTests
         Assert.False(store.UpdateIcon(new IconModel { Id = "no-such-id", DisplayName = "x" }));
     }
 
+    // ────────────────────────────── 重命名（右键菜单的「重命名」）──────────────────────────────
+
+    [Fact]
+    public void Rename_改名成功_其余字段与图标都不动()
+    {
+        var icon = new IconModel
+        {
+            Type = IconType.File,
+            DisplayName = "旧名",
+            SourcePath = @"C:\a.exe",
+            TargetPath = @"C:\a.exe",
+            IconCacheFile = "abc.png",
+        };
+
+        var result = IconEditor.Rename(icon, "  新名  ");
+
+        Assert.True(result.Success);
+        Assert.Equal("新名", icon.DisplayName);              // 去空白
+        Assert.Equal(@"C:\a.exe", icon.TargetPath);          // 路径不碰
+        Assert.Equal("abc.png", icon.IconCacheFile);         // 图标不重取
+        Assert.Equal(IconRefreshKind.None, result.Refresh.Kind);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void Rename_名字为空_失败且模型不变(string? newName)
+    {
+        var icon = new IconModel { DisplayName = "旧名" };
+
+        var result = IconEditor.Rename(icon, newName);
+
+        Assert.False(result.Success);
+        Assert.Equal(IconEditor.ErrorNameRequired, result.ErrorMessage);
+        Assert.Equal("旧名", icon.DisplayName);
+    }
+
     // ────────────────────────────── 非变异校验（对话框点「确定」时用）──────────────────────────────
 
     [Fact]

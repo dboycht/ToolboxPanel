@@ -348,6 +348,26 @@ public static class IconEditor
     }
 
     /// <summary>
+    /// 只改名字（右键菜单的「重命名」）。
+    ///
+    /// <para>与原版一致：名字**必填**（原版内联编辑同样不接受空名，空名会被丢弃）；
+    /// 只动 <see cref="IconModel.DisplayName"/>，路径等字段一律不碰，图标也不用重取。</para>
+    /// </summary>
+    public static IconEditResult Rename(IconModel icon, string? newName)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+
+        var name = Trim(newName);
+        if (name.Length == 0)
+        {
+            return IconEditResult.Fail(ErrorNameRequired);
+        }
+
+        icon.DisplayName = name;
+        return IconEditResult.Ok(icon, IconRefreshPlan.None);
+    }
+
+    /// <summary>
     /// 网址归一化：没写协议就补 <c>https://</c>（原版 <c>icon_edit_dialog.apply()</c> 的 URL 分支）。
     /// ⚠️ 与 <see cref="Launcher.OpenUrl"/> 的判断保持同一口径（忽略大小写），两处别改歪。
     /// </summary>

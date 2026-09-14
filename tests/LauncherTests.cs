@@ -8,37 +8,7 @@ namespace ToolboxPanel.Core.Tests;
 
 public class LauncherTests
 {
-    /// <summary>只记录「本来要做什么」，不真的执行 —— ERROR.md E5 的纪律。</summary>
-    private sealed class RecordingShellHost : IShellHost
-    {
-        public List<string> Opened { get; } = new();
-
-        public List<(string Executable, IReadOnlyList<string> Arguments, string? WorkingDirectory)> Started { get; } = new();
-
-        public Exception? ThrowOnShellOpen { get; set; }
-
-        public Exception? ThrowOnStartProcess { get; set; }
-
-        public void ShellOpen(string path)
-        {
-            if (ThrowOnShellOpen is not null)
-            {
-                throw ThrowOnShellOpen;
-            }
-
-            Opened.Add(path);
-        }
-
-        public void StartProcess(string executable, IReadOnlyList<string> arguments, string? workingDirectory)
-        {
-            if (ThrowOnStartProcess is not null)
-            {
-                throw ThrowOnStartProcess;
-            }
-
-            Started.Add((executable, arguments, workingDirectory));
-        }
-    }
+    // 假宿主见 RecordingShellHost.cs（共用；只记录调用，不真的开窗口/起进程）
 
     // ────────────────────────────── URL ──────────────────────────────
 
@@ -301,5 +271,152 @@ public class LauncherTests
     public void 参数切分_空参数是null时返回空列表()
     {
         Assert.Empty(CommandLineSplitter.Split(null));
+    }
+
+    // ────────────── 用其他应用打开（原版 icon_grid._open_with）──────────────
+    //
+    // 原版：path = target_path or source_path；路径为空或不存在 → status.path_missing；
+    //       subprocess.Popen(['rundll32.exe','shell32.dll,OpenAs_RunDLL', path])；异常 → status.open_with_failed
+
+    [Fact]
+    public void OpenWith_文件存在_请求打开方式且target优先()
+    {
+        using var temp = new TempDataDirectory();
+        var file = Path.Combine(temp.Path, "a.txt");
+        File.WriteAllText(file, "x");
+        var host = new RecordingShellHost();
+
+        var icon = new IconModel { Type = IconType.File, SourcePath = @"C:\ignored.txt", TargetPath = file };
+        var result = new Launcher(host).OpenWith(icon);
+
+        Assert.True(result.Success);
+        Assert.Equal(file, Assert.Single(host.OpenWithRequests));   // target 优先
+        Assert.Empty(host.Opened);
+        Assert.Empty(host.Started);
+    }
+
+    [Fact]
+    public void OpenWith_文件夹也算存在()
+    {
+        using var temp = new TempDataDirectory();
+        var dir = Path.Combine(temp.Path, "sub");
+        Directory.CreateDirectory(dir);
+        var host = new RecordingShellHost();
+
+        var result = new Launcher(host).OpenWith(new IconModel { Type = IconType.Folder, TargetPath = dir });
+
+        Assert.True(result.Success);
+        Assert.Equal(dir, Assert.Single(host.OpenWithRequests));
+    }
+
+    [Fact]
+    public void OpenWith_只给了source时也认()
+    {
+        using var temp = new TempDataDirectory();
+        var file = Path.Combine(temp.Path, "only-source.txt");
+        File.WriteAllText(file, "x");
+        var host = new RecordingShellHost();
+
+        var result = new Launcher(host).OpenWith(new IconModel { Type = IconType.File, SourcePath = file });
+
+        Assert.True(result.Success);
+        Assert.Equal(file, Assert.Single(host.OpenWithRequests));
+    }
+
+    [Fact]
+    public void OpenWith_路径不存在_失败且不碰宿主_文案照原版()
+    {
+        var host = new RecordingShellHost();
+        var missing = @"C:\no\such\file.exe";
+
+        var result = new Launcher(host).OpenWith(new IconModel { Type = IconType.File, TargetPath = missing });
+
+        Assert.False(result.Success);
+        Assert.Equal($"路径不存在: {missing}", result.Error);
+        Assert.Empty(host.OpenWithRequests);
+    }
+
+    [Fact]
+    public void OpenWith_路径为空_失败()
+    {
+        var host = new RecordingShellHost();
+
+        var result = new Launcher(host).OpenWith(new IconModel { Type = IconType.Url, SourcePath = "   " });
+
+        Assert.False(result.Success);
+        Assert.Empty(host.OpenWithRequests);
+    }
+
+    [Fact]
+    public void OpenWith_宿主抛异常_失败文案带原因_文案照原版()
+    {
+        using var temp = new TempDataDirectory();
+        var file = Path.Combine(temp.Path, "a.txt");
+        File.WriteAllText(file, "x");
+        var host = new RecordingShellHost { ThrowOnOpenWith = new InvalidOperationException("boom") };
+
+        var result = new Launcher(host).OpenWith(new IconModel { Type = IconType.File, TargetPath = file });
+
+        Assert.False(result.Success);
+        Assert.Equal("打开方式失败: boom", result.Error);
+    }
+
+    // ────────────── 打开文件位置（原版 icon_grid._open_file_location）──────────────
+    //
+    // 原版：文件 → explorer /select；文件夹 → os.startfile（打开文件夹本身）；都不是 → status.path_missing
+
+    [Fact]
+    public void OpenFileLocation_文件_请求资源管理器定位()
+    {
+        using var temp = new TempDataDirectory();
+        var file = Path.Combine(temp.Path, "b.txt");
+        File.WriteAllText(file, "x");
+        var host = new RecordingShellHost();
+
+        var result = new Launcher(host).OpenFileLocation(new IconModel { Type = IconType.File, TargetPath = file });
+
+        Assert.True(result.Success);
+        Assert.Equal(file, Assert.Single(host.RevealRequests));
+        Assert.Empty(host.Opened);
+    }
+
+    [Fact]
+    public void OpenFileLocation_文件夹_直接打开该文件夹而不是定位()
+    {
+        using var temp = new TempDataDirectory();
+        var dir = Path.Combine(temp.Path, "folder");
+        Directory.CreateDirectory(dir);
+        var host = new RecordingShellHost();
+
+        var result = new Launcher(host).OpenFileLocation(new IconModel { Type = IconType.Folder, TargetPath = dir });
+
+        Assert.True(result.Success);
+        Assert.Equal(dir, Assert.Single(host.Opened));      // 走 ShellOpen
+        Assert.Empty(host.RevealRequests);                  // 不是 /select
+    }
+
+    [Fact]
+    public void OpenFileLocation_网址类型_既不是文件也不是文件夹_失败()
+    {
+        var host = new RecordingShellHost();
+
+        var result = new Launcher(host)
+            .OpenFileLocation(new IconModel { Type = IconType.Url, SourcePath = "https://example.com" });
+
+        Assert.False(result.Success);
+        Assert.Equal("路径不存在: https://example.com", result.Error);
+        Assert.Empty(host.Opened);
+        Assert.Empty(host.RevealRequests);
+    }
+
+    [Fact]
+    public void OpenFileLocation_路径为空_失败()
+    {
+        var host = new RecordingShellHost();
+
+        var result = new Launcher(host).OpenFileLocation(new IconModel { Type = IconType.Command });
+
+        Assert.False(result.Success);
+        Assert.Empty(host.RevealRequests);
     }
 }
