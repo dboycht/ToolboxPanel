@@ -566,12 +566,29 @@ public sealed partial class MainWindow : Window
         => ShowSettings(false);
 
     /// <summary>
-    /// 打开/收起设置面板。**带滑入/滑出动画**（面板从右侧滑进来 + 遮罩淡入）；
-    /// 关掉"界面动效"时直接切换，不做动画。
+    /// 打开 / 收起设置面板。
+    ///
+    /// <para><b>打开</b>：面板从右侧滑入（`TranslateX: 宽 → 0`）+ 遮罩淡入。</para>
+    /// <para><b>收起</b>：反向滑出（`TranslateX: 0 → 宽`）+ 遮罩淡出，
+    /// **动画结束后**才把遮罩层折叠起来。</para>
+    /// <para>关掉"界面动效"时两向都直接切换。</para>
+    ///
+    /// <para>⚠️ 三条纪律（收起动画"看起来没生效"就是这几条漏了）：</para>
+    /// <list type="number">
+    /// <item><b>起动画前必须 `Stop()` 上一轮</b>：Storyboard 默认 `HoldEnd`，
+    /// 活动动画值优先于本地赋值 —— 不停掉旧动画，我们写的起始值会被压住，
+    /// 表现就是"点了关闭但没有滑出过程"。</item>
+    /// <item><b>显式声明 `FillBehavior = HoldEnd`</b>：动画结束/被中断时保持的是**终值**
+    /// （收起是"已滑出"、打开是"已滑入"），不会回落到本地值把面板弹回来。</item>
+    /// <item><b>收起期间遮罩层不吃点击</b>：动画那几百毫秒里点到的应该是下面主界面，
+    /// 而不是一个正在滑走的面板；动画结束后整层折叠、恢复可点。</item>
+    /// </list>
     /// </summary>
     private void ShowSettings(bool open)
     {
         _settingsPanelOpen = open;
+
+        // 起新动画前先停掉上一轮（否则 HoldEnd 的旧值会压住这次的起始值）
         StopSettingsAnimation();
 
         bool animate = _settingsData?.AnimationsEnabled ?? true;
@@ -584,41 +601,81 @@ public sealed partial class MainWindow : Window
         if (open)
         {
             SettingsOverlay.Visibility = Visibility.Visible;
+            SettingsOverlay.IsHitTestVisible = true;
 
             if (!animate)
             {
-                SettingsPanelTransform.TranslateX = 0;
-                SettingsBackdrop.Opacity = 1;
+                ApplySettingsPanelClosedState(closed: false);
                 Settings.Focus(FocusState.Programmatic);
                 _log.AppendLine("设置面板：打开（动效关闭 → 直接显示）");
                 FlushLog();
                 return;
             }
 
+            // 起始态：贴在右侧边缘外 + 遮罩全透明（同步写，同一帧内完成 ⇒ 不闪最终态）
             SettingsBackdrop.Opacity = 0;
-            SettingsPanelTransform.TranslateX = SettingsPanelHost.Width;
+            SettingsPanelTransform.TranslateX = PanelSlideDistance();
+
             _settingsAnimation = BuildSettingsAnimation(
-                toTranslateX: 0, toBackdropOpacity: 1, duration, onCompleted: () => Settings.Focus(FocusState.Programmatic));
+                toTranslateX: 0, toBackdropOpacity: 1, duration,
+                onCompleted: () => Settings.Focus(FocusState.Programmatic));
             _settingsAnimation.Begin();
             _log.AppendLine($"设置面板：滑入动画开始（{duration.TimeSpan.TotalMilliseconds:F0}ms）");
             FlushLog();
+            return;
         }
-        else
+
+        // ── 收起 ──
+        if (SettingsOverlay.Visibility != Visibility.Visible)
         {
-            if (!animate || SettingsOverlay.Visibility != Visibility.Visible)
+            // 本来就没显示：直接归位即可（不必动画）
+            ApplySettingsPanelClosedState(closed: true);
+            return;
+        }
+
+        if (!animate)
+        {
+            ApplySettingsPanelClosedState(closed: true);
+            _log.AppendLine("设置面板：收起（动效关闭 → 直接隐藏）");
+            FlushLog();
+            return;
+        }
+
+        // 收起期间不吃点击（点到的是下面的主界面），动画结束后整层折叠
+        SettingsOverlay.IsHitTestVisible = false;
+
+        _settingsAnimation = BuildSettingsAnimation(
+            toTranslateX: PanelSlideDistance(), toBackdropOpacity: 0, duration,
+            onCompleted: () =>
             {
                 SettingsOverlay.Visibility = Visibility.Collapsed;
-                SettingsPanelTransform.TranslateX = SettingsPanelHost.Width;
-                SettingsBackdrop.Opacity = 1;
-                return;
-            }
+                SettingsOverlay.IsHitTestVisible = true;
+                ApplySettingsPanelClosedState(closed: true);
+            });
+        _settingsAnimation.Begin();
+        _log.AppendLine($"设置面板：滑出动画开始（{duration.TimeSpan.TotalMilliseconds:F0}ms）");
+        FlushLog();
+    }
 
-            _settingsAnimation = BuildSettingsAnimation(
-                toTranslateX: SettingsPanelHost.Width, toBackdropOpacity: 0, duration,
-                onCompleted: () => SettingsOverlay.Visibility = Visibility.Collapsed);
-            _settingsAnimation.Begin();
-            _log.AppendLine($"设置面板：滑出动画开始（{duration.TimeSpan.TotalMilliseconds:F0}ms）");
-            FlushLog();
+    /// <summary>面板滑出多远才算"完全在窗口外"（面板宽度；拿不到时退回设计宽度）。</summary>
+    private double PanelSlideDistance()
+    {
+        double width = SettingsPanelHost.ActualWidth > 0
+            ? SettingsPanelHost.ActualWidth
+            : SettingsPanelHost.Width;
+
+        return width > 0 ? width : 392;
+    }
+
+    /// <summary>把面板直接摆成"已收起 / 已展开"的终态（不做动画，用于动效关闭或动画结束后的归位）。</summary>
+    private void ApplySettingsPanelClosedState(bool closed)
+    {
+        SettingsPanelTransform.TranslateX = closed ? PanelSlideDistance() : 0;
+        SettingsBackdrop.Opacity = closed ? 0 : 1;
+
+        if (closed)
+        {
+            SettingsOverlay.Visibility = Visibility.Collapsed;
         }
     }
 
@@ -633,6 +690,9 @@ public sealed partial class MainWindow : Window
             To = toTranslateX,
             Duration = duration,
             EasingFunction = easing,
+
+            // ⚠️ 显式 HoldEnd：动画结束/被中断时保持**终值**，不会回落到本地值把面板弹回去
+            FillBehavior = FillBehavior.HoldEnd,
         };
         Storyboard.SetTarget(slide, SettingsPanelTransform);
         Storyboard.SetTargetProperty(slide, "TranslateX");
@@ -643,6 +703,7 @@ public sealed partial class MainWindow : Window
             To = toBackdropOpacity,
             Duration = duration,
             EasingFunction = easing,
+            FillBehavior = FillBehavior.HoldEnd,
         };
         Storyboard.SetTarget(fade, SettingsBackdrop);
         Storyboard.SetTargetProperty(fade, "Opacity");
@@ -650,7 +711,21 @@ public sealed partial class MainWindow : Window
         var storyboard = new Storyboard();
         storyboard.Children.Add(slide);
         storyboard.Children.Add(fade);
-        storyboard.Completed += (_, _) => onCompleted();
+
+        storyboard.Completed += (_, _) =>
+        {
+            try
+            {
+                onCompleted();
+            }
+            catch (Exception ex)
+            {
+                // 外观类失败必须是"软"的：由它把面板留在屏幕上最糟，所以兜底强制归位
+                App.WriteCrash("ShowSettings.onCompleted", ex);
+                ApplySettingsPanelClosedState(closed: !_settingsPanelOpen);
+            }
+        };
+
         return storyboard;
     }
 
