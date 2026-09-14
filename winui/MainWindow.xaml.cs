@@ -644,6 +644,17 @@ public sealed partial class MainWindow : Window
         // 收起期间不吃点击（点到的是下面的主界面），动画结束后整层折叠
         SettingsOverlay.IsHitTestVisible = false;
 
+        // ⚠️⚠️ 关键一步（"关闭没有动画"的最后真根因）：
+        //    Storyboard 用 HoldEnd 停在 0，一旦 `Stop()` 掉它，位移会**回落到本地值**
+        //    —— 而本地值正是打开时写进去的 392（面板宽度）⇒ 关闭动画还没跑，面板就已经被弹到屏幕外了。
+        //    （探针实测：`滑出 Begin：From=392.0 To=392.0`，动画等于从终点到终点。）
+        //    做法：起动画前把**本地值钉在当前实测位置**（收起时是 0，即"已展开"的位置），
+        //    再由动画把它滑出去，过程就真实可见了。
+        //    遮罩同理：HoldEnd 停在 1，本地值却在打开时被写成 0 ⇒ 也一并钉回 1，
+        //    否则淡出动画会"从 0 到 0"（探针实测过：遮罩From=0.00，看起来是瞬暗）。
+        SettingsPanelTransform.TranslateX = 0;
+        SettingsBackdrop.Opacity = 1;
+
         _settingsAnimation = BuildSettingsAnimation(
             toTranslateX: PanelSlideDistance(), toBackdropOpacity: 0, duration,
             onCompleted: () =>
@@ -653,7 +664,8 @@ public sealed partial class MainWindow : Window
                 ApplySettingsPanelClosedState(closed: true);
             });
         _settingsAnimation.Begin();
-        _log.AppendLine($"设置面板：滑出动画开始（{duration.TimeSpan.TotalMilliseconds:F0}ms）");
+        _log.AppendLine($"设置面板：滑出动画开始（{duration.TimeSpan.TotalMilliseconds:F0}ms，"
+                        + $"从 X={SettingsPanelTransform.TranslateX:0.0} 到 X={PanelSlideDistance():0.0}）");
         FlushLog();
     }
 
@@ -667,6 +679,7 @@ public sealed partial class MainWindow : Window
         return width > 0 ? width : 392;
     }
 
+    //
     /// <summary>把面板直接摆成"已收起 / 已展开"的终态（不做动画，用于动效关闭或动画结束后的归位）。</summary>
     private void ApplySettingsPanelClosedState(bool closed)
     {
@@ -712,15 +725,28 @@ public sealed partial class MainWindow : Window
         storyboard.Children.Add(slide);
         storyboard.Children.Add(fade);
 
+        // ⚠️⚠️ 这里有个坑（"关闭没有动画"的真根因）：
+        //    `StopSettingsAnimation()` 停止 storyboard 时，它挂的 `Completed` 回调**也会被执行**
+        //    （表现为：上一轮"打开"的回调被收尾触发 → 先把遮罩整层折叠掉 → 这次"关闭"的动画
+        //     还没跑就被藏起来了，用户看到的就是"关闭没有动画"）。
+        //    所以回调必须**只允许第一次完成生效**。
+        bool completed = false;
         storyboard.Completed += (_, _) =>
         {
+            if (completed)
+            {
+                return;   // 被 Stop() 触发的"收尾式完成"：忽略，别动界面
+            }
+
+            completed = true;
+
             try
             {
                 onCompleted();
             }
             catch (Exception ex)
             {
-                // 外观类失败必须是"软"的：由它把面板留在屏幕上最糟，所以兜底强制归位
+                // 外观类失败必须是"软"的；由它把面板留在屏幕上最糟，所以兜底强制归位
                 App.WriteCrash("ShowSettings.onCompleted", ex);
                 ApplySettingsPanelClosedState(closed: !_settingsPanelOpen);
             }
