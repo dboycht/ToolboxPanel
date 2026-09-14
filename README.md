@@ -200,6 +200,11 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
+### v2.0.2 (开发中)
+
+> v2.0.1（WinUI 3）定版后的下一轮开发：逻辑 / 功能开发（W5）。
+> 计划：新建 / 编辑图标、右键菜单、批量管理、搜索、导入导出 ZIP、语言切换、图标大小三档等。
+
 ### v2.0.1 (2026-09-14) — 大版本重构：UI 前端推倒重来（WinUI 3）
 
 **重构目标（达成）**
