@@ -300,34 +300,6 @@ public sealed class MainViewModel
     private TabItemViewModel? FindTab(string tabId)
         => Tabs.FirstOrDefault(t => t.Id == tabId);
 
-    // ────────────────────────────── 实时让位之后的落库（W5）──────────────────────────────
-    //
-    // 界面上"拖动时其它图块让开"是**界面自己**用 ObservableCollection.Move 做的（有内置重排动画）；
-    // 落下时**界面顺序已经是最终顺序**，所以不能再按"落点索引"算一遍（那会闪一下又弹回去），
-    // 直接把顺序交给 Core 写下来。Core 侧两条入口都做了"绝不静默丢项"的防御。
-
-    /// <summary>把网格页的最终图标顺序落库。返回 false = 演示模式 / 页不存在 / 不是网格页。</summary>
-    public bool ApplyIconOrder(string tabId, IReadOnlyList<string> orderedIconIds)
-        => _store is not null && _store.ApplyIconOrder(tabId, orderedIconIds);
-
-    /// <summary>把列表页的最终顺序落库（Core 里已有 ReorderListItems）。</summary>
-    public bool ApplyListItemOrder(string tabId, IReadOnlyList<string> orderedItemIds)
-    {
-        if (_store is null)
-        {
-            return false;
-        }
-
-        var tab = FindTab(tabId);
-        if (tab is null || !tab.IsList)
-        {
-            return false;
-        }
-
-        _store.ReorderListItems(tabId, orderedItemIds);
-        return true;
-    }
-
     // ────────────────────────────── 新建 / 编辑图标（W5）──────────────────────────────
     //
     // 四条纪律（与拖拽排序同一套思路）：

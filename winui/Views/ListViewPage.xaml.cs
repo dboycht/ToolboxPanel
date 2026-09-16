@@ -6,8 +6,11 @@
 // 拖拽与网格页共用同一套设计（拖起塞载荷 → DragOver 算落点 → Drop 交给宿主落库），
 // 差别只有两处：
 //   ① 载荷类型是 ListItem（因此"列表项拖到网格页"会被目标页直接拒收）；
-//   ② 插入位置是**行与行之间的横线**，不是竖线。
+//   ② 插入位置是**行与行之间的横条**，不是竖条。
 // 落点判定仍然用 Core 的 DropIndexCalculator（单列布局它能自动只按 Y 判）。
+//
+// ⚠️ 与网格页同步（2026-09-15）：**拖动过程中不移动任何行**，只显示插入横条，
+//    松手才真正插入（用户明确要求"只加竖条，不让位"；那套实时让位/取消还原已整体删除）。
 
 using System.Numerics;
 using Microsoft.UI.Dispatching;
@@ -47,9 +50,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     /// <summary>拖放落下 —— 交给宿主窗口落库。</summary>
     public event EventHandler<DragDropRequest>? ItemDropped;
-
-    /// <summary>做过"实时让位"的拖动落下时：界面上的最终顺序交给宿主窗口落库（与网格页同款分工）。</summary>
-    public event EventHandler<IReadOnlyList<string>>? OrderCommitted;
 
     /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽。</summary>
     public bool DragDropEnabled
@@ -215,11 +215,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         _suppressNextClick = true;
         BeginLiftForDrag(args);
-
-        _dragOrderSnapshot = _tab.ListItems.Select(r => r.Model.Id).ToList();
-        _draggingId = row.Model.Id;
-        _livePreviewed = false;
-        _dropHandled = false;
     }
 
     private void OnRowDragOver(object sender, DragEventArgs e)
@@ -242,11 +237,9 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
             DragTrace($"DragOver：落点索引={insertIndex}");
         }
 
-        // 优先实时让位（行往下/上让开）；让不了位（跨页拖过来）才画指示线
-        if (!TryLivePreview(insertIndex))
-        {
-            ShowDropIndicator(insertIndex);
-        }
+        // 拖动中**不移动任何行**（用户 2026-09-15："只加竖条，不让位"），
+        // 只在行与行之间画一根插入横条表示"松手会插到这里"。
+        ShowDropIndicator(insertIndex);
     }
 
     private void OnRowDrop(object sender, DragEventArgs e)
@@ -259,128 +252,32 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
             return;
         }
 
-        _dropHandled = true;
-        DragTrace($"Drop：落点={insertIndex} 让位过={_livePreviewed}");
-
-        if (TryLivePreview(insertIndex))
-        {
-            // 界面顺序已是最终顺序 ⇒ 直接写下去（与网格页同口径）
-            OrderCommitted?.Invoke(this, _tab.ListItems.Select(r => r.Model.Id).ToList());
-            return;
-        }
+        DragTrace($"Drop：落点={insertIndex}");
 
         ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
     }
 
-    /// <summary>拖动结束（含取消）：做过让位却没落下 ⇒ 还原界面顺序（Core 才是唯一事实源）。</summary>
+    /// <summary>
+    /// 拖动结束（含取消）：收掉插入横条、复位"浮起"。
+    /// 拖动期间没有移动任何行，所以**不需要**做任何"还原"或"补落库"。
+    /// </summary>
     private void OnRowDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
         HideDropIndicator();
         EndLiftForDrag();
+        _lastTracedIndex = -1;
 
-        var dropped = args.DropResult == DataPackageOperation.Move;
-        DragTrace($"DragItemsCompleted：DropResult={args.DropResult} 已处理过={_dropHandled} 让位过={_livePreviewed}");
-
-        // ⚠️ Drop 与 DragItemsCompleted 的先后顺序不保证 ⇒ 结算延后一拍（同网格页）
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            if (_dropHandled)
-            {
-                DragTrace("结算：Drop 已处理（顺序已落库）");
-            }
-            else if (_livePreviewed && dropped)
-            {
-                DragTrace("结算：Drop 没来但 DropResult=Move ⇒ 按界面顺序补落库");
-                OrderCommitted?.Invoke(this, _tab.ListItems.Select(r => r.Model.Id).ToList());
-            }
-            else if (_livePreviewed)
-            {
-                DragTrace("结算：拖动被取消 ⇒ 还原界面顺序");
-                RevertLivePreview();
-            }
-
-            _dragOrderSnapshot = null;
-            _draggingId = null;
-            _livePreviewed = false;
-            _dropHandled = false;
-            _lastTracedIndex = -1;
-        });
+        DragTrace($"DragItemsCompleted：DropResult={args.DropResult}");
     }
 
-    // ────────────────────────────── 实时让位（"插入效果"）──────────────────────────────
+    // ────────────────────────────── 插入横条（2026-09-15 起，唯一一种拖拽反馈）──────────────────────────────
     //
-    // 与网格页同一套：把被拖的行实时 `Move` 到落点，ListView 用内置重排动画让其它行让开。
-    // ⚠️ 索引口径与 Core 一致（往后移减去自己那一格）；⚠️ 界面顺序变了之后落库必须走"按顺序落库"。
+    // 用户 2026-09-15 明确要求："只加竖条，不让位"（网格页是竖条，列表页对应为行间横条）——
+    // 曾经的"实时让位 + 取消还原"已整体删除：
+    //   · 拖动期间：集合一动不动，只在落点处画一根强调色横条；
+    //   · 松手：走 ItemDropped → MainViewModel.ApplyDrop → DataStore.ApplyDragDrop 落库（含跨页）。
 
-    private List<string>? _dragOrderSnapshot;
-    private string? _draggingId;
-    private bool _livePreviewed;
-    private bool _dropHandled;
-
-    /// <summary>true = 做得了实时让位（不要画指示线）；false = 做不了（跨页拖过来）。</summary>
-    private bool TryLivePreview(int insertIndex)
-    {
-        if (_draggingId is null)
-        {
-            return false;
-        }
-
-        int from = -1;
-        for (int i = 0; i < _tab.ListItems.Count; i++)
-        {
-            if (_tab.ListItems[i].Model.Id == _draggingId)
-            {
-                from = i;
-                break;
-            }
-        }
-
-        if (from < 0)
-        {
-            return false;
-        }
-
-        var to = insertIndex > from ? insertIndex - 1 : insertIndex;
-        to = Math.Clamp(to, 0, Math.Max(0, _tab.ListItems.Count - 1));
-
-        if (to != from)
-        {
-            _tab.ListItems.Move(from, to);
-            _livePreviewed = true;
-        }
-
-        HideDropIndicator();
-        return true;
-    }
-
-    private void RevertLivePreview()
-    {
-        if (_dragOrderSnapshot is null)
-        {
-            return;
-        }
-
-        for (int target = 0; target < _dragOrderSnapshot.Count; target++)
-        {
-            var id = _dragOrderSnapshot[target];
-
-            int current = -1;
-            for (int i = 0; i < _tab.ListItems.Count; i++)
-            {
-                if (_tab.ListItems[i].Model.Id == id)
-                {
-                    current = i;
-                    break;
-                }
-            }
-
-            if (current >= 0 && current != target)
-            {
-                _tab.ListItems.Move(current, target);
-            }
-        }
-    }
-
+    /// <summary>读取拖放载荷；不是本页该收的类型就返回 false（例如"列表项拖到网格页"）。</summary>
     private bool TryReadPayload(DragEventArgs e, out DragPayload payload)
     {
         payload = null!;
@@ -458,7 +355,7 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         var (x, y, _) = DropIndexCalculator.IndicatorAt(bounds, insertIndex);
 
-        // 横线要横跨整行宽度（不能只画在某一行的左边界那么宽）
+        // 横条要横跨整行宽度（不能只画在某一行的左边界那么宽）
         double width = 0;
         foreach (var bound in bounds)
         {
@@ -466,7 +363,8 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
 
         Canvas.SetLeft(DropIndicator, x);
-        Canvas.SetTop(DropIndicator, y);
+        // ⚠️ 横条要**骑在行边界上**（上移半个条高），看起来才是"插在两行之间"。
+        Canvas.SetTop(DropIndicator, y - DropIndicator.Height / 2);
         DropIndicator.Width = Math.Max(24, width - x);
         DropIndicator.Visibility = Visibility.Visible;
     }

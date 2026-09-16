@@ -23,7 +23,8 @@
             <Setter Property="CornerRadius" Value="4" />
             <!--
                 拖拽排序：行容器可拖 ⇒ **按下拖动即起拖**（系统原生行为）。
-                ⚠️ 2026-09-14 用户明确要求取消长按门控；拖动时的插入让位/浮起由 ListViewPage.xaml.cs 处理。
+                ⚠️ 2026-09-14 用户明确要求取消长按门控。
+                ⚠️ 2026-09-15 用户明确要求取消"实时让位"：拖动时只显示插入横条，行不乱动。
             -->
             <Setter Property="CanDrag" Value="True" />
         </Style>
@@ -71,14 +72,17 @@
         </StackPanel>
 
         <!--
-            拖拽落点指示线：**横**线（列表是单列，插入位在行的上/下边缘）。
-            放在最后 = 绘制在内容之上；IsHitTestVisible=False 保证它不吃拖放事件。
+            拖拽**插入横条**（列表是单列，插入位在行的上/下边缘）：绘制在内容之上。
+            ⚠️ 必须包在 **Canvas** 里：`Canvas.Left/Top` 只在**父级是 Canvas** 时才生效，
+               直接放在 Grid 里会永远停在左上角（见 ERROR.md E23）。
+            ⚠️ IsHitTestVisible=False 保证它不吃拖放事件。
         -->
-        <Border x:Name="DropIndicator"
-                Height="2" CornerRadius="1"
-                Background="{ThemeResource AccentBrushDark}"
-                IsHitTestVisible="False"
-                HorizontalAlignment="Left" VerticalAlignment="Top"
-                Visibility="Collapsed" />
+        <Canvas x:Name="DropLayer" IsHitTestVisible="False">
+            <Border x:Name="DropIndicator"
+                    Height="3" CornerRadius="2"
+                    Background="{ThemeResource AccentBrushDark}"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed" />
+        </Canvas>
     </Grid>
 </UserControl>

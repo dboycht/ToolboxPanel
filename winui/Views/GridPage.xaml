@@ -33,7 +33,8 @@
             <!--
                 拖拽排序：容器可拖 ⇒ **按下拖动即起拖**（系统原生行为，像 Windows 桌面）。
                 ⚠️ 2026-09-14 用户明确要求取消"长按 350ms 才起拖"那套判定（"只要有拖动的话都算"）。
-                拖动时的"插入让位"与"浮起占位"由 GridPage.xaml.cs 处理。
+                ⚠️ 2026-09-15 用户明确要求取消"实时让位"：拖动时只显示插入竖条，
+                   图块不乱动，松手才插入。见 GridPage.xaml.cs 顶部注释。
             -->
             <Setter Property="CanDrag" Value="True" />
         </Style>
@@ -106,15 +107,21 @@
         </StackPanel>
 
         <!--
-            拖拽落点指示线：GridView 的兄弟节点，放在最后 → 绘制在内容之上。
-            宽度 2、水平居中，靠代码设 Canvas.Left/Top（放在 Grid 里用附加属性定位即可）。
+            拖拽**插入竖条**：绘制在内容之上（放在 Grid 最后）。
+            高度 = 目标图块的高度（靠代码设），宽度 3、强调色圆角竖条 ——
+            拖动时它出现在"松手会插进去"的那个相邻图块位置上（用户 2026-09-15 定的形态）。
+
+            ⚠️ 必须包在 **Canvas** 里：`Canvas.Left/Top` 只在**父级是 Canvas** 时才生效，
+               直接放在 Grid 里会永远停在左上角（本项目 2026-09-15 实测踩过，见 ERROR.md E23）。
+            ⚠️ IsHitTestVisible=False：不吃拖放事件，否则 DragOver/Drop 会被它截走。
         -->
-        <Border x:Name="DropIndicator"
-                Width="2" CornerRadius="1"
-                Background="{ThemeResource AccentBrushDark}"
-                IsHitTestVisible="False"
-                HorizontalAlignment="Left" VerticalAlignment="Top"
-                Visibility="Collapsed" />
+        <Canvas x:Name="DropLayer" IsHitTestVisible="False">
+            <Border x:Name="DropIndicator"
+                    Width="3" CornerRadius="2"
+                    Background="{ThemeResource AccentBrushDark}"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed" />
+        </Canvas>
     </Grid>
 </UserControl>
 

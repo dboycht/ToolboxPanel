@@ -9,9 +9,14 @@
 // 结果就是"界面上顺序变了、tabs.json 没变"（重启后又跳回去）。
 // 跨页移动更是完全不在它能力范围内。所以这里统一手写 DragDrop：
 //   · 拖起：容器 CanDrag=True → 这里在 DragStarting 里塞一个 DragPayload（id + 类型 + 来源页）；
-//   · 拖动中：DragOver 算出"会插到第几个"，并用一条 2px 指示线画出来；
+//   · 拖动中：DragOver 算出"会插到第几个"，在**相邻图块之间**画一根强调色插入竖条；
 //   · 放下：Drop 把结果交给宿主窗口 → MainViewModel.ApplyDrop → DataStore 落库 → 界面跟着 Core 重排。
 // 好处是"同页排序 / 跨页移动 / 拒绝异类拖放"三条路共用同一套代码和同一个落库入口。
+//
+// ⚠️ **拖动过程中不移动任何图块**（用户 2026-09-15 明确要求："只加竖条，不让位"）：
+//    此前做过"实时让位"（把被拖项在集合里 Move，其它图块被推着让开），用户复测后**不要**这个效果。
+//    现在只显示插入竖条，顺序**只在松手时**才真正改变 ——
+//    好处是拖动期间"界面 = Core"，不需要那套"拖动取消要还原现场"的快照/回滚逻辑。
 //
 // ⚠️ 落点判定（DropIndexCalculator）在 Core 里，有单测；这里只负责把矩形喂给它。
 // ⚠️ 拖拽交互本身**只能由用户手动验证**（代理不注入鼠标输入，见 ERROR.md E5）。
@@ -66,13 +71,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     /// <summary>拖放落下 —— 交给宿主窗口落库（页面自己不改数据）。</summary>
     public event EventHandler<DragDropRequest>? ItemDropped;
-
-    /// <summary>
-    /// 做过"实时让位"的拖动落下时：把界面上的最终顺序交给宿主窗口落库。
-    /// （分工：**本页内**拖动走这个 —— 界面已经让好位了，只需把顺序写下去；
-    ///   **跨页**移动仍走 <see cref="ItemDropped"/>，因为被拖项不在本页集合里、让不了位。）
-    /// </summary>
-    public event EventHandler<IReadOnlyList<string>>? OrderCommitted;
 
     /// <summary>
     /// 演示模式下不写盘：由宿主窗口置为 false 关掉拖拽（避免"看着能拖、其实存不下来"）。
@@ -357,12 +355,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
         _suppressNextClick = true;      // 起拖之后系统补的那次 ItemClick 不能当"打开"
         BeginLiftForDrag(args);         // "浮起"占位（延后一拍压暗，等拖拽视觉先被抓走）
-
-        // 实时让位的现场记录：这次拖动开始时界面的顺序 + 被拖的是谁（拖动取消时要还原）
-        _dragOrderSnapshot = _tab.Icons.Select(t => t.Model.Id).ToList();
-        _draggingId = tile.Model.Id;
-        _livePreviewed = false;
-        _dropHandled = false;
     }
 
     /// <summary>
@@ -386,11 +378,9 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
                 DragTrace($"DragOver：落点索引={insertIndex}");
             }
 
-            // 优先"实时让位"（手机那种插入效果）；让不了位（跨页拖过来）才退回画一条指示线
-            if (!TryLivePreview(insertIndex))
-            {
-                ShowDropIndicator(insertIndex);
-            }
+            // 拖动中**不移动任何图块**（用户 2026-09-15："只加竖条，不让位"），
+            // 只在相邻图块之间画一根插入竖条表示"松手会插到这里"。
+            ShowDropIndicator(insertIndex);
 
             return;
         }
@@ -421,16 +411,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         {
             var insertIndex = ComputeInsertIndex(e);
             HideDropIndicator();
-            _dropHandled = true;
-            DragTrace($"Drop：落点={insertIndex} 让位过={_livePreviewed}");
-
-            if (TryLivePreview(insertIndex))
-            {
-                // 已经实时让好位了 ⇒ 界面顺序就是最终顺序，直接写下去
-                // （不能再按落点索引算一次：界面顺序已经变了，索引会对不上）
-                OrderCommitted?.Invoke(this, _tab.Icons.Select(t => t.Model.Id).ToList());
-                return;
-            }
+            DragTrace($"Drop：落点={insertIndex}");
 
             ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
             return;
@@ -479,129 +460,25 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     }
 
     /// <summary>
-    /// 拖动结束（含取消）：收掉指示线；**若这次拖动做了实时让位却没落下（Esc / 丢到窗口外），
-    /// 把界面顺序还原**（否则界面与 Core 就不一致了 —— Core 才是唯一事实源）。
+    /// 拖动结束（含取消）：收掉插入竖条、复位"浮起"。
+    /// 拖动期间没有移动任何图块，所以这里**不需要**做任何"还原"或"补落库"——
+    /// 真正的顺序变化只发生在 Drop 落库那一步。
     /// </summary>
     private void OnTileDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
         HideDropIndicator();
         EndLiftForDrag();
+        _lastTracedIndex = -1;
 
-        var dropped = args.DropResult == DataPackageOperation.Move;
-        DragTrace($"DragItemsCompleted：DropResult={args.DropResult} 已处理过={_dropHandled} "
-                  + $"让位过={_livePreviewed}");
-
-        // ⚠️ `Drop` 与 `DragItemsCompleted` 的**先后顺序不保证**（也可能只有后者），
-        //    所以结算**延后一拍**：Drop 若也来了，`_dropHandled` 那时已经是 true。
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            if (_dropHandled)
-            {
-                DragTrace("结算：Drop 已处理（顺序已落库）");
-            }
-            else if (_livePreviewed && dropped)
-            {
-                // Drop 没来但确实是"落在本页" ⇒ 不能让这次让位白让，按界面顺序落库
-                DragTrace("结算：Drop 事件没来但 DropResult=Move ⇒ 按界面顺序补落库");
-                OrderCommitted?.Invoke(this, _tab.Icons.Select(t => t.Model.Id).ToList());
-            }
-            else if (_livePreviewed)
-            {
-                DragTrace("结算：拖动被取消 ⇒ 还原界面顺序");
-                RevertLivePreview();
-            }
-
-            _dragOrderSnapshot = null;
-            _draggingId = null;
-            _livePreviewed = false;
-            _dropHandled = false;
-            _lastTracedIndex = -1;
-        });
+        DragTrace($"DragItemsCompleted：DropResult={args.DropResult}");
     }
 
-    // ────────────────────────────── 实时让位（"插入效果"，2026-09-14）──────────────────────────────
+    // ────────────────────────────── 插入竖条（2026-09-15 起，唯一一种拖拽反馈）──────────────────────────────
     //
-    // 手机桌面的手感：拖动时**其它图块让开、露出插入空位**。
-    // 做法：把被拖的图块在界面集合里实时 `Move` 到落点 —— GridView 会用内置的重排动画把其它图块推过去。
-    // ⚠️ 索引口径与 Core 完全一致：落点索引是"插到**当前**第 N 项之前"，往后移时要减去自己那一格
-    //    （Core 的 ApplySameTabDrop 也在做同一件事，两边必须同口径）。
-    // ⚠️ 界面顺序一旦实时变了，落库就不能再按"落点索引"算 —— 直接把这个顺序交给
-    //    `DataStore.ApplyIconOrder` 写下去（否则会闪一下又弹回去）。
-
-    private List<string>? _dragOrderSnapshot;   // 拖动开始时的界面顺序（取消时还原）
-    private string? _draggingId;                // 正在拖的图块 id（本页集合里找得到才做让位）
-    private bool _livePreviewed;                // 本次拖动做过让位
-    private bool _dropHandled;                  // 落下是否已处理（决定要不要还原）
-
-    /// <summary>
-    /// 把被拖的图块实时挪到落点，让其它图块让开。
-    /// </summary>
-    /// <returns>
-    /// true = 本次能做实时让位（调用方不要画指示线）；false = 做不了（例如跨页拖过来，
-    /// 被拖项不在本页集合里）⇒ 调用方退回"画一条落点指示线"。
-    /// </returns>
-    private bool TryLivePreview(int insertIndex)
-    {
-        if (_draggingId is null)
-        {
-            return false;
-        }
-
-        int from = -1;
-        for (int i = 0; i < _tab.Icons.Count; i++)
-        {
-            if (_tab.Icons[i].Model.Id == _draggingId)
-            {
-                from = i;
-                break;
-            }
-        }
-
-        if (from < 0)
-        {
-            return false;   // 不是本页的图块（跨页拖过来）：让不了位
-        }
-
-        var to = insertIndex > from ? insertIndex - 1 : insertIndex;
-        to = Math.Clamp(to, 0, Math.Max(0, _tab.Icons.Count - 1));
-
-        if (to != from)
-        {
-            _tab.Icons.Move(from, to);
-            _livePreviewed = true;
-        }
-
-        HideDropIndicator();   // 有让位就不需要那条线了
-        return true;
-    }
-
-    /// <summary>拖动被取消：按拖动开始时的快照把界面顺序挪回去。</summary>
-    private void RevertLivePreview()    {
-        if (_dragOrderSnapshot is null)
-        {
-            return;
-        }
-
-        for (int target = 0; target < _dragOrderSnapshot.Count; target++)
-        {
-            var id = _dragOrderSnapshot[target];
-
-            int current = -1;
-            for (int i = 0; i < _tab.Icons.Count; i++)
-            {
-                if (_tab.Icons[i].Model.Id == id)
-                {
-                    current = i;
-                    break;
-                }
-            }
-
-            if (current >= 0 && current != target)
-            {
-                _tab.Icons.Move(current, target);
-            }
-        }
-    }
+    // 用户 2026-09-15 明确要求："拖动到图标附近时，在相邻图标处显示插入的符号，并且插入" ——
+    // **只加竖条，不让位**。所以这里不再有"实时让位/取消还原"那套（已整体删除）：
+    //   · 拖动期间：集合一动不动，只在落点处画一根强调色竖条；
+    //   · 松手：走 ItemDropped → MainViewModel.ApplyDrop → DataStore.ApplyDragDrop 落库（含跨页）。
 
     /// <summary>读取拖放载荷；不是本页该收的类型就返回 false（例如"图标拖到列表页"）。</summary>
     private bool TryReadPayload(DragEventArgs e, out DragPayload payload)
@@ -686,7 +563,9 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
         var (x, y, height) = DropIndexCalculator.IndicatorAt(bounds, insertIndex);
 
-        Canvas.SetLeft(DropIndicator, x);
+        // ⚠️ 竖条要**骑在边界线上**（左移半个条宽），看起来才是"插在两块之间"，
+        //    而不是"盖在右边那一块上"。
+        Canvas.SetLeft(DropIndicator, x - DropIndicator.Width / 2);
         Canvas.SetTop(DropIndicator, y);
         DropIndicator.Height = Math.Max(8, height);
         DropIndicator.Visibility = Visibility.Visible;
