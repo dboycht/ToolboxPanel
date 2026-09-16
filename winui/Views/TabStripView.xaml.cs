@@ -100,8 +100,9 @@ public sealed partial class TabStripView : UserControl
     /// <summary>拖拽悬停到某个标签上（主窗口据此切页）。</summary>
     public event EventHandler<TabItemViewModel>? TabDraggedOver;
 
-    /// <summary>把图标/列表项直接丢在某个标签上 —— 主窗口把它追加到那一页末尾。</summary>
-    public event EventHandler<(DragPayload Payload, TabItemViewModel Tab)>? ItemDroppedOnTab;
+    // ⚠️ 2026-09-16：原来还有一个 `ItemDroppedOnTab`（松手在标签上直接落库）。
+    //    现在"松手在标签上"由 `DragSession.ReportTarget` 登记落点、源端 `DragItemsCompleted` 统一收口，
+    //    这条独立路径已删除（避免两套机制并存；落库入口仍只有 MainWindow.OnItemDropped 一个）。
 
     public object? ItemsSource
     {
@@ -415,7 +416,11 @@ public sealed partial class TabStripView : UserControl
 
     private void OnTabsDragOver(object sender, DragEventArgs e)
     {
-        if (!TryReadPayload(e, out var payload))
+        // ⚠️ 2026-09-16：内部拖动时 DataPackage 永远是空的（起拖事件收不到 ⇒ 写不进载荷，见 ERROR.md E25），
+        //    所以"是不是本应用在拖"改判"载荷为空"；落点登记给源端，由源端的 DragItemsCompleted 收口。
+        var (hasText, hasStorage) = DescribeDrag(e);
+
+        if (!DragSession.LooksLikeInternalDrag(hasText, hasStorage) && DragSession.Target is null)
         {
             e.AcceptedOperation = DataPackageOperation.None;
             StopDragTimers();
@@ -430,7 +435,16 @@ public sealed partial class TabStripView : UserControl
         _dragLeaveTimer?.Start();
 
         var tab = FindTabFromArgs(e);
-        if (tab is null || ReferenceEquals(tab, _dragOverTab))
+        if (tab is null)
+        {
+            return;
+        }
+
+        // 落在这条标签上 ⇒ 登记"松手就追加到这一页末尾"（松手在标签上 = 快手跨页移动）
+        var appendIndex = tab.IsList ? tab.ListItems.Count : tab.Icons.Count;
+        DragSession.ReportTarget(tab.Id, tab.IsList ? DragItemKind.ListItem : DragItemKind.Icon, appendIndex);
+
+        if (ReferenceEquals(tab, _dragOverTab))
         {
             return;
         }
@@ -439,6 +453,21 @@ public sealed partial class TabStripView : UserControl
         _dragOverTab = tab;
         _dragAutoSwitchTimer?.Stop();
         _dragAutoSwitchTimer?.Start();
+    }
+
+    /// <summary>这次拖放带了什么格式（内部拖动 = 什么都没有）。</summary>
+    private static (bool HasText, bool HasStorageItems) DescribeDrag(DragEventArgs e)
+    {
+        try
+        {
+            return (e.DataView.Contains(StandardDataFormats.Text),
+                    e.DataView.Contains(StandardDataFormats.StorageItems));
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("TabStripView.DescribeDrag", ex);
+            return (false, false);
+        }
     }
 
     /// <summary>项之间的 DragLeave 会误报，所以离开与否交给去抖定时器判定。</summary>
@@ -464,19 +493,13 @@ public sealed partial class TabStripView : UserControl
         }
     }
 
+    /// <summary>
+    /// 松手在标签上：**不在这里落库** —— 落点已在 <see cref="OnTabsDragOver"/> 里登记给
+    /// <see cref="DragSession"/>，由源端的 `DragItemsCompleted`（那里才有"拖的是谁"）统一收口。
+    /// </summary>
     private void OnTabsDrop(object sender, DragEventArgs e)
     {
         StopDragTimers();
-
-        if (!TryReadPayload(e, out var payload))
-        {
-            return;
-        }
-
-        if (FindTabFromArgs(e) is { } tab)
-        {
-            ItemDroppedOnTab?.Invoke(this, (payload, tab));
-        }
     }
 
     private void StopDragTimers()
@@ -487,47 +510,6 @@ public sealed partial class TabStripView : UserControl
     }
 
     /// <summary>
-    /// 载荷来自本应用才接受（具体"哪一页收哪一类"由主窗口判）。
-    ///
-    /// <para>⚠️ 2026-09-16：**改读进程内 <see cref="DragSession"/>，不再读 DataPackage** ——
-    /// <c>ListViewBase</c> 把起拖事件整个吞掉，`args.Data.SetText(...)` 根本执行不到，
-    /// DataView 里一个格式都没有（实测：`Contains(Text)=False`）。
-    /// 详见 `ERROR.md` E25 与 `DragSession.cs`。</para>
-    /// </summary>
-    private static bool TryReadPayload(DragEventArgs e, out DragPayload payload)
-    {
-        payload = null!;
-
-        if (DragSession.Current is { } session)
-        {
-            payload = session;
-            return true;
-        }
-
-        // 退路：万一将来载荷真进了 DataPackage（例如外部来源），照旧解析文本。
-        try
-        {
-            if (!e.DataView.Contains(StandardDataFormats.Text))
-            {
-                return false;
-            }
-
-            var parsed = DragPayload.TryParse(e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult());
-            if (parsed is null)
-            {
-                return false;
-            }
-
-            payload = parsed;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("TabStripView.TryReadPayload", ex);
-            return false;
-        }
-    }
-
     /// <summary>这次 DragOver 落在哪个标签项上（落在标签栏空白处 → null）。</summary>
     private static TabItemViewModel? FindTabFromArgs(DragEventArgs e)
     {

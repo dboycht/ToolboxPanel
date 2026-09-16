@@ -1,38 +1,57 @@
 // DragSession.cs —— 进程内"当前拖动会话"
 //
-// 为什么需要它（2026-09-16 实测根因，详见 ERROR.md E25）：
-//   `ListViewBase`（GridView/ListView）会**在内部处理并标记 handled** `DragStarting` 与
-//   `DragItemsStarting`，于是：
-//     · 写在 XAML 上的 `DragStarting=` / `DragItemsStarting=` **一次都收不到**；
-//     · WinUI 3 又**不暴露**对应的 RoutedEvent 静态字段（`UIElement.DragStartingEvent` /
-//       `ListViewBase.DragItemsStartingEvent` 都不存在）⇒ `AddHandler(..., handledEventsToo: true)`
-//       这条路也走不通（实测编译不过）；
-//   ⇒ `args.Data.SetText(载荷)` 永远执行不到 ⇒ DataPackage 里一个格式都没有 ⇒
-//      目标端 `Contains(Text)` 全是 false ⇒ 只能 `AcceptedOperation = None`
-//      （系统光标显示"禁止"）、界面既没有插入条、松手也不插入。
+// 为什么需要它（2026-09-16 实测，完整排坑见 ERROR.md E25）：
+//   为一个 ListView/GridView 的条目拖拽，**下列事件在本项目实测全部收不到**：
+//     · XAML `DragStarting=`        —— 从未触发（ListViewBase 内部标记 handled）
+//     · XAML `DragItemsStarting=`   —— 同样从未触发
+//     · `AddHandler(PointerPressedEvent, …, handledEventsToo: true)` —— 也从未触发（日志里"按下"一行都没有）
+//     · `AddHandler(UIElement.DragStartingEvent, …)` / `ListViewBase.DragItemsStartingEvent`
+//                                  —— **编译不过**：WinUI 3 不暴露这两个 RoutedEvent
+//   ⇒ 既拿不到"拖的是谁"，也拿不到"松手在哪"，而 DataPackage 里永远是空的。
 //
-// 所以内部重排/跨页移动**不再依赖 DataPackage 载荷**：
-//   · 源端：**按下时**就把"正在拖谁"记在这里（指针事件是能收到 `handledEventsToo` 的）；
-//   · 目标端（网格页 / 列表页 / 标签栏）：一律读这里判断"这次拖的是不是本应用的项目"。
+// **只有两个事件实测可靠**：
+//   ① 目标端 `DragOver`（日志证明能进来）；
+//   ② 源端 `DragItemsCompleted` —— **并且 `args.Items` 直接给出被拖的项本身**。
 //
-// ⚠️ 生命周期：`Begin` 在按下时调用；`End` 在（拖动结束 / 单纯点击松手）时调用。
-//    拖动期间它一直有效 —— DragOver / Drop 都靠它。系统那套空载荷的拖放照常发生
-//    （拖拽视觉、Drop 事件、DragItemsCompleted 都由框架给），我们只是不指望它的数据。
+// 所以本会话只做一件事：**把"松手会落在哪"在拖动过程中登记下来**（DragOver 里由目标页/标签栏写入），
+// 等源端 `DragItemsCompleted` 带着"被拖项 + DropResult"到达时，两边一拼就是完整的一次拖放请求。
+//   · 目标页 / 标签栏：DragOver → ReportTarget(tabId, kind, insertIndex)
+//   · 源页：DragItemsCompleted → TakeTarget() + args.Items + DropResult == Move → 落库
+//   · 结束（无论落下还是取消）：ClearTarget()
 
 using ToolboxPanel.Core.Storage;
 
 namespace ToolboxPanel.Views;
 
+/// <summary>拖动中登记的落点（最后写入者生效 = 松手那一刻指针所在处）。</summary>
+internal readonly record struct DragTarget(string TabId, DragItemKind Kind, int InsertIndex);
+
 internal static class DragSession
 {
-    /// <summary>正在拖的项目；null = 当前没有本应用发起的拖动。</summary>
-    public static DragPayload? Current { get; private set; }
+    /// <summary>拖动中最后登记的落点（null = 本次拖动还没进过任何目标区域）。</summary>
+    public static DragTarget? Target { get; private set; }
 
-    public static void Begin(DragPayload payload) => Current = payload;
+    /// <summary>目标页/标签栏在 DragOver 里登记落点。</summary>
+    public static void ReportTarget(string tabId, DragItemKind kind, int insertIndex)
+        => Target = new DragTarget(tabId, kind, insertIndex);
 
-    public static void End() => Current = null;
+    /// <summary>取走落点并清空（源页在 DragItemsCompleted 里调用）。</summary>
+    public static DragTarget? TakeTarget()
+    {
+        var target = Target;
+        Target = null;
+        return target;
+    }
 
-    /// <summary>取"这次拖放是不是本应用在拖这类东西"，是就返回载荷。</summary>
-    public static DragPayload? Take(DragItemKind kind)
-        => Current is { } payload && payload.Kind == kind ? payload : null;
+    public static void ClearTarget() => Target = null;
+
+    /// <summary>
+    /// 这次拖放能不能当"本应用内部的条目拖动"。
+    ///
+    /// <para>判据：**DataPackage 里什么格式都没有** —— 本项目的条目拖拽就是这样
+    /// （载荷事件收不到，框架给的 DataPackage 永远是空的）。
+    /// 外部拖入的文件带 `StorageItems`，别的应用的文本拖入带 `Text`，都会被排除。</para>
+    /// </summary>
+    public static bool LooksLikeInternalDrag(bool hasText, bool hasStorageItems)
+        => !hasText && !hasStorageItems;
 }

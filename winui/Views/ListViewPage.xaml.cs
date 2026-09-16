@@ -42,18 +42,9 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         _entrance = new EntranceAnimator(Rows);
 
-        // ⚠️⚠️ 同网格页：起拖事件收不到（`ListViewBase` 内部处理并标记 handled，
-        //   WinUI 3 又不暴露 RoutedEvent ⇒ AddHandler 那条路编译不过）。
-        //   载荷改走 DragSession，在**按下**时记下"拖谁" —— 指针事件能收到 handledEventsToo。
-        Rows.AddHandler(
-            PointerPressedEvent,
-            new PointerEventHandler(OnRowPointerPressed),
-            handledEventsToo: true);
-
-        Rows.AddHandler(
-            PointerReleasedEvent,
-            new PointerEventHandler(OnRowPointerReleased),
-            handledEventsToo: true);
+        // ⚠️ 不再挂 PointerPressed / DragStarting / DragItemsStarting —— 实测**全都收不到**
+        //    （ERROR.md E25）。拖动链路只靠：目标端 DragOver（登记落点）+ 源端 DragItemsCompleted
+        //    （带着 args.Items 与 DropResult 来收口）。
     }
 
     /// <summary>点了一行 —— 把该行的路径交给宿主窗口打开。</summary>
@@ -106,8 +97,8 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
             return;
         }
 
-        // 单纯点击 = 没拖动 ⇒ 顺手收掉拖动会话
-        DragSession.End();
+        // 单纯点击 = 没拖动 ⇒ 顺手清掉落点登记
+        DragSession.ClearTarget();
 
         if (e.ClickedItem is ListRowViewModel row)
         {
@@ -115,19 +106,16 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
     }
 
-    // ────────────────────────────── 拖动反馈（"浮起"占位）──────────────────────────────
+    // ────────────────────────────── 拖动链路（2026-09-16 最终形态，与网格页同一套）──────────────────────────────
     //
-    // 起拖交给**系统的原生拖拽**：按下拖动即起拖（同网格页）—— 用户明确要求取消长按门控。
-    // 这里只负责：拖动开始时把行"浮起"（轻微放大 + 半透明占位），以及抑制起拖后系统补的那次 ItemClick。
-    // ⚠️ 压暗要在拖拽视觉**抓取之后**（TryEnqueue 排一下）。
+    // 收不到任何起拖/指针事件（ERROR.md E25）⇒ 只靠两个实测可靠的事件：
+    //   目标端 `DragOver` 登记落点 + 源端 `DragItemsCompleted`（带 args.Items / DropResult）收口。
 
     private bool _suppressNextClick;
-    private FrameworkElement? _liftedContainer;
-    private ListRowViewModel? _pressedRow;
-    private bool _dragStarted;
     private int _lastTracedIndex = -1;
     private int _lastDropIndex = -1;
     private bool _tracedDragOverEntry;
+    private bool _dropSeen;                    // 本次拖动是否真的落在本页（Drop 事件到场）
 
     /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）。</summary>
     private static void DragTrace(string message)
@@ -165,76 +153,10 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         return (hasText, text, hasStorage);
     }
 
-    private void ApplyLift(FrameworkElement container, bool lifted)
-    {
-        try
-        {
-            container.CenterPoint = new Vector3(
-                (float)(container.ActualWidth / 2), (float)(container.ActualHeight / 2), 0f);
-            container.Scale = lifted ? new Vector3(1.02f, 1.06f, 1f) : new Vector3(1f, 1f, 1f);
-            container.Opacity = lifted ? 0.35 : 1.0;
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("ListViewPage.ApplyLift", ex);
-        }
-    }
-
-    private void EndLiftForDrag()
-    {
-        if (_liftedContainer is { } container)
-        {
-            ApplyLift(container, lifted: false);
-            _liftedContainer = null;
-        }
-    }
-
-    // ────────────────────────────── 拖拽排序 ──────────────────────────────
+    // ────────────────────────────── 拖拽排序（2026-09-16 最终形态）──────────────────────────────
     //
-    // 载荷不走 DataPackage，走 DragSession（同网格页，见 DragSession.cs 与 ERROR.md E25）：
-    //   · 按下 → 记下"拖的是哪一行"并 Begin 会话；
-    //   · DragOver/Drop → 读会话判断，再算落点、画插入横条；
-    //   · DragItemsCompleted / Drop / 单纯点击松手 → End 会话。
-
-    private void OnRowPointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        _pressedRow = (e.OriginalSource as FrameworkElement)?.DataContext as ListRowViewModel;
-
-        if (_pressedRow is null)
-        {
-            DragSession.End();
-            return;
-        }
-
-        DragSession.Begin(new DragPayload(DragItemKind.ListItem, _tab.Id, _pressedRow.Model.Id));
-        DragTrace($"按下：{_pressedRow.Description}（会话已开）");
-    }
-
-    private void OnRowPointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_dragStarted)
-        {
-            DragSession.End();
-        }
-    }
-
-    /// <summary>拖动真的开始了（第一次 DragOver 才发现 —— 起拖事件收不到）。</summary>
-    private void EnsureLiftStarted()
-    {
-        if (_dragStarted)
-        {
-            return;
-        }
-
-        _dragStarted = true;
-        _suppressNextClick = true;   // 起拖之后系统补的那次 ItemClick 不能当"打开"
-
-        if (_pressedRow is not null && Rows.ContainerFromItem(_pressedRow) is FrameworkElement container)
-        {
-            _liftedContainer = container;
-            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
-        }
-    }
+    // 与网格页同一套（ERROR.md E25）：DragOver 登记落点 → DragItemsCompleted 收口落库。
+    // DataPackage 永远是空的 ⇒ 这就是"本应用内部拖动"的判据。
 
     private void OnRowDragOver(object sender, DragEventArgs e)
     {
@@ -244,11 +166,10 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         {
             _tracedDragOverEntry = true;
             DragTrace($"DragOver 首次：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage} "
-                      + $"会话={(DragSession.Current is null ? "无" : DragSession.Current.ItemId)}");
+                      + $"判定={(DragSession.LooksLikeInternalDrag(hasText, hasStorage) ? "内部拖动" : "非内部")}");
         }
 
-        var payload = DragSession.Take(_tab.DraggableKind);
-        if (payload is null || hasStorage)
+        if (!DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
             e.AcceptedOperation = DataPackageOperation.None;
             HideDropIndicator();
@@ -257,16 +178,16 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         e.AcceptedOperation = DataPackageOperation.Move;
         e.DragUIOverride.IsCaptionVisible = false;
-
-        EnsureLiftStarted();
+        _suppressNextClick = true;
 
         var insertIndex = ComputeInsertIndex(e);
         _lastDropIndex = insertIndex;
+        DragSession.ReportTarget(_tab.Id, DragItemKind.ListItem, insertIndex);
 
         if (insertIndex != _lastTracedIndex)
         {
             _lastTracedIndex = insertIndex;
-            DragTrace($"DragOver：落点索引={insertIndex}");
+            DragTrace($"DragOver：落点索引={insertIndex}（已登记）");
         }
 
         // 拖动中**不移动任何行**（用户 2026-09-15："只加竖条，不让位"），
@@ -274,54 +195,73 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         ShowDropIndicator(insertIndex);
     }
 
+    /// <summary>内部拖动不在 Drop 里做动作（Drop 不一定来、且不带"拖的是谁"）—— 统一留给 DragItemsCompleted。</summary>
     private void OnRowDrop(object sender, DragEventArgs e)
     {
         var (hasText, text, hasStorage) = DescribeData(e);
-        DragTrace($"Drop：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage} "
-                  + $"会话={(DragSession.Current is null ? "无" : DragSession.Current.ItemId)}");
+        DragTrace($"Drop：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage}");
 
-        var payload = DragSession.Take(_tab.DraggableKind);
-        if (payload is null || hasStorage)
+        if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
+            _dropSeen = true;
+            _lastDropIndex = ComputeInsertIndex(e);
+            DragSession.ReportTarget(_tab.Id, DragItemKind.ListItem, _lastDropIndex);
             HideDropIndicator();
+            DragTrace($"Drop（内部拖动）：落点={_lastDropIndex} ⇒ 留给 DragItemsCompleted 收口");
             return;
         }
 
-        DragSession.End();
-
-        var insertIndex = ComputeInsertIndex(e);
         HideDropIndicator();
-        DragTrace($"Drop（内部重排）：落点={insertIndex}");
-
-        ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
     }
 
     /// <summary>
-    /// 拖动结束（含取消）：收掉插入横条、复位"浮起"。
-    /// 拖动期间没有移动任何行，所以**不需要**做任何"还原"或"补落库"。
+    /// ★ **一次内部拖动的收口点**（源端事件，实测可靠）：`args.Items` 给出被拖的行本身，
+    /// `args.DropResult` 给出落没落下，再加上目标端登记的落点 ⇒ 完整的一次重排/跨页移动。
     /// </summary>
     private void OnRowDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
         HideDropIndicator();
-        EndLiftForDrag();
         _lastTracedIndex = -1;
-        _dragStarted = false;
-        _pressedRow = null;
+        _suppressNextClick = false;
 
-        // ⚠️ 兜底：Drop 事件不一定来；会话还在 + DropResult=Move ⇒ 按最后落点补落库（同网格页）。
-        var session = DragSession.Current;
-        var dropIndex = _lastDropIndex;
+        var target = DragSession.TakeTarget();
+        var row = args.Items.Count > 0 ? args.Items[0] as ListRowViewModel : null;
+        var dropResult = args.DropResult;
+        var dropSeen = _dropSeen;
+        _dropSeen = false;
         _lastDropIndex = -1;
-        DragSession.End();
 
-        if (session is not null && args.DropResult == DataPackageOperation.Move && dropIndex >= 0)
+        DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
+                  + $"被拖={row?.Description ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
+                  + $"Drop到过本页={dropSeen}");
+
+        if (row is null || target is null)
         {
-            DragTrace($"DragItemsCompleted：Drop 没来但 DropResult=Move ⇒ 按落点 {dropIndex} 补落库");
-            ItemDropped?.Invoke(this, new DragDropRequest(session, _tab.Id, dropIndex));
             return;
         }
 
-        DragTrace($"DragItemsCompleted：DropResult={args.DropResult}");
+        if (target.Value.Kind != DragItemKind.ListItem)
+        {
+            DragTrace("→ 落点是网格页，列表项不进网格页 ⇒ 忽略");
+            return;
+        }
+
+        // ⚠️ 结算延后一拍（Drop 与 DragItemsCompleted 先后顺序不保证，同网格页）
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var landed = dropResult == DataPackageOperation.Move || dropSeen || _dropSeen;
+            _dropSeen = false;
+
+            if (!landed)
+            {
+                DragTrace("→ 判定：拖动被取消 ⇒ 不落库");
+                return;
+            }
+
+            var payload = new DragPayload(DragItemKind.ListItem, _tab.Id, row.Model.Id);
+            DragTrace($"→ 落库：{row.Description} → 页 {target.Value.TabId} 第 {target.Value.InsertIndex} 位");
+            ItemDropped?.Invoke(this, new DragDropRequest(payload, target.Value.TabId, target.Value.InsertIndex));
+        });
     }
 
     // ────────────────────────────── 插入横条（2026-09-15 起，唯一一种拖拽反馈）──────────────────────────────

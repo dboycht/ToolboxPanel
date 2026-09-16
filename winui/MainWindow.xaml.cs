@@ -1104,7 +1104,7 @@ public sealed partial class MainWindow : Window
             TabStrip.ItemsSource = _viewModel.Tabs;
             TabStrip.TabSelected += OnTabSelected;
             TabStrip.TabDraggedOver += OnTabDraggedOver;
-            TabStrip.ItemDroppedOnTab += OnItemDroppedOnTab;
+            TabStrip.TabDraggedOver += OnTabDraggedOver;
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");
             _log.AppendLine(_viewModel.StatusText);
@@ -1317,21 +1317,6 @@ public sealed partial class MainWindow : Window
             ShowTab(tab);
             _log.AppendLine($"拖拽悬停 → 切到标签页「{tab.Name}」");
         }
-    }
-
-    /// <summary>直接把图标/列表项丢在标签上 —— 追加到那一页末尾。</summary>
-    private void OnItemDroppedOnTab(object? sender, (DragPayload Payload, TabItemViewModel Tab) e)
-    {
-        var target = e.Tab;
-        if (!KindMatches(e.Payload, target))
-        {
-            _transientStatus = $"「{target.Name}」不收这一类项目";
-            UpdateStatusBar();
-            return;
-        }
-
-        int targetIndex = e.Payload.Kind == DragItemKind.Icon ? target.Icons.Count : target.ListItems.Count;
-        ApplyDrop(new DragDropRequest(e.Payload, target.Id, targetIndex));
     }
 
     /// <summary>页面里拖放落下 —— 交给 ViewModel 落库（Core 是唯一事实源）。</summary>

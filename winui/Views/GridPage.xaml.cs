@@ -53,20 +53,9 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
         _entrance = new EntranceAnimator(TileGrid);
 
-        // ⚠️⚠️ 起拖事件（`DragStarting` / `DragItemsStarting`）**收不到** ——
-        //   `ListViewBase` 内部处理并标记 handled，XAML 处理器不触发；WinUI 3 又不暴露对应
-        //   RoutedEvent，`AddHandler(handledEventsToo:true)` 也做不了（2026-09-16 实测，见 ERROR.md E25）。
-        //   所以载荷改走进程内会话（DragSession），**在按下时记下"拖谁"** ——
-        //   指针事件是能收到 handledEventsToo 的（实测有效）。
-        TileGrid.AddHandler(
-            PointerPressedEvent,
-            new PointerEventHandler(OnTilePointerPressed),
-            handledEventsToo: true);
-
-        TileGrid.AddHandler(
-            PointerReleasedEvent,
-            new PointerEventHandler(OnTilePointerReleased),
-            handledEventsToo: true);
+        // ⚠️ 这里**不再挂 PointerPressed**：实测它也收不到（日志里"按下"一行都没有）。
+        //    拖动链路只依赖两个实测可靠的事件：目标端 `DragOver` + 源端 `DragItemsCompleted`，
+        //    落点由 DragSession 在拖动中登记。详见 ERROR.md E25。
     }
 
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>
@@ -140,8 +129,8 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
             return;
         }
 
-        // 单纯点击 = 没拖动 ⇒ 顺手收掉拖动会话（防"会话残留"影响后续拖放）
-        DragSession.End();
+        // 单纯点击 = 没拖动 ⇒ 顺手清掉落点登记（防"上次拖动的落点"影响后续判断）
+        DragSession.ClearTarget();
 
         if (e.ClickedItem is IconTileViewModel tile)
         {
@@ -149,22 +138,23 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         }
     }
 
-    // ────────────────────────────── 拖动反馈（"浮起"占位，2026-09-14 第三版）──────────────────────────────
+    // ────────────────────────────── 拖动链路（2026-09-16 第四次返工后的最终形态）──────────────────────────────
     //
-    // 起拖**交给系统的原生拖拽**：**按下拖动即起拖（像 Windows 桌面），不再有长按门控**
-    // —— 用户明确要求取消长按那套判定（"只要有拖动的话都算"）。
-    // 这里只负责两件事：
-    //   ① 拖动开始时把原件"浮起"（轻微放大 + 半透明当占位）—— 跟着鼠标的是系统抓走的图块快照；
-    //   ② 起拖之后系统偶尔补的那次 ItemClick 不能当成"打开"。
-    // ⚠️ 压暗必须等拖拽视觉**抓取之后**（先 TryEnqueue 排一下），否则被抓走的那份也带 35% 透明度。
+    // 起拖交给系统的原生拖拽（按下拖动即起拖，用户明确要求取消长按门控）。
+    //
+    // ⚠️ 实测（ERROR.md E25）：本页**收不到** `DragStarting` / `DragItemsStarting` /
+    //    `PointerPressed(handledEventsToo)`，WinUI 3 也不暴露对应 RoutedEvent，
+    //    所以"拖的是谁"和"松手在哪"都不能靠那些事件。**实测可靠的只有两个**：
+    //      ① 目标端 `DragOver`；
+    //      ② 源端 `DragItemsCompleted`（`args.Items` 直接给出被拖的项，`args.DropResult` 给出落没落下）。
+    //    于是：DragOver 里把落点登记进 `DragSession`，等 `DragItemsCompleted` 到达时两边一拼即完成落库。
+    //    DataPackage 里永远是空的 ⇒ "载荷为空"正是"本应用内部拖动"的判据。
 
     private bool _suppressNextClick;
-    private FrameworkElement? _liftedContainer;
-    private IconTileViewModel? _pressedTile;   // 按下落在哪个图块上（= 本次拖动的对象）
-    private bool _dragStarted;                 // 本次拖动是否已经真的开始（由 DragOver 判定）
     private int _lastTracedIndex = -1;         // 拖动中只在落点变化时打一条日志，别刷屏
-    private int _lastDropIndex = -1;           // 本次拖动最后算出的落点（Drop 不来时兜底落库用）
+    private int _lastDropIndex = -1;           // 本次拖动最后登记的落点（日志/自检用）
     private bool _tracedDragOverEntry;         // 本次拖动是否已打过"首次进入 DragOver"的详情
+    private bool _dropSeen;                    // 本次拖动是否真的落在本页（Drop 事件到场）
 
     /// <summary>拖动链路诊断 —— 写 `%TEMP%\toolboxpanel-probe.log`（手感类问题只能用户手试，
     /// 有了这条链路日志，用户试一次就能定位"哪一步断了"）。</summary>
@@ -201,31 +191,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         }
 
         return (hasText, text, hasStorage);
-    }
-
-    /// <summary>"浮起"反馈：只用合成变换（Scale / Opacity），不碰布局 —— 不会把相邻图块挤走。</summary>
-    private void ApplyLift(FrameworkElement container, bool lifted)
-    {
-        try
-        {
-            container.CenterPoint = new Vector3(
-                (float)(container.ActualWidth / 2), (float)(container.ActualHeight / 2), 0f);
-            container.Scale = lifted ? new Vector3(1.08f, 1.08f, 1f) : new Vector3(1f, 1f, 1f);
-            container.Opacity = lifted ? 0.35 : 1.0;
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("GridPage.ApplyLift", ex);
-        }
-    }
-
-    private void EndLiftForDrag()
-    {
-        if (_liftedContainer is { } container)
-        {
-            ApplyLift(container, lifted: false);
-            _liftedContainer = null;
-        }
     }
     // ────────────────────────────── 右键菜单（W5：新建 / 编辑属性）──────────────────────────────
     //
@@ -361,92 +326,45 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         return null;
     }
 
-    // ────────────────────────────── 拖拽排序 ──────────────────────────────
+    // ────────────────────────────── 拖拽排序（2026-09-16 最终形态）──────────────────────────────
     //
-    // 载荷不走 DataPackage，走 DragSession（理由见文件头与本类构造函数注释 / ERROR.md E25）：
-    //   · 按下 → 记下"拖的是谁"并 Begin 会话（这是唯一能可靠收到的起点事件）；
-    //   · DragOver/Drop → 读会话判断"是不是本应用在拖这类东西"，再算落点、画插入竖条；
-    //   · 拖动开始/结束由 DragItemsCompleted 与 Drop 收口。
-
-    /// <summary>按下：记下被拖的图块，并开启拖动会话（跨页拖动也认得出）。</summary>
-    private void OnTilePointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        _pressedTile = FindTileFromSource(e.OriginalSource);
-
-        if (_pressedTile is null)
-        {
-            DragSession.End();
-            return;
-        }
-
-        DragSession.Begin(new DragPayload(DragItemKind.Icon, _tab.Id, _pressedTile.Model.Id));
-        DragTrace($"按下：{_pressedTile.DisplayName}（会话已开）");
-    }
-
-    /// <summary>松手：单纯点击（没起拖）就把会话收掉，避免影响后续别的拖放。</summary>
-    private void OnTilePointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_dragStarted)
-        {
-            DragSession.End();
-        }
-    }
-
-    /// <summary>
-    /// 拖动真的开始了（第一次 DragOver 才发现 —— 起拖事件收不到，这里是最早的可靠信号）：
-    /// 把原件"浮起"当占位。⚠️ 压暗延后一拍，免得被抓走的拖拽视觉也带 35% 透明度。
-    /// </summary>
-    private void EnsureLiftStarted()
-    {
-        if (_dragStarted)
-        {
-            return;
-        }
-
-        _dragStarted = true;
-        _suppressNextClick = true;   // 起拖之后系统补的那次 ItemClick 不能当"打开"
-
-        if (_pressedTile is not null && TileGrid.ContainerFromItem(_pressedTile) is FrameworkElement container)
-        {
-            _liftedContainer = container;
-            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
-        }
-    }
+    // 收不到任何起拖/指针事件（ERROR.md E25），所以只靠两个实测可靠的事件：
+    //   · 这里（目标端）在 `DragOver` 里**登记落点** → `DragSession.ReportTarget(...)`；
+    //   · 源端在 `DragItemsCompleted` 里带着"被拖项 + DropResult"来取走落点并落库。
+    // DataPackage 里永远是空的 ⇒ **"载荷为空 + 没有 StorageItems"就是"本应用内部拖动"的判据**。
 
     /// <summary>
     /// 只接受两类拖放：
-    ///   ① **本应用内部的图标重排**（文本载荷，见 <see cref="DragPayload"/>）；
+    ///   ① **本应用内部的图标重排**（DataPackage 为空 —— 框架不给我们写载荷的机会，见 E25）；
     ///   ② **从资源管理器拖进来的文件/文件夹/快捷方式**（StorageItems）—— 建新图标（原版语义）。
-    /// 其余一律拒绝（例如"图标拖到列表页"）。拖动中顺便算出落点并画指示线（只对内部重排有意义）。
+    /// 其余一律拒绝（例如"别处拖来的文本"）。拖动中顺便算出落点、登记给源端，并画插入竖条。
     /// </summary>
     private void OnTileDragOver(object sender, DragEventArgs e)
     {
         var (hasText, text, hasStorage) = DescribeData(e);
 
         // ⚠️ 无条件打一次"进入 DragOver"的详情：载荷有没有、是什么，一目了然。
-        //    （本应用内部拖动时 DataView 本来就是空的 —— 载荷走 DragSession。）
         if (!_tracedDragOverEntry)
         {
             _tracedDragOverEntry = true;
             DragTrace($"DragOver 首次：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage} "
-                      + $"会话={(DragSession.Current is null ? "无" : DragSession.Current.ItemId)}");
+                      + $"判定={(DragSession.LooksLikeInternalDrag(hasText, hasStorage) ? "内部拖动" : "非内部")}");
         }
 
-        var payload = DragSession.Take(_tab.DraggableKind);
-        if (payload is not null && !hasStorage)
+        if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
             e.AcceptedOperation = DataPackageOperation.Move;
             e.DragUIOverride.IsCaptionVisible = false;
-
-            EnsureLiftStarted();   // 到这一步才算"拖动真的开始了"
+            _suppressNextClick = true;   // 起拖之后系统补的那次 ItemClick 不能当"打开"
 
             var insertIndex = ComputeInsertIndex(e);
             _lastDropIndex = insertIndex;
+            DragSession.ReportTarget(_tab.Id, DragItemKind.Icon, insertIndex);
 
             if (insertIndex != _lastTracedIndex)
             {
                 _lastTracedIndex = insertIndex;
-                DragTrace($"DragOver：落点索引={insertIndex}");
+                DragTrace($"DragOver：落点索引={insertIndex}（已登记）");
             }
 
             // 拖动中**不移动任何图块**（用户 2026-09-15："只加竖条，不让位"），
@@ -458,7 +376,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
         if (hasStorage)
         {
-            // 外部拖入（含"会话残留"时的兜底）：接受"复制"语义，把路径交给宿主窗口建图标
+            // 外部拖入：接受"复制"语义（原版也是把拖入当成"新建图标"，不移动原文件）
             e.AcceptedOperation = DataPackageOperation.Copy;
             e.DragUIOverride.IsCaptionVisible = false;
             HideDropIndicator();
@@ -478,20 +396,18 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     private async void OnTileDrop(object sender, DragEventArgs e)
     {
         var (hasText, text, hasStorage) = DescribeData(e);
-        DragTrace($"Drop：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage} "
-                  + $"会话={(DragSession.Current is null ? "无" : DragSession.Current.ItemId)}");
+        DragTrace($"Drop：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage}");
 
-        // ① 本应用内部的重排/跨页移动（会话携带"拖的是谁"）
-        var payload = DragSession.Take(_tab.DraggableKind);
-        if (payload is not null && !hasStorage)
+        // ① 本应用内部的重排/跨页移动：**这里不做动作**（Drop 不一定来，而且它不带"拖的是谁"）。
+        //    但它是"真的落在本页"的**强信号** —— 记下来，给 DragItemsCompleted 用（载荷为空时
+        //    OS 可能把 DropResult 报成 None，光看 DropResult 会漏掉）。
+        if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
-            DragSession.End();
-
-            var insertIndex = ComputeInsertIndex(e);
+            _dropSeen = true;
+            _lastDropIndex = ComputeInsertIndex(e);
+            DragSession.ReportTarget(_tab.Id, DragItemKind.Icon, _lastDropIndex);
             HideDropIndicator();
-            DragTrace($"Drop（内部重排）：落点={insertIndex}");
-
-            ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
+            DragTrace($"Drop（内部拖动）：落点={_lastDropIndex} ⇒ 留给 DragItemsCompleted 收口");
             return;
         }
 
@@ -538,34 +454,58 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     }
 
     /// <summary>
-    /// 拖动结束（含取消）：收掉插入竖条、复位"浮起"。
-    /// 拖动期间没有移动任何图块，所以这里**不需要**做任何"还原"或"补落库"——
-    /// 真正的顺序变化只发生在 Drop 落库那一步。
+    /// ★ **一次内部拖动的收口点**（源端事件，实测可靠）：
+    /// `args.Items` 给出**被拖的图块本身**，`args.DropResult` 给出"到底落下了没有"，
+    /// 再加上目标端在 `DragOver` 里登记的落点，三者一拼就是完整的一次重排/跨页移动。
+    ///
+    /// <para>⚠️ 这正是绕开"起拖事件全收不到"的关键：**拖动过程中我们不知道拖的是谁，
+    /// 但拖动结束这一刻框架会告诉我们。**</para>
     /// </summary>
     private void OnTileDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
     {
         HideDropIndicator();
-        EndLiftForDrag();
         _lastTracedIndex = -1;
-        _dragStarted = false;
-        _pressedTile = null;
+        _suppressNextClick = false;
 
-        // ⚠️ 兜底：`Drop` 事件不一定来（载荷为空时 OS 可能不投递）。
-        //    只要"会话还在"（= Drop 没处理过，处理时就会 End）且这次确实是落在本页（DropResult=Move），
-        //    就按**最后一次算出的落点**落库 —— 别让用户白拖一次。落点由 DragOver 记录，正是用户看到竖条的位置。
-        var session = DragSession.Current;
-        var dropIndex = _lastDropIndex;
+        var target = DragSession.TakeTarget();
+        var tile = args.Items.Count > 0 ? args.Items[0] as IconTileViewModel : null;
+        var dropResult = args.DropResult;
+        var dropSeen = _dropSeen;
+        _dropSeen = false;
         _lastDropIndex = -1;
-        DragSession.End();
 
-        if (session is not null && args.DropResult == DataPackageOperation.Move && dropIndex >= 0)
+        DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
+                  + $"被拖={tile?.DisplayName ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
+                  + $"Drop到过本页={dropSeen}");
+
+        if (tile is null || target is null)
         {
-            DragTrace($"DragItemsCompleted：Drop 没来但 DropResult=Move ⇒ 按落点 {dropIndex} 补落库");
-            ItemDropped?.Invoke(this, new DragDropRequest(session, _tab.Id, dropIndex));
+            return;   // 取消（Esc / 丢到窗外）或没进过本页 ⇒ 什么都不做
+        }
+
+        if (target.Value.Kind != DragItemKind.Icon)
+        {
+            DragTrace("→ 落点是列表页，图标不进列表页 ⇒ 忽略");
             return;
         }
 
-        DragTrace($"DragItemsCompleted：DropResult={args.DropResult}");
+        // ⚠️ 结算**延后一拍**：`Drop` 与 `DragItemsCompleted` 的先后顺序在本项目实测不保证，
+        //    先让可能到来的 Drop 把 `_dropSeen` 置上，再决定"到底算不算落下"。
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var landed = dropResult == DataPackageOperation.Move || dropSeen || _dropSeen;
+            _dropSeen = false;
+
+            if (!landed)
+            {
+                DragTrace("→ 判定：拖动被取消（DropResult 非 Move 且没收到 Drop）⇒ 不落库");
+                return;
+            }
+
+            var payload = new DragPayload(DragItemKind.Icon, _tab.Id, tile.Model.Id);
+            DragTrace($"→ 落库：{tile.DisplayName} → 页 {target.Value.TabId} 第 {target.Value.InsertIndex} 位");
+            ItemDropped?.Invoke(this, new DragDropRequest(payload, target.Value.TabId, target.Value.InsertIndex));
+        });
     }
 
     // ────────────────────────────── 插入竖条（2026-09-15 起，唯一一种拖拽反馈）──────────────────────────────
