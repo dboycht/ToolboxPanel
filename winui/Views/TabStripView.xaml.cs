@@ -486,11 +486,25 @@ public sealed partial class TabStripView : UserControl
         _dragOverTab = null;
     }
 
-    /// <summary>载荷来自本应用、且格式合法才接受（具体"哪一页收哪一类"由主窗口判）。</summary>
+    /// <summary>
+    /// 载荷来自本应用才接受（具体"哪一页收哪一类"由主窗口判）。
+    ///
+    /// <para>⚠️ 2026-09-16：**改读进程内 <see cref="DragSession"/>，不再读 DataPackage** ——
+    /// <c>ListViewBase</c> 把起拖事件整个吞掉，`args.Data.SetText(...)` 根本执行不到，
+    /// DataView 里一个格式都没有（实测：`Contains(Text)=False`）。
+    /// 详见 `ERROR.md` E25 与 `DragSession.cs`。</para>
+    /// </summary>
     private static bool TryReadPayload(DragEventArgs e, out DragPayload payload)
     {
         payload = null!;
 
+        if (DragSession.Current is { } session)
+        {
+            payload = session;
+            return true;
+        }
+
+        // 退路：万一将来载荷真进了 DataPackage（例如外部来源），照旧解析文本。
         try
         {
             if (!e.DataView.Contains(StandardDataFormats.Text))

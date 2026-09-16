@@ -80,8 +80,9 @@
             起拖交给**系统的原生拖拽**：按下拖动即起拖（像 Windows 桌面）—— 用户明确要求取消长按门控。
             （曾经把这里设成 False + 自己用长按定时器起拖，那套已按用户要求删除。）
 
-            ⚠️ **`DragItemsStarting` 必须接**（2026-09-16 实测根因）：`ListViewBase` 自己起拖时抛的是
-               这个事件，`DragStarting` **一次都不会触发** ⇒ 载荷写不进 DataPackage ⇒
+            ⚠️ **起拖事件在代码里用 `AddHandler(..., handledEventsToo: true)` 挂**（2026-09-16 实测根因）：
+               `ListViewBase` 内部会处理并**标记 handled** `DragStarting` / `DragItemsStarting`，
+               写在 XAML 上的处理器**一次都收不到** ⇒ 载荷写不进 DataPackage ⇒
                目标端只能拒绝（系统光标显示"禁止"）、既没有插入竖条也不会插入。
         -->
         <GridView x:Name="TileGrid"
@@ -91,9 +92,8 @@
                   IsItemClickEnabled="True"
                   ItemClick="OnTileClick"
                   CanDrag="True"
+                  CanDragItems="True"
                   AllowDrop="True"
-                  DragItemsStarting="OnTileDragItemsStarting"
-                  DragStarting="OnTileDragStarting"
                   DragOver="OnTileDragOver"
                   Drop="OnTileDrop"
                   DragItemsCompleted="OnTileDragItemsCompleted"
