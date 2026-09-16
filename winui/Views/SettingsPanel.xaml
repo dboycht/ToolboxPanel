@@ -115,6 +115,18 @@
                                Text="入场是**整页一起淡入**（图标/列表项同时从无到有），没有逐个浮现的交错。" />
                 </StackPanel>
 
+                <!-- ── 数据（备份）── -->
+                <TextBlock Text="数据" Style="{StaticResource SectionHeaderStyle}" />
+                <TextBlock x:Name="DataDirText" Style="{StaticResource SectionHintStyle}" Text="" />
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <Button x:Name="ExportBackupButton" Content="导出备份…" Click="OnExportBackupClick"
+                            ToolTipService.ToolTip="把 tabs.json / config.json / 图标缓存打包成 ZIP（Ctrl+Shift+E）" />
+                    <Button x:Name="ImportBackupButton" Content="导入备份…" Click="OnImportBackupClick"
+                            ToolTipService.ToolTip="从 ZIP 恢复数据（会先清空当前数据，Ctrl+Shift+I）" />
+                </StackPanel>
+                <TextBlock Style="{StaticResource SectionHintStyle}"
+                           Text="备份包为 ZIP：内含 metadata.json 与 data/ 下的 tabs.json、config.json、图标缓存；与旧版（v1.11.6 / v2.0.1）互相兼容。" />
+
                 <!-- ── 底部 ── -->
                 <Button x:Name="ResetButton" Content="恢复默认设置" Margin="0,12,0,0" Click="OnResetClick" />
             </StackPanel>

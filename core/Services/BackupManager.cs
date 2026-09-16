@@ -187,7 +187,12 @@ public static class BackupManager
                 Directory.CreateDirectory(directory);
             }
 
-            using (var archive = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+            // ⚠️ 用 FileStream(FileMode.Create) 而不是 `ZipFile.Open(path, Create)`：
+            //    后者内部是 **FileMode.CreateNew**，目标文件已存在会抛
+            //    "The file '...' already exists."（实测踩到）；原版 Python 的
+            //    `zipfile.ZipFile(path, "w")` 是**覆盖**语义，这里必须对齐。
+            using (var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+            using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
             {
                 // ① 元数据
                 log?.Invoke("写入元数据...");

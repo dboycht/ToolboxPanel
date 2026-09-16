@@ -34,6 +34,12 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>点关闭 —— 宿主收起面板。</summary>
     public event EventHandler? CloseRequested;
 
+    /// <summary>点「导出备份…」—— 宿主负责选目录、跑进度、反馈（面板不碰文件 IO）。</summary>
+    public event EventHandler? ExportBackupRequested;
+
+    /// <summary>点「导入备份…」—— 宿主负责选文件、二次确认、跑进度、重载。</summary>
+    public event EventHandler? ImportBackupRequested;
+
     /// <summary>绑定设置与存储（面板只读这两者的引用，不接管生命周期）。</summary>
     public void Bind(SettingsStore store, AppSettings settings)
     {
@@ -41,6 +47,16 @@ public sealed partial class SettingsPanel : UserControl
         _settings = settings;
         SyncUiFromModel();
     }
+
+    /// <summary>显示数据目录（"数据"一节里的那行小字）—— 由宿主传入，面板不去定位路径。</summary>
+    public void SetDataDirectory(string? path)
+        => DataDirText.Text = $"数据目录：{path ?? "（未定位）"}";
+
+    private void OnExportBackupClick(object sender, RoutedEventArgs e)
+        => ExportBackupRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnImportBackupClick(object sender, RoutedEventArgs e)
+        => ImportBackupRequested?.Invoke(this, EventArgs.Empty);
 
     /// <summary>外部（如命令行的临时覆盖）改了模型后，让面板重新显示一次。</summary>
     public void Refresh() => SyncUiFromModel();

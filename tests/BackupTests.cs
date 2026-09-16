@@ -117,6 +117,29 @@ public class BackupTests
         TryDelete(zip);
     }
 
+    [Fact]
+    public void 导出_目标文件已存在时覆盖而不是失败()
+    {
+        // ⚠️ 这条是被探针抓出来的真 bug：`ZipFile.Open(path, Create)` 内部是 FileMode.CreateNew，
+        //    目标已存在会抛 "The file ... already exists."；原版 Python 是覆盖语义（"w"），必须对齐。
+        using var temp = new TempDataDirectory();
+        WriteTabsJson(temp.Path, """{"version":1,"tabs":[]}""");
+
+        var zip = Path.Combine(temp.Path, "..", $"{Guid.NewGuid():N}.zip");
+        File.WriteAllText(zip, "我是上一次留下的同名文件");
+
+        var result = BackupManager.Export(temp.Path, zip, "2.0.2");
+
+        Assert.True(result.Success, result.Message);
+
+        using (var archive = ZipFile.OpenRead(zip))
+        {
+            Assert.Contains("metadata.json", archive.Entries.Select(e => e.FullName));   // 已是合法包
+        }
+
+        TryDelete(zip);
+    }
+
     // ────────────────────────────── 往返 ──────────────────────────────
 
     [Fact]

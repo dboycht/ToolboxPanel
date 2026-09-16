@@ -19,6 +19,15 @@
     xmlns:views="using:ToolboxPanel.Views">
 
     <Grid x:Name="RootGrid" Background="Transparent">
+        <!--
+            备份快捷键：与原版 v1.11.6 的「文件」菜单一致（Ctrl+Shift+E 导出 / Ctrl+Shift+I 导入）。
+            挂在根 Grid 上 ⇒ 焦点在窗口内任意位置都生效。
+        -->
+        <Grid.KeyboardAccelerators>
+            <KeyboardAccelerator Key="E" Modifiers="Control,Shift" Invoked="OnExportBackupAccelerator" />
+            <KeyboardAccelerator Key="I" Modifiers="Control,Shift" Invoked="OnImportBackupAccelerator" />
+        </Grid.KeyboardAccelerators>
+
         <Grid.RowDefinitions>
             <RowDefinition Height="34" />
             <RowDefinition Height="Auto" />

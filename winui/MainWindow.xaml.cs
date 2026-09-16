@@ -19,6 +19,7 @@ using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using ToolboxPanel.Core.Models;
@@ -678,6 +679,9 @@ public sealed partial class MainWindow : Window
 
     // ────────────────────────────── 设置 ──────────────────────────────
 
+    /// <summary>设置相关事件是否已订阅（导入备份后会重新读盘，避免重复订阅）。</summary>
+    private bool _settingsHooked;
+
     /// <summary>读设置；演示模式把 config.json 写到临时目录，**绝不碰用户真实数据目录**。</summary>
     private void LoadSettings()
     {
@@ -701,25 +705,36 @@ public sealed partial class MainWindow : Window
             }
 
             Settings.Bind(_settings, _settingsData);
+            Settings.SetDataDirectory(_viewModel?.DataDirectory);
 
             // ⚠️ 这里一定要 try/catch：设置面板的每一项改动都会走到这条链，
             //    链上任何一处抛异常（例如切主题时 WinUI 的背景配置回调抛 ArgumentException，
             //    见 ERROR.md E16）都会变成"未处理异常 → 应用直接崩"。
             //    外观类失败必须是**软**的：落盘 + 保持原样；用户顶多看到"没变色"，不该丢掉整个应用。
-            Settings.SettingApplied += (_, _) =>
+            //
+            // ⚠️ 事件**只订阅一次**：导入备份之后会再次调用本方法（重新读盘），
+            //    不加这道闸门就会重复订阅 ⇒ 一次改动套用两遍（见 _settingsHooked）。
+            if (!_settingsHooked)
             {
-                try
-                {
-                    ApplyAllSettings();
-                }
-                catch (Exception ex)
-                {
-                    App.WriteCrash("MainWindow.SettingApplied/ApplyAllSettings", ex);
-                }
-            };
+                _settingsHooked = true;
 
-            Settings.PreviewRequested += (_, _) => CurrentPage()?.RevealWhenReady();
-            Settings.CloseRequested += (_, _) => ShowSettings(false);
+                Settings.SettingApplied += (_, _) =>
+                {
+                    try
+                    {
+                        ApplyAllSettings();
+                    }
+                    catch (Exception ex)
+                    {
+                        App.WriteCrash("MainWindow.SettingApplied/ApplyAllSettings", ex);
+                    }
+                };
+
+                Settings.PreviewRequested += (_, _) => CurrentPage()?.RevealWhenReady();
+                Settings.CloseRequested += (_, _) => ShowSettings(false);
+                Settings.ExportBackupRequested += async (_, _) => await ExportBackupAsync();
+                Settings.ImportBackupRequested += async (_, _) => await ImportBackupAsync();
+            }
 
             _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
             _log.AppendLine($"设置 = {DescribeSettings(_settingsData)}");
@@ -756,6 +771,204 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(!_settingsPanelOpen);
+
+    // ────────────────────────────── 备份：导出 / 导入 ZIP（W5）──────────────────────────────    //
+    // 逻辑全在 Core 的 `BackupManager`（14 项单测，含与**原版 Python 的双向兼容**）；
+    // 这里只负责：选路径 → 二次确认 → 起进度对话框 → 后台线程跑 → 收尾反馈。
+    // ⚠️ 文件 IO 一律放后台线程；进度与日志用 DispatcherQueue 切回 UI 线程（UI 线程纪律）。
+
+    private async void OnExportBackupAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        await ExportBackupAsync();
+    }
+
+    private async void OnImportBackupAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        await ImportBackupAsync();
+    }
+
+    /// <summary>导出备份：选目录 → 写 ZIP（metadata.json 在根 + 数据在 <c>data/</c> 前缀下）→ 进度反馈。</summary>
+    private async Task ExportBackupAsync()
+    {
+        try
+        {
+            if (_viewModel is null)
+            {
+                return;
+            }
+
+            if (_isDemo)
+            {
+                ReportTransient("演示模式：不会真的导出");
+                return;
+            }
+
+            var folder = await FilePickers.PickFolderAsync(AppWindow.Id);
+            if (string.IsNullOrEmpty(folder))
+            {
+                return;
+            }
+
+            var zipPath = Path.Combine(folder, BackupManager.UniqueFileName());
+            var dataDirectory = _viewModel.DataDirectory;
+            var version = AppInfo.Version;   // 版本号只读程序集（csproj 是单一来源）
+
+            ShowSettings(false);
+            var dialog = ShowBackupDialog("导出数据");
+
+            var result = await Task.Run(() => BackupManager.Export(
+                dataDirectory,
+                zipPath,
+                version,
+                progress => DispatcherQueue.TryEnqueue(() => dialog.Report(progress)),
+                line => DispatcherQueue.TryEnqueue(() => dialog.AppendLog(line))));
+
+            ReportBackupResult(dialog, "导出", result);
+
+            if (result.Success)
+            {
+                ReportTransient($"数据已导出到 {result.Message}");
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ExportBackupAsync", ex);
+            ReportTransient($"导出失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 导入备份：选 ZIP → **二次确认**（会清空当前数据）→ 落盘 → 重载界面。
+    /// ⚠️ 失败时 Core 保证**一个字节都不改**（metadata 校验在所有清理动作之前）。
+    /// </summary>
+    private async Task ImportBackupAsync()
+    {
+        try
+        {
+            if (_viewModel is null)
+            {
+                return;
+            }
+
+            if (_isDemo)
+            {
+                ReportTransient("演示模式：不会真的导入");
+                return;
+            }
+
+            var zipPath = await FilePickers.PickFileAsync(AppWindow.Id, new[] { ".zip" });
+            if (string.IsNullOrEmpty(zipPath))
+            {
+                return;
+            }
+
+            var confirmed = await ConfirmAsync(
+                "确认导入",
+                "导入将清空当前所有标签页、图标和设置，并用备份文件的内容覆盖。\n此操作不可撤销，确定继续吗？",
+                "导入");
+            if (!confirmed)
+            {
+                return;
+            }
+
+            var dataDirectory = _viewModel.DataDirectory;
+
+            ShowSettings(false);
+            var dialog = ShowBackupDialog("导入数据");
+
+            var result = await Task.Run(() => BackupManager.Import(
+                zipPath,
+                dataDirectory,
+                progress => DispatcherQueue.TryEnqueue(() => dialog.Report(progress)),
+                line => DispatcherQueue.TryEnqueue(() => dialog.AppendLog(line))));
+
+            ReportBackupResult(dialog, "导入", result);
+
+            if (result.Success)
+            {
+                ReloadAfterImport();
+                ReportTransient("数据已导入，界面已刷新");
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ImportBackupAsync", ex);
+            ReportTransient($"导入失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>起一个进度对话框（**非阻塞**显示；结束时由调用方 MarkDone，用户再关掉）。</summary>
+    private BackupProgressDialog ShowBackupDialog(string title)
+    {
+        var dialog = new BackupProgressDialog(title)
+        {
+            XamlRoot = RootGrid.XamlRoot,
+            RequestedTheme = CurrentElementTheme,   // E18：ContentDialog 不继承根元素主题
+        };
+
+        _ = dialog.ShowAsync().AsTask();
+        return dialog;
+    }
+
+    private void ReportBackupResult(BackupProgressDialog dialog, string action, BackupResult result)
+    {
+        if (result.Success)
+        {
+            dialog.MarkDone(true, $"{action}完成：{result.Message}");
+            _log.AppendLine($"{action}备份成功 = {result.Message}");
+        }
+        else
+        {
+            dialog.MarkDone(false, $"{action}失败：{result.Message}");
+            _log.AppendLine($"{action}备份失败 = {result.Message}");
+            ReportTransient($"{action}失败：{result.Message}");
+        }
+
+        FlushLog();
+    }
+
+    /// <summary>
+    /// 导入成功后重载 —— **tabs.json 与 config.json 都可能被整包替换**，所以三步都要做：
+    /// ① 重新读设置并整份套用（主题 / 材质 / 动效都可能变了）；
+    /// ② 重建数据模型（<see cref="MainViewModel.Load"/> 重建 Tabs 与图标缓存引用）；
+    /// ③ **丢弃页面缓存**（页面持有旧的 tab 视图模型实例，不丢就会显示旧内容），再显示第一页。
+    /// </summary>
+    private void ReloadAfterImport()
+    {
+        try
+        {
+            LoadSettings();
+            ApplyAllSettings();
+
+            _viewModel?.Load();
+
+            PageHost.Children.Clear();
+            _pages.Clear();
+            _pageWrappers.Clear();
+            _currentPageId = null;
+
+            TabStrip.ItemsSource = _viewModel?.Tabs;
+            Settings.SetDataDirectory(_viewModel?.DataDirectory);
+
+            _log.AppendLine("导入后重载 = 设置 + 数据 + 页面缓存全部重建");
+
+            if (_viewModel is { Tabs.Count: > 0 })
+            {
+                TabStrip.SelectedTab = _viewModel.Tabs[0];
+                ShowTab(_viewModel.Tabs[0]);
+            }
+            else
+            {
+                UpdateStatusBar();
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ReloadAfterImport", ex);
+        }
+    }
 
     /// <summary>
     /// 标题栏 ⓘ —— 弹「关于」对话框。
