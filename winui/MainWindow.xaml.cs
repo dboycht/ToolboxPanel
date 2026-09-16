@@ -767,6 +767,13 @@ public sealed partial class MainWindow : Window
             page.ApplyTheme(_themePalette);   // 页面里的固定资源键（落点指示线等）随主题重绘
         }
 
+        // 图标大小三档：只对网格页有意义（列表页没有图块，不实现这个契约）
+        var iconSize = IconSizeMetrics.For(settings.IconSize);
+        foreach (var page in _pages.Values.OfType<IIconSizedPage>())
+        {
+            page.ApplyIconSize(iconSize);
+        }
+
         Settings.Refresh();
     }
 
@@ -1442,12 +1449,18 @@ public sealed partial class MainWindow : Window
 
     private UIElement CreatePage(TabItemViewModel tab)
     {
-        // 页面创建时就要套一次主题：页里的固定资源键（落点指示线）不会自己变
+        // 页面创建时就要套一次主题与图标大小：
+        // 页里的固定资源键（落点指示线）不会自己变，图块尺寸也得按当前档起始。
         void ApplyThemeIfAnimated(UIElement page)
         {
             if (page is IAnimatedPage animated)
             {
                 animated.ApplyTheme(_themePalette);
+            }
+
+            if (page is IIconSizedPage sized)
+            {
+                sized.ApplyIconSize(IconSizeMetrics.For((_settingsData ?? new AppSettings()).IconSize));
             }
         }
 

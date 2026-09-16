@@ -170,6 +170,7 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
 {
     private string _displayName;
     private ImageSource? _iconSource;
+    private IconSizeMetrics _size = IconSizeMetrics.Medium;
 
     public IconTileViewModel(IconModel model, ImageSource? iconSource)
     {
@@ -209,6 +210,50 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
     public bool HasIcon => IconSource is not null;
 
     public bool HasNoIcon => IconSource is null;
+
+    // ────────────────────────────── 图标大小三档（设置：小/中/大）──────────────────────────────
+    //
+    // 尺寸表在 Core（`IconSizeMetrics`，可单测；medium 与"已定版密度"逐值一致）。
+    // 模板里 x:Bind Mode=OneWay 绑下面这几个 ⇒ 换档时**就地刷新**，不用重建图块、也不动图标位图缓存。
+
+    /// <summary>当前档位（默认 medium；由页面在创建时与设置变化时统一下发）。</summary>
+    public IconSizeMetrics Size
+    {
+        get => _size;
+        private set
+        {
+            if (_size == value)
+            {
+                return;
+            }
+
+            _size = value;
+
+            foreach (var name in new[]
+                     {
+                         nameof(TileWidth), nameof(TileHeight), nameof(IconPixels),
+                         nameof(GlyphPixels), nameof(FontSize), nameof(LineHeight),
+                     })
+            {
+                PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+            }
+        }
+    }
+
+    /// <summary>套用一档尺寸（页面调用；重复套用同一档不会触发通知）。</summary>
+    public void ApplySize(IconSizeMetrics metrics) => Size = metrics;
+
+    public double TileWidth => _size.TileWidth;
+
+    public double TileHeight => _size.TileHeight;
+
+    public double IconPixels => _size.IconPixels;
+
+    public double GlyphPixels => _size.GlyphPixels;
+
+    public double FontSize => _size.FontSize;
+
+    public double LineHeight => _size.LineHeight;
 
     /// <summary>图标类型对应的字形（与 Core 的兜底图标语义一致，仅作显示兜底）。</summary>
     public string Glyph => Model.Type switch

@@ -37,10 +37,13 @@ using Windows.Storage;
 
 namespace ToolboxPanel.Views;
 
-public sealed partial class GridPage : UserControl, IAnimatedPage
+public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPage
 {
     private readonly TabItemViewModel _tab;
     private readonly EntranceAnimator _entrance;
+
+    /// <summary>当前图标大小档（默认 medium；由主窗口在创建页面与设置变化时下发）。</summary>
+    private IconSizeMetrics _iconSize = IconSizeMetrics.Medium;
 
     public GridPage(TabItemViewModel tab)
     {
@@ -53,9 +56,50 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
         _entrance = new EntranceAnimator(TileGrid);
 
+        // 图块容器尺寸由代码按档位设置（样式里那对 68×72 只是 medium 的默认值）：
+        // 新实现/回收再利用的容器都要在这里补一次，否则换档后滚动出来的图块会是旧尺寸。
+        TileGrid.ContainerContentChanging += (_, args) =>
+        {
+            if (!args.InRecycleQueue && args.ItemContainer is FrameworkElement container)
+            {
+                ApplyContainerSize(container);
+            }
+        };
+
         // ⚠️ 这里**不再挂 PointerPressed**：实测它也收不到（日志里"按下"一行都没有）。
         //    拖动链路只依赖两个实测可靠的事件：目标端 `DragOver` + 源端 `DragItemsCompleted`，
         //    落点由 DragSession 在拖动中登记。详见 ERROR.md E25。
+    }
+
+    /// <summary>
+    /// 套用"图标大小"档（设置：小 / 中 / 大）：
+    /// ① 图块视图模型换档（模板 x:Bind OneWay ⇒ 图标、字形、名称字号就地刷新）；
+    /// ② **已实现**容器的尺寸立刻改；未实现的会在 <c>ContainerContentChanging</c> 里补。
+    /// ⚠️ 幂等：同一档重复下发不产生任何变化（设置一变就整份重套，见 MainWindow.ApplyAllSettings）。
+    /// ⚠️ 图标位图**不重新提取**：缓存仍是同一份（默认 64px），这里只改显示尺寸。
+    /// </summary>
+    public void ApplyIconSize(IconSizeMetrics metrics)
+    {
+        _iconSize = metrics;
+
+        foreach (var tile in _tab.Icons)
+        {
+            tile.ApplySize(metrics);
+        }
+
+        for (int i = 0; i < _tab.Icons.Count; i++)
+        {
+            if (TileGrid.ContainerFromIndex(i) is FrameworkElement container)
+            {
+                ApplyContainerSize(container);
+            }
+        }
+    }
+
+    private void ApplyContainerSize(FrameworkElement container)
+    {
+        container.Width = _iconSize.TileWidth;
+        container.Height = _iconSize.TileHeight;
     }
 
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>

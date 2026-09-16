@@ -94,6 +94,15 @@ public sealed partial class SettingsPanel : UserControl
             };
 
             ShowCountsSwitch.IsOn = _settings.ShowTabCounts;
+
+            // 图标大小：只认三档（Core 的 IconSizeMetrics 归一化，未知一律 medium）
+            IconSizeChoices.SelectedIndex = IconSizeMetrics.For(_settings.IconSize).Name switch
+            {
+                "small" => 0,
+                "large" => 2,
+                _ => 1,
+            };
+
             AnimationSwitch.IsOn = _settings.AnimationsEnabled;
             DurationSlider.Value = _settings.AnimationDurationMs;
             EasingBox.SelectedIndex = _settings.AnimationEasing switch
@@ -156,6 +165,15 @@ public sealed partial class SettingsPanel : UserControl
 
     private void OnShowCountsToggled(object sender, RoutedEventArgs e)
         => Apply(s => s.ShowTabCounts = ShowCountsSwitch.IsOn);
+
+    /// <summary>图标大小：只写线名（small/medium/large），由 Core 的尺寸表解释。</summary>
+    private void OnIconSizeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (IconSizeChoices.SelectedItem is RadioButton { Tag: string wire })
+        {
+            Apply(s => s.IconSize = IconSizeMetrics.For(wire).WireName);
+        }
+    }
 
     private void OnAnimationsToggled(object sender, RoutedEventArgs e)
         => Apply(s => s.AnimationsEnabled = AnimationSwitch.IsOn);

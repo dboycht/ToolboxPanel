@@ -94,6 +94,17 @@
                 <TextBlock Style="{StaticResource SectionHintStyle}"
                            Text="网格页的图标字形是密集方格，列表页是项目符号列表，便于一眼区分。" />
 
+                <!-- ── 图标 ── -->
+                <TextBlock Text="图标" Style="{StaticResource SectionHeaderStyle}" />
+                <RadioButtons x:Name="IconSizeChoices" Header="图标大小"
+                              SelectionChanged="OnIconSizeChanged">
+                    <RadioButton Content="小" Tag="small" />
+                    <RadioButton Content="中（默认）" Tag="medium" />
+                    <RadioButton Content="大" Tag="large" />
+                </RadioButtons>
+                <TextBlock Style="{StaticResource SectionHintStyle}"
+                           Text="只影响网格页图块的显示大小；图标位图仍是同一份缓存，切换不会重新提取。" />
+
                 <!-- ── 动效 ── -->
                 <TextBlock Text="动效" Style="{StaticResource SectionHeaderStyle}" />
                 <ToggleSwitch x:Name="AnimationSwitch" Header="启用动效"
