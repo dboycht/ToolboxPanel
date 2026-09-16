@@ -99,7 +99,24 @@
                   DragItemsCompleted="OnTileDragItemsCompleted"
                   ContextRequested="OnContextRequested"
                   Padding="4,3"
-                  Background="Transparent" />
+                  Background="Transparent">
+
+            <!--
+                ⚠️ 2026-09-16 用户反馈："插入后图标所有会展示一下重新进入动画"。
+                根因：GridView 默认的 ItemContainerTransitions 是
+                  [AddDeleteThemeTransition, ContentThemeTransition, ReorderThemeTransition, EntranceThemeTransition]
+                —— **拖动时框架会回收/重建被拖项的容器**（程序化改集合不会），
+                于是 EntranceThemeTransition（入场）+ ContentThemeTransition（内容变化淡入）会再播一遍，
+                观感就是"所有图标重新进入一次"。
+                这里**只保留 ReorderThemeTransition**（它只做"位置移动"的过渡，不会淡入），
+                应用自己的入场效果由 EntranceAnimator 的"整片淡入"负责，不依赖这些内置过渡。
+            -->
+            <GridView.ItemContainerTransitions>
+                <TransitionCollection>
+                    <ReorderThemeTransition />
+                </TransitionCollection>
+            </GridView.ItemContainerTransitions>
+        </GridView>
 
         <!-- 空页提示（没有图标时显示） -->
         <StackPanel x:Name="EmptyHint"

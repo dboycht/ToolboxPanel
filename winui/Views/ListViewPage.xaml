@@ -64,7 +64,19 @@
                   Drop="OnRowDrop"
                   DragItemsCompleted="OnRowDragItemsCompleted"
                   Padding="6,4"
-                  Background="Transparent" />
+                  Background="Transparent">
+
+            <!--
+                ⚠️ 同网格页：默认的 ItemContainerTransitions 带 EntranceThemeTransition /
+                ContentThemeTransition，拖动重排时框架重建容器会把它们再播一遍
+                （观感 = "所有项重新进入一次"）。只保留 ReorderThemeTransition（只做位移过渡）。
+            -->
+            <ListView.ItemContainerTransitions>
+                <TransitionCollection>
+                    <ReorderThemeTransition />
+                </TransitionCollection>
+            </ListView.ItemContainerTransitions>
+        </ListView>
 
         <StackPanel x:Name="EmptyHint"
                     VerticalAlignment="Center" HorizontalAlignment="Center"
