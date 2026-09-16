@@ -161,6 +161,40 @@ public sealed class MainViewModel
     }
 
     /// <summary>
+    /// 「批量删除」：把勾选的图标一次删掉（Core 侧**一次落盘** + 连带删缓存文件），
+    /// 再把它们从界面集合移除并刷新标签栏数量。
+    /// 返回**实际删除的数量**（0 = 演示模式 / 页不存在 / 一个都没匹配上，此时什么都不做）。
+    /// </summary>
+    public int RemoveIcons(string tabId, IReadOnlyList<string> iconIds)
+    {
+        if (_store is null)
+        {
+            return 0;
+        }
+
+        var removed = _store.RemoveIcons(tabId, iconIds);
+        if (removed.Count == 0)
+        {
+            return 0;
+        }
+
+        var tab = FindTab(tabId);
+        if (tab is not null)
+        {
+            var removedIds = removed.Select(icon => icon.Id).ToHashSet(StringComparer.Ordinal);
+
+            foreach (var tile in tab.Icons.Where(tile => removedIds.Contains(tile.Model.Id)).ToList())
+            {
+                tab.Icons.Remove(tile);
+            }
+
+            tab.NotifyCountLabel();
+        }
+
+        return removed.Count;
+    }
+
+    /// <summary>
     /// 「删除」：Core 落库（连带删掉图标缓存文件）→ 从界面集合里移除 → 刷新标签栏数量。
     /// 返回 false 表示演示模式或找不到该图标（此时**什么都不做**）。
     /// </summary>

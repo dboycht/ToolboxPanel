@@ -41,6 +41,19 @@
 
         <DataTemplate x:Key="IconTileTemplate" x:DataType="vm:IconTileViewModel">
             <Grid HorizontalAlignment="Stretch" VerticalAlignment="Top">
+
+                <!--
+                    批量管理的勾选框（仅批量模式可见）。
+                    ⚠️ `IsHitTestVisible=False`：**它只作指示**，点击一律由图块自己处理
+                       （OnTileClick 在批量模式下切换勾选）—— 这样"点哪里都能勾"，不会出现
+                       "点方框有反应、点图标没反应"的不一致。
+                -->
+                <CheckBox IsChecked="{x:Bind IsChecked, Mode=OneWay}"
+                          Visibility="{x:Bind BulkCheckVisibility, Mode=OneWay}"
+                          IsHitTestVisible="False"
+                          MinWidth="0" Padding="0" Width="20" Height="20"
+                          HorizontalAlignment="Left" VerticalAlignment="Top" />
+
                 <StackPanel VerticalAlignment="Top" Spacing="2">
 
                     <!-- 真图标（data/icons/*.png 缓存） -->
@@ -71,6 +84,36 @@
     </UserControl.Resources>
 
     <Grid>
+        <Grid.RowDefinitions>
+            <!-- 第 0 行 = 批量管理条（仅批量模式可见）；其余内容都在第 1 行 -->
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!--
+            批量管理条（照原版"批量管理模式"的语义，形态适配我们没有菜单栏的窗口）：
+              · 进入方式：网格空白处右键 → 「批量管理」（原版是 "视图/编辑" 菜单里的一项）
+              · 条上有：模式提示 + 已选数量 + 全选 + 批量删除勾选图标 + 退出批量管理
+              · 退出后自动清空所有勾选（与原版 set_batch_mode(False) 一致）
+        -->
+        <Border x:Name="BulkBar" Grid.Row="0" Visibility="Collapsed"
+                Padding="8,6" CornerRadius="6" Margin="4,3,4,0"
+                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <FontIcon Glyph="&#xE762;" FontSize="14" VerticalAlignment="Center" />
+                <TextBlock x:Name="BulkTitle" Text="批量管理" FontSize="12" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
+                <TextBlock x:Name="BulkCount" Text="已选 0 个" FontSize="12" Opacity="0.75"
+                           VerticalAlignment="Center" />
+                <Button x:Name="BulkSelectAllButton" Content="全选" Padding="8,2" FontSize="12"
+                        Click="OnBulkSelectAllClick" />
+                <Button x:Name="BulkDeleteButton" Content="批量删除勾选图标" Padding="8,2" FontSize="12"
+                        Click="OnBulkDeleteClick" />
+                <Button x:Name="BulkExitButton" Content="退出批量管理" Padding="8,2" FontSize="12"
+                        Click="OnBulkExitClick" />
+            </StackPanel>
+        </Border>
+
         <!--
             右键菜单（照原版 v1.11.6 的交互）：
               · 空白处右键 → 新建文件/文件夹/快捷方式/网址/命令图标
@@ -88,6 +131,7 @@
                目标端只能拒绝（系统光标显示"禁止"）、既没有插入竖条也不会插入。
         -->
         <GridView x:Name="TileGrid"
+                  Grid.Row="1"
                   ItemTemplate="{StaticResource IconTileTemplate}"
                   ItemContainerStyle="{StaticResource CompactTileStyle}"
                   SelectionMode="None"
@@ -122,6 +166,7 @@
 
         <!-- 空页提示（没有图标时显示） -->
         <StackPanel x:Name="EmptyHint"
+                    Grid.Row="1"
                     VerticalAlignment="Center" HorizontalAlignment="Center"
                     Spacing="6" Visibility="Collapsed">
             <FontIcon Glyph="&#xE8A5;" FontSize="32" Opacity="0.45" />
@@ -139,7 +184,7 @@
                直接放在 Grid 里会永远停在左上角（本项目 2026-09-15 实测踩过，见 ERROR.md E23）。
             ⚠️ IsHitTestVisible=False：不吃拖放事件，否则 DragOver/Drop 会被它截走。
         -->
-        <Canvas x:Name="DropLayer" IsHitTestVisible="False">
+        <Canvas x:Name="DropLayer" Grid.Row="1" IsHitTestVisible="False">
             <Border x:Name="DropIndicator"
                     Width="3" CornerRadius="2"
                     Background="{ThemeResource AccentBrushDark}"

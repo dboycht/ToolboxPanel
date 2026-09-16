@@ -289,9 +289,64 @@ public sealed class DataStore
         Save();
     }
 
-    /// <summary>同页内重排图标（索引越界/原地移动时什么都不做）。</summary>
-    public void ReorderIcon(string tabId, int fromIndex, int toIndex)
+    /// <summary>
+    /// **批量删除**一页里的多个图标（批量管理用）。
+    ///
+    /// <para>与 <see cref="RemoveIcon"/> 同语义：连带删掉图标缓存文件、重排 <c>sort_order</c>；
+    /// 差别只有两点：① **只落盘一次**（而不是逐个 <c>Save()</c>）；② 未知 id 直接忽略。</para>
+    ///
+    /// <para>页不存在 / 不是网格页 / 一个都没匹配上 ⇒ **什么都不做**（不落盘、返回空清单）。</para>
+    /// </summary>
+    /// <returns>**实际删除**的图标模型（按原页面顺序），供界面移除与状态栏计数。</returns>
+    public IReadOnlyList<IconModel> RemoveIcons(string tabId, IEnumerable<string>? iconIds)
     {
+        if (iconIds is null)
+        {
+            return Array.Empty<IconModel>();
+        }
+
+        var wanted = new HashSet<string>(iconIds, StringComparer.Ordinal);
+        if (wanted.Count == 0)
+        {
+            return Array.Empty<IconModel>();
+        }
+
+        var tab = FindTab(tabId);
+        if (tab is null || tab.IsListTab)
+        {
+            return Array.Empty<IconModel>();
+        }
+
+        var removed = new List<IconModel>(wanted.Count);
+
+        // 按页面顺序挑出来再删（顺序确定 ⇒ 日志/测试都稳定）
+        foreach (var icon in tab.Icons.ToList())
+        {
+            if (wanted.Contains(icon.Id))
+            {
+                tab.Icons.Remove(icon);
+                removed.Add(icon);
+            }
+        }
+
+        if (removed.Count == 0)
+        {
+            return Array.Empty<IconModel>();
+        }
+
+        foreach (var icon in removed)
+        {
+            DeleteCacheFile(icon.IconCacheFile);
+        }
+
+        RenumberIcons(tab);
+        Save();          // ★ 只写一次盘
+
+        return removed;
+    }
+
+    /// <summary>同页内重排图标（索引越界/原地移动时什么都不做）。</summary>
+    public void ReorderIcon(string tabId, int fromIndex, int toIndex)    {
         var tab = FindTab(tabId);
         if (tab is null || fromIndex < 0 || fromIndex >= tab.Icons.Count || fromIndex == toIndex)
         {

@@ -63,6 +63,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
             if (!args.InRecycleQueue && args.ItemContainer is FrameworkElement container)
             {
                 ApplyContainerSize(container);
+                ApplyContainerDrag(container);   // 批量模式下新实现的容器也不能拖
             }
         };
 
@@ -100,6 +101,93 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     {
         container.Width = _iconSize.TileWidth;
         container.Height = _iconSize.TileHeight;
+    }
+
+    // ────────────────────────────── 批量管理（勾选多项删除，W5）──────────────────────────────
+    //
+    // 照原版语义：进入批量管理模式 → 图块显示勾选框 → 点图块即勾选/取消 → 「批量删除勾选图标」
+    // → 二次确认 → 删除；退出模式时清空勾选。
+    // 形态上适配我们没有菜单栏的窗口：入口放**空白处右键菜单**，操作放页面顶部的**批量管理条**。
+    // ⚠️ 逻辑（文案 / 勾选收敛 / 一次落盘的批量删除）都在 Core（`BulkDelete` + `DataStore.RemoveIcons`，有单测）。
+
+    /// <summary>点「批量删除勾选图标」—— 把勾选的 id 交给宿主窗口（关确认框、落库都在那边）。</summary>
+    public event EventHandler<IReadOnlyList<string>>? BulkDeleteRequested;
+
+    /// <summary>批量模式的开关变了（宿主窗口据此更新状态栏提示）。</summary>
+    public event EventHandler<bool>? BulkModeChanged;
+
+    /// <summary>当前是否处于批量管理模式。</summary>
+    public bool IsBulkMode { get; private set; }
+
+    /// <summary>进入/退出批量管理模式（幂等）。</summary>
+    public void SetBulkMode(bool on)
+    {
+        if (IsBulkMode == on)
+        {
+            return;
+        }
+
+        IsBulkMode = on;
+
+        foreach (var tile in _tab.Icons)
+        {
+            tile.SetBulkMode(on);
+        }
+
+        BulkBar.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
+
+        // 批量模式下**禁用拖拽**：点图块的含义已经变成"勾选"，再让它可拖会互相打架
+        for (int i = 0; i < _tab.Icons.Count; i++)
+        {
+            if (TileGrid.ContainerFromIndex(i) is FrameworkElement container)
+            {
+                ApplyContainerDrag(container);
+            }
+        }
+
+        UpdateBulkBar();
+        BulkModeChanged?.Invoke(this, on);
+    }
+
+    /// <summary>容器是否可拖：批量模式下关掉（样式里默认是 True）。</summary>
+    private void ApplyContainerDrag(FrameworkElement container)
+    {
+        if (container is GridViewItem item)
+        {
+            item.CanDrag = !IsBulkMode;
+        }
+    }
+
+    /// <summary>勾选清单（按页面顺序；界面是唯一来源，Core 会再收敛一次）。</summary>
+    private IReadOnlyList<string> SelectedIconIds()
+        => _tab.Icons.Where(tile => tile.IsChecked).Select(tile => tile.Model.Id).ToList();
+
+    private void UpdateBulkBar() => BulkCount.Text = BulkDelete.SelectedText(SelectedIconIds().Count);
+
+    private void OnBulkSelectAllClick(object sender, RoutedEventArgs e)
+    {
+        // 已经全勾了就变成"全不选"（一个按钮两用，省地方）
+        var all = _tab.Icons.ToList();
+        var selectAll = all.Any(tile => !tile.IsChecked);
+
+        foreach (var tile in all)
+        {
+            tile.IsChecked = selectAll;
+        }
+
+        UpdateBulkBar();
+    }
+
+    private void OnBulkDeleteClick(object sender, RoutedEventArgs e)
+        => BulkDeleteRequested?.Invoke(this, SelectedIconIds());
+
+    private void OnBulkExitClick(object sender, RoutedEventArgs e) => SetBulkMode(false);
+
+    /// <summary>批量删除完成后由宿主窗口调用：退出模式并收起勾选。</summary>
+    public void LeaveBulkModeAfterDelete()
+    {
+        SetBulkMode(false);
+        UpdateBulkBar();
     }
 
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>
@@ -178,6 +266,14 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
         if (e.ClickedItem is IconTileViewModel tile)
         {
+            // 批量管理模式：点图块 = 勾选/取消勾选（**不打开**）—— 原版 batch 模式同义
+            if (IsBulkMode)
+            {
+                tile.IsChecked = !tile.IsChecked;
+                UpdateBulkBar();
+                return;
+            }
+
             IconActivated?.Invoke(this, tile.Model);
         }
     }
@@ -272,7 +368,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     private void ShowTileMenu(IconTileViewModel tile, Windows.Foundation.Point position)
         => BuildTileMenu(tile).ShowAt(TileGrid, position);
 
-    /// <summary>空白处菜单：新建五类（顺序与分隔线照原版）。</summary>
+    /// <summary>空白处菜单：新建五类（顺序与分隔线照原版）+ 批量管理。</summary>
     private MenuFlyout BuildNewIconMenu()
     {
         var menu = new MenuFlyout();
@@ -283,6 +379,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         menu.Items.Add(new MenuFlyoutSeparator());
         AddNew("新建网址图标…", IconType.Url);
         AddNew("新建命令图标…", IconType.Command);
+
+        // 批量管理（原版在菜单栏里；我们没有菜单栏，放在页面级菜单的末尾）
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var bulkItem = new MenuFlyoutItem { Text = BulkDelete.MenuLabel };
+        bulkItem.Click += (_, _) => SetBulkMode(true);
+        menu.Items.Add(bulkItem);
 
         return menu;
 

@@ -7,6 +7,7 @@
 
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Storage;
@@ -254,6 +255,61 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
     public double FontSize => _size.FontSize;
 
     public double LineHeight => _size.LineHeight;
+
+    // ────────────────────────────── 批量管理（勾选）──────────────────────────────
+    //
+    // 批量模式下每个图块显示一个勾选框（模板里 IsHitTestVisible=False，只作指示）；
+    // "当前在不在批量模式"与"勾没勾上"都由页面统一下发/收集（勾选清单 = 各图块 IsChecked）。
+
+    private bool _isBulkMode;
+    private bool _isChecked;
+
+    /// <summary>是否处于批量管理模式（控制勾选框显隐）。</summary>
+    public bool IsBulkMode
+    {
+        get => _isBulkMode;
+        private set
+        {
+            if (_isBulkMode == value)
+            {
+                return;
+            }
+
+            _isBulkMode = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBulkMode)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(BulkCheckVisibility)));
+        }
+    }
+
+    /// <summary>勾选框的可见性（直接给 x:Bind 用；省掉一个 BoolToVisibility 转换器）。</summary>
+    public Visibility BulkCheckVisibility => _isBulkMode ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>批量模式下是否被勾选。</summary>
+    public bool IsChecked
+    {
+        get => _isChecked;
+        set
+        {
+            if (_isChecked == value)
+            {
+                return;
+            }
+
+            _isChecked = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsChecked)));
+        }
+    }
+
+    /// <summary>切换批量模式（退出时**清掉勾选**，与原版 set_batch_mode(False) 一致）。</summary>
+    public void SetBulkMode(bool on)
+    {
+        IsBulkMode = on;
+
+        if (!on)
+        {
+            IsChecked = false;
+        }
+    }
 
     /// <summary>图标类型对应的字形（与 Core 的兜底图标语义一致，仅作显示兜底）。</summary>
     public string Glyph => Model.Type switch

@@ -1415,6 +1415,14 @@ public sealed partial class MainWindow : Window
         }
 
         _transientStatus = null;
+
+        // 切回一个仍处在"批量管理模式"的网格页时，把那条提示重新显示出来
+        // （否则提示没了、但页面上的批量条还在，看着像两套状态）
+        if (page is GridPage { IsBulkMode: true })
+        {
+            _transientStatus = BulkDelete.StatusOnText;
+        }
+
         UpdateStatusBar();
     }
 
@@ -1479,8 +1487,76 @@ public sealed partial class MainWindow : Window
         gridPage.NewIconRequested += OnNewIconRequested;
         gridPage.IconMenuActionRequested += OnIconMenuActionRequested;
         gridPage.FilesDropped += OnFilesDropped;
+        gridPage.BulkDeleteRequested += OnBulkDeleteRequested;
+        gridPage.BulkModeChanged += OnBulkModeChanged;
         ApplyThemeIfAnimated(gridPage);
         return gridPage;
+    }
+
+    // ────────────────────────────── 批量管理（勾选多项删除，W5）──────────────────────────────    //
+    // 判定与文案全在 Core 的 `BulkDelete`（有单测）；批量落库在 `DataStore.RemoveIcons`（一次落盘）。
+    // 这里只负责：二次确认 → 执行 → 反馈，以及状态栏提示。
+
+    private void OnBulkModeChanged(object? sender, bool on)
+    {
+        if (on)
+        {
+            ReportTransient(BulkDelete.StatusOnText);
+            return;
+        }
+
+        // 退出批量模式：清掉这条临时提示，状态栏回到常规文案（原版是 showMessage(ready) 同义）
+        _transientStatus = null;
+        UpdateStatusBar();
+    }
+
+    private async void OnBulkDeleteRequested(object? sender, IReadOnlyList<string> checkedIds)
+    {
+        try
+        {
+            if (sender is not GridPage page || _viewModel is null)
+            {
+                return;
+            }
+
+            // ⚠️ 确认框里的数量必须是"真要删的数量"：把界面勾选**按这一页收敛**一遍
+            //    （界面可能残留已不在本页的 id，直接数会多算，见 Core 的 BulkDelete.ResolveSelection）
+            var effective = BulkDelete.ResolveSelection(page.Tab.Model, checkedIds);
+            if (effective.Count == 0)
+            {
+                ReportTransient(BulkDelete.NoneCheckedText);
+                return;
+            }
+
+            var confirmed = await ConfirmAsync(
+                BulkDelete.ConfirmTitle,
+                BulkDelete.ConfirmText(effective.Count),
+                "删除");
+            if (!confirmed)
+            {
+                return;
+            }
+
+            var removed = _viewModel.RemoveIcons(page.Tab.Id, effective);
+
+            if (removed > 0)
+            {
+                page.LeaveBulkModeAfterDelete();
+                page.Tab.NotifyCountLabel();
+                _log.AppendLine($"批量删除落库：{page.Tab.Name} 删除 {removed} 个图标");
+                ReportTransient(BulkDelete.DoneText(removed));
+            }
+            else
+            {
+                ReportTransient(_isDemo ? "演示模式：不会真的保存" : BulkDelete.NoneCheckedText);
+            }
+
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnBulkDeleteRequested", ex);
+        }
     }
 
     // ────────────────────────────── 拖入添加图标（W5）──────────────────────────────
