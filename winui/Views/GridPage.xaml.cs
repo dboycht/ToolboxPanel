@@ -51,7 +51,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         EmptyHint.Visibility = tab.Icons.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         _entrance = new EntranceAnimator(TileGrid);
-
     }
 
     /// <summary>点了某个图标 —— 交给宿主窗口去执行并反馈结果。</summary>
@@ -142,23 +141,45 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     private bool _suppressNextClick;
     private FrameworkElement? _liftedContainer;
-    private string? _pressedTileId;      // 按下时落在哪个图块上（DragStarting 用它解析被拖项）
-    private int _lastTracedIndex = -1;   // 拖动中只在落点变化时打一条日志，别刷屏
+    private int _lastTracedIndex = -1;        // 拖动中只在落点变化时打一条日志，别刷屏
+    private bool _tracedDragOverEntry;        // 本次拖动是否已打过"首次进入 DragOver"的详情
 
     /// <summary>拖动链路诊断 —— 写 `%TEMP%\toolboxpanel-probe.log`（手感类问题只能用户手试，
     /// 有了这条链路日志，用户试一次就能定位"哪一步断了"）。</summary>
     private static void DragTrace(string message)
         => App.ProbeLog($"[拖动 {DateTime.Now:HH:mm:ss.fff}] {message}");
 
-    private void OnTilePressedForDrag(object sender, PointerRoutedEventArgs e)
+    /// <summary>读一下这次拖放到底带了什么（诊断用；读不到就当作没有）。</summary>
+    private static (bool HasText, string? Text, bool HasStorageItems) DescribeData(DragEventArgs e)
     {
-        var tile = FindTileFromSource(e.OriginalSource);
-        _pressedTileId = tile?.Model.Id;
-        DragTrace($"按下：{tile?.DisplayName ?? "(空白处)"}");
-    }
+        bool hasText = false;
+        string? text = null;
+        bool hasStorage = false;
 
-    private IconTileViewModel? FindTileById(string? iconId)
-        => iconId is null ? null : _tab.Icons.FirstOrDefault(t => t.Model.Id == iconId);
+        try
+        {
+            hasText = e.DataView.Contains(StandardDataFormats.Text);
+            if (hasText)
+            {
+                text = e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult();
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("GridPage.DescribeData/text", ex);
+        }
+
+        try
+        {
+            hasStorage = e.DataView.Contains(StandardDataFormats.StorageItems);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("GridPage.DescribeData/storage", ex);
+        }
+
+        return (hasText, text, hasStorage);
+    }
 
     /// <summary>"浮起"反馈：只用合成变换（Scale / Opacity），不碰布局 —— 不会把相邻图块挤走。</summary>
     private void ApplyLift(FrameworkElement container, bool lifted)
@@ -173,16 +194,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
         catch (Exception ex)
         {
             App.WriteCrash("GridPage.ApplyLift", ex);
-        }
-    }
-
-    /// <summary>拖动开始：记下容器（拖动结束要还原"浮起"），并延后一拍压暗。</summary>
-    private void BeginLiftForDrag(DragStartingEventArgs args)
-    {
-        if (FindContainerFromSource(args.OriginalSource) is { } container)
-        {
-            _liftedContainer = container;
-            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
         }
     }
 
@@ -330,31 +341,79 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
 
     // ────────────────────────────── 拖拽排序 ──────────────────────────────
 
-    /// <summary>把"拖的是谁、从哪一页拖的"写进 DataPackage。</summary>
-    private void OnTileDragStarting(UIElement sender, DragStartingEventArgs args)
+    /// <summary>
+    /// 起拖 —— **主路径**：`ListViewBase` 自己起拖时抛的是 **<c>DragItemsStarting</c>**，
+    /// 不是 `UIElement.DragStarting`。这一步决定"载荷到底有没有写进 DataPackage"。
+    ///
+    /// <para>⚠️ <b>2026-09-16 实测根因</b>：此前只接了 `DragStarting`，而它**从来没有触发过**
+    /// （用户拖了三次，`%TEMP%\toolboxpanel-probe.log` 里一条拖动日志都没有）⇒
+    /// DataPackage 里**没有任何格式** ⇒ 目标端只能 `AcceptedOperation=None`
+    /// （系统光标显示"禁止"图标）⇒ 既没有插入竖条，松手也不会插入。接上这个事件即修。</para>
+    ///
+    /// <para>附带好处：<c>args.Items</c> 直接给出**被拖的项对象**，不必再从事件源往上找容器
+    /// （老路在 ListViewBase 起拖时不一定拿得到容器，还得靠"按下时记一笔"兜底）。</para>
+    /// </summary>
+    private void OnTileDragItemsStarting(object sender, DragItemsStartingEventArgs args)
     {
-        // ⚠️ 双保险解析：先看事件源，再退回"按下时记下的那个图块"
-        //    （ListViewBase 自己起拖时事件源可能不是容器 ⇒ 只用前者会把拖动整次取消）
-        var fromArgs = FindTileFromArgs(args);
-        var tile = fromArgs ?? FindTileById(_pressedTileId);
+        var tile = args.Items.Count > 0 ? args.Items[0] as IconTileViewModel : null;
 
-        DragTrace($"DragStarting：事件源={args.OriginalSource?.GetType().Name} "
-                  + $"事件源解析={(fromArgs is null ? "null" : fromArgs.DisplayName)} "
-                  + $"按下记录={FindTileById(_pressedTileId)?.DisplayName ?? "null"}");
+        DragTrace($"DragItemsStarting：items={args.Items.Count} 解析={tile?.DisplayName ?? "null"}");
 
         if (tile is null)
         {
+            DragTrace("→ 拿不到被拖项，取消这次拖动");
             args.Cancel = true;
-            DragTrace("→ 解析不到被拖项，取消这次拖动");
             return;
         }
 
-        var payload = new DragPayload(DragItemKind.Icon, _tab.Id, tile.Model.Id);
-        args.Data.SetText(payload.ToString());
-        args.Data.RequestedOperation = DataPackageOperation.Move;
+        PrepareDragPayload(args.Data, tile);
+        LiftTile(tile);
+    }
 
-        _suppressNextClick = true;      // 起拖之后系统补的那次 ItemClick 不能当"打开"
-        BeginLiftForDrag(args);         // "浮起"占位（延后一拍压暗，等拖拽视觉先被抓走）
+    /// <summary>
+    /// 兜底路径：只有在"直接拖控件本身"（而非拖 item）时才会走这里。
+    /// ⚠️ **解析不到就不取消** —— 主路径可能已经把载荷写好了，这里一取消反而把整次拖动废掉。
+    /// </summary>
+    private void OnTileDragStarting(UIElement sender, DragStartingEventArgs args)
+    {
+        var tile = FindTileFromArgs(args);
+        DragTrace($"DragStarting（兜底）：事件源={args.OriginalSource?.GetType().Name} "
+                  + $"解析={tile?.DisplayName ?? "null"}");
+
+        if (tile is null)
+        {
+            return;
+        }
+
+        PrepareDragPayload(args.Data, tile);
+        LiftTile(tile);
+    }
+
+    /// <summary>把"拖的是谁、从哪一页拖的"写进 DataPackage（两条起拖路径共用）。</summary>
+    private void PrepareDragPayload(DataPackage data, IconTileViewModel tile)
+    {
+        var payload = new DragPayload(DragItemKind.Icon, _tab.Id, tile.Model.Id);
+        data.SetText(payload.ToString());
+        data.RequestedOperation = DataPackageOperation.Move;
+
+        _suppressNextClick = true;    // 起拖之后系统补的那次 ItemClick 不能当"打开"
+        _tracedDragOverEntry = false; // 新一轮拖动，重新打一次 DragOver 详情
+    }
+
+    /// <summary>"浮起"占位：按**项对象**找容器（`DragItemsStarting` 给的是项，不是容器）。</summary>
+    private void LiftTile(IconTileViewModel tile)
+    {
+        if (TileGrid.ContainerFromItem(tile) is not FrameworkElement container)
+        {
+            DragTrace("（浮起跳过：容器还没实现）");
+            return;
+        }
+
+        _liftedContainer = container;
+
+        // ⚠️ 压暗必须**延后一拍**：让系统先把"跟着鼠标的那份拖拽视觉"抓走，
+        //    否则被抓走的那份也带 35% 透明度，看着像"没浮起"。
+        DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
     }
 
     /// <summary>
@@ -365,7 +424,18 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     /// </summary>
     private void OnTileDragOver(object sender, DragEventArgs e)
     {
-        if (TryReadPayload(e, out _))
+        var (hasText, text, hasStorage) = DescribeData(e);
+
+        // ⚠️ 无条件打一次"进入 DragOver"的详情：载荷有没有、是什么，一目了然
+        //    （"禁止"光标 = 这里进不了 AcceptedOperation=Move 分支 ⇒ 先看这一行）。
+        if (!_tracedDragOverEntry)
+        {
+            _tracedDragOverEntry = true;
+            DragTrace($"DragOver 首次：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage}");
+        }
+
+        var payload = DragPayload.TryParse(text);
+        if (payload is not null && payload.Kind == _tab.DraggableKind)
         {
             e.AcceptedOperation = DataPackageOperation.Move;
             e.DragUIOverride.IsCaptionVisible = false;
@@ -385,7 +455,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
             return;
         }
 
-        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        if (hasStorage)
         {
             // 外部拖入：接受"复制"语义（原版也是把拖入当成"新建图标"，不移动原文件）
             e.AcceptedOperation = DataPackageOperation.Copy;
@@ -406,19 +476,23 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     /// </summary>
     private async void OnTileDrop(object sender, DragEventArgs e)
     {
+        var (hasText, text, hasStorage) = DescribeData(e);
+        DragTrace($"Drop：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage}");
+
         // ① 本应用内部的重排/跨页移动（有自己的文本载荷）
-        if (TryReadPayload(e, out var payload))
+        var parsed = DragPayload.TryParse(text);
+        if (parsed is not null && parsed.Kind == _tab.DraggableKind)
         {
             var insertIndex = ComputeInsertIndex(e);
             HideDropIndicator();
-            DragTrace($"Drop：落点={insertIndex}");
+            DragTrace($"Drop（内部重排）：落点={insertIndex}");
 
-            ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
+            ItemDropped?.Invoke(this, new DragDropRequest(parsed, _tab.Id, insertIndex));
             return;
         }
 
         // ② 从资源管理器拖入的文件/文件夹/快捷方式
-        if (!e.DataView.Contains(StandardDataFormats.StorageItems))
+        if (!hasStorage)
         {
             HideDropIndicator();
             return;
@@ -479,35 +553,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage
     // **只加竖条，不让位**。所以这里不再有"实时让位/取消还原"那套（已整体删除）：
     //   · 拖动期间：集合一动不动，只在落点处画一根强调色竖条；
     //   · 松手：走 ItemDropped → MainViewModel.ApplyDrop → DataStore.ApplyDragDrop 落库（含跨页）。
-
-    /// <summary>读取拖放载荷；不是本页该收的类型就返回 false（例如"图标拖到列表页"）。</summary>
-    private bool TryReadPayload(DragEventArgs e, out DragPayload payload)
-    {
-        payload = null!;
-
-        try
-        {
-            if (!e.DataView.Contains(StandardDataFormats.Text))
-            {
-                return false;
-            }
-
-            var text = e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult();
-            var parsed = DragPayload.TryParse(text);
-            if (parsed is null || parsed.Kind != _tab.DraggableKind)
-            {
-                return false;
-            }
-
-            payload = parsed;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("GridPage.TryReadPayload", ex);
-            return false;
-        }
-    }
+    //   · 载荷解析统一用 DescribeData（顺带无条件写日志），不再单独 TryReadPayload。
 
     /// <summary>把落点（相对本页的坐标）交给 Core 的几何计算，得到"插到第几个"。</summary>
     private int ComputeInsertIndex(DragEventArgs e)

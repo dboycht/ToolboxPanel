@@ -47,7 +47,9 @@
     </UserControl.Resources>
 
     <Grid>
-        <!-- 起拖交给系统原生拖拽（按下拖动即起拖，同网格页）。 -->
+        <!-- 起拖交给系统原生拖拽（按下拖动即起拖，同网格页）。
+             ⚠️ `DragItemsStarting` 必须接：ListViewBase 自己起拖时抛的是它，
+                `DragStarting` 一次都不触发 ⇒ 载荷写不进 ⇒ 目标端拒绝（2026-09-16 实测根因）。 -->
         <ListView x:Name="Rows"
                   ItemTemplate="{StaticResource ListRowTemplate}"
                   ItemContainerStyle="{StaticResource CompactRowStyle}"
@@ -56,6 +58,7 @@
                   ItemClick="OnRowClick"
                   CanDrag="True"
                   AllowDrop="True"
+                  DragItemsStarting="OnRowDragItemsStarting"
                   DragStarting="OnRowDragStarting"
                   DragOver="OnRowDragOver"
                   Drop="OnRowDrop"

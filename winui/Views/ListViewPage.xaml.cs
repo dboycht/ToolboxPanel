@@ -40,9 +40,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         EmptyHint.Visibility = tab.ListItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
         _entrance = new EntranceAnimator(Rows);
-
-        // 只为"记下用户按在哪一行上"（无定时器、无门控）—— 见 GridPage 同名注释。
-        Rows.AddHandler(PointerPressedEvent, new PointerEventHandler(OnRowPressedForDrag), handledEventsToo: true);
     }
 
     /// <summary>点了一行 —— 把该行的路径交给宿主窗口打开。</summary>
@@ -109,28 +106,43 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     private bool _suppressNextClick;
     private FrameworkElement? _liftedContainer;
-    private string? _pressedItemId;
     private int _lastTracedIndex = -1;
+    private bool _tracedDragOverEntry;
 
     /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）。</summary>
     private static void DragTrace(string message)
         => App.ProbeLog($"[拖动 {DateTime.Now:HH:mm:ss.fff}] {message}");
 
-    private void OnRowPressedForDrag(object sender, PointerRoutedEventArgs e)
+    /// <summary>这次拖放带了什么（诊断用；读不到就当作没有）—— 与网格页同款。</summary>
+    private static (bool HasText, string? Text, bool HasStorageItems) DescribeData(DragEventArgs e)
     {
-        var row = (e.OriginalSource as FrameworkElement)?.DataContext as ListRowViewModel;
-        var item = row ?? FindRowById(FindRowIdFromSource(e.OriginalSource));
-        _pressedItemId = item?.Model.Id;
-        DragTrace($"按下：{item?.Description ?? "(空白处)"}");
-    }
+        bool hasText = false;
+        string? text = null;
+        bool hasStorage = false;
 
-    private ListRowViewModel? FindRowById(string? itemId)
-        => itemId is null ? null : _tab.ListItems.FirstOrDefault(r => r.Model.Id == itemId);
+        try
+        {
+            hasText = e.DataView.Contains(StandardDataFormats.Text);
+            if (hasText)
+            {
+                text = e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult();
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("ListViewPage.DescribeData/text", ex);
+        }
 
-    private static string? FindRowIdFromSource(object? source)
-    {
-        var container = FindContainerFromSource(source);
-        return (container?.DataContext as ListRowViewModel)?.Model.Id;
+        try
+        {
+            hasStorage = e.DataView.Contains(StandardDataFormats.StorageItems);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("ListViewPage.DescribeData/storage", ex);
+        }
+
+        return (hasText, text, hasStorage);
     }
 
     private void ApplyLift(FrameworkElement container, bool lifted)
@@ -148,15 +160,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
     }
 
-    private void BeginLiftForDrag(DragStartingEventArgs args)
-    {
-        if (FindContainerFromSource(args.OriginalSource) is { } container)
-        {
-            _liftedContainer = container;
-            DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
-        }
-    }
-
     private void EndLiftForDrag()
     {
         if (_liftedContainer is { } container)
@@ -166,60 +169,81 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         }
     }
 
-    /// <summary>从事件源往上找到承载这一行的 ListViewItem（找不到返回 null）。</summary>
-    private static ListViewItem? FindContainerFromSource(object? source)
-    {
-        var current = source as DependencyObject;
-
-        while (current is not null)
-        {
-            if (current is ListViewItem item)
-            {
-                return item;
-            }
-
-            try
-            {
-                current = VisualTreeHelper.GetParent(current);
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
-
     // ────────────────────────────── 拖拽排序 ──────────────────────────────
 
-    private void OnRowDragStarting(UIElement sender, DragStartingEventArgs args)
+    /// <summary>
+    /// 起拖 —— **主路径**：`ListViewBase` 自己起拖时抛的是 <c>DragItemsStarting</c>，
+    /// 不是 `UIElement.DragStarting`（与网格页同一根因，2026-09-16 实测：
+    /// 只接 DragStarting 时它一次都不触发 ⇒ 载荷写不进 ⇒ 目标端拒绝 ⇒ 无指示条、不会插入）。
+    /// </summary>
+    private void OnRowDragItemsStarting(object sender, DragItemsStartingEventArgs args)
     {
-        // ⚠️ 双保险解析：事件源 → 退回"按下时记下的那一行"（否则会把整次拖动取消掉）
-        var fromArgs = (args.OriginalSource as FrameworkElement)?.DataContext as ListRowViewModel;
-        var row = fromArgs ?? FindRowById(_pressedItemId) ?? FindRowById(FindRowIdFromSource(args.OriginalSource));
+        var row = args.Items.Count > 0 ? args.Items[0] as ListRowViewModel : null;
 
-        DragTrace($"DragStarting：事件源={args.OriginalSource?.GetType().Name} "
-                  + $"事件源解析={fromArgs?.Description ?? "null"} 按下记录={FindRowById(_pressedItemId)?.Description ?? "null"}");
+        DragTrace($"DragItemsStarting：items={args.Items.Count} 解析={row?.Description ?? "null"}");
 
         if (row is null)
         {
+            DragTrace("→ 拿不到被拖项，取消这次拖动");
             args.Cancel = true;
-            DragTrace("→ 解析不到被拖项，取消这次拖动");
             return;
         }
 
+        PrepareRowPayload(args.Data, row);
+        LiftRow(row);
+    }
+
+    /// <summary>兜底路径：解析不到也不取消（主路径可能已写好载荷）。</summary>
+    private void OnRowDragStarting(UIElement sender, DragStartingEventArgs args)
+    {
+        var row = (args.OriginalSource as FrameworkElement)?.DataContext as ListRowViewModel;
+        DragTrace($"DragStarting（兜底）：事件源={args.OriginalSource?.GetType().Name} 解析={row?.Description ?? "null"}");
+
+        if (row is null)
+        {
+            return;
+        }
+
+        PrepareRowPayload(args.Data, row);
+        LiftRow(row);
+    }
+
+    /// <summary>把"拖的是谁、从哪一页拖的"写进 DataPackage（两条起拖路径共用）。</summary>
+    private void PrepareRowPayload(DataPackage data, ListRowViewModel row)
+    {
         var payload = new DragPayload(DragItemKind.ListItem, _tab.Id, row.Model.Id);
-        args.Data.SetText(payload.ToString());
-        args.Data.RequestedOperation = DataPackageOperation.Move;
+        data.SetText(payload.ToString());
+        data.RequestedOperation = DataPackageOperation.Move;
 
         _suppressNextClick = true;
-        BeginLiftForDrag(args);
+        _tracedDragOverEntry = false;
+    }
+
+    /// <summary>"浮起"占位：按项对象找容器（DragItemsStarting 给的是项，不是容器）。</summary>
+    private void LiftRow(ListRowViewModel row)
+    {
+        if (Rows.ContainerFromItem(row) is not FrameworkElement container)
+        {
+            DragTrace("（浮起跳过：容器还没实现）");
+            return;
+        }
+
+        _liftedContainer = container;
+        DispatcherQueue.TryEnqueue(() => ApplyLift(container, lifted: true));
     }
 
     private void OnRowDragOver(object sender, DragEventArgs e)
     {
-        if (!TryReadPayload(e, out _))
+        var (hasText, text, hasStorage) = DescribeData(e);
+
+        if (!_tracedDragOverEntry)
+        {
+            _tracedDragOverEntry = true;
+            DragTrace($"DragOver 首次：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage}");
+        }
+
+        var payload = DragPayload.TryParse(text);
+        if (payload is null || payload.Kind != _tab.DraggableKind)
         {
             e.AcceptedOperation = DataPackageOperation.None;
             HideDropIndicator();
@@ -244,15 +268,19 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     private void OnRowDrop(object sender, DragEventArgs e)
     {
-        var insertIndex = ComputeInsertIndex(e);
-        HideDropIndicator();
+        var (hasText, text, hasStorage) = DescribeData(e);
+        DragTrace($"Drop：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage}");
 
-        if (!TryReadPayload(e, out var payload))
+        var payload = DragPayload.TryParse(text);
+        if (payload is null || payload.Kind != _tab.DraggableKind)
         {
+            HideDropIndicator();
             return;
         }
 
-        DragTrace($"Drop：落点={insertIndex}");
+        var insertIndex = ComputeInsertIndex(e);
+        HideDropIndicator();
+        DragTrace($"Drop（内部重排）：落点={insertIndex}");
 
         ItemDropped?.Invoke(this, new DragDropRequest(payload, _tab.Id, insertIndex));
     }
@@ -277,35 +305,7 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
     //   · 拖动期间：集合一动不动，只在落点处画一根强调色横条；
     //   · 松手：走 ItemDropped → MainViewModel.ApplyDrop → DataStore.ApplyDragDrop 落库（含跨页）。
 
-    /// <summary>读取拖放载荷；不是本页该收的类型就返回 false（例如"列表项拖到网格页"）。</summary>
-    private bool TryReadPayload(DragEventArgs e, out DragPayload payload)
-    {
-        payload = null!;
-
-        try
-        {
-            if (!e.DataView.Contains(StandardDataFormats.Text))
-            {
-                return false;
-            }
-
-            var text = e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult();
-            var parsed = DragPayload.TryParse(text);
-            if (parsed is null || parsed.Kind != _tab.DraggableKind)
-            {
-                return false;
-            }
-
-            payload = parsed;
-            return true;
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("ListViewPage.TryReadPayload", ex);
-            return false;
-        }
-    }
-
+    /// <summary>把落点（相对本页的坐标）交给 Core 的几何计算，得到"插到第几个"。</summary>
     private int ComputeInsertIndex(DragEventArgs e)
     {
         var bounds = CollectRowBounds();
