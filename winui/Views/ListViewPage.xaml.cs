@@ -19,6 +19,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
@@ -52,6 +53,74 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     /// <summary>拖放落下 —— 交给宿主窗口落库。</summary>
     public event EventHandler<DragDropRequest>? ItemDropped;
+
+    /// <summary>行的右键菜单选了某一项（页面不碰数据、不开对话框，同网格页的分工）。</summary>
+    public event EventHandler<ListItemMenuRequest>? ItemMenuActionRequested;
+
+    /// <summary>在空白处右键 = 新建列表项（原版语义：**直接弹对话框**，不经过菜单）。</summary>
+    public event EventHandler? NewListItemRequested;
+
+    // ────────────────────────────── 行右键菜单（W5）──────────────────────────────
+    //
+    // 菜单规格（顺序 / 分隔线 / 文案）在 Core 的 `ListItemContextMenu`（有单测）；
+    // 这里只负责按规格铺控件 + 把动作转成事件。
+    // ⚠️ 原版行菜单**没有「打开」**（点行/双击就是打开），别"顺手"加。
+
+    private void OnRowContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        var position = args.TryGetPosition(Rows, out var point) ? point : new Windows.Foundation.Point(0, 0);
+        var row = FindRowFromSource(args.OriginalSource);
+
+        if (row is null)
+        {
+            NewListItemRequested?.Invoke(this, EventArgs.Empty);   // 空白处 = 新建列表项
+            args.Handled = true;
+            return;
+        }
+
+        var menu = new MenuFlyout();
+
+        foreach (var item in ListItemContextMenu.Build())
+        {
+            if (item.SeparatorBefore)
+            {
+                menu.Items.Add(new MenuFlyoutSeparator());
+            }
+
+            var action = item.Action;
+            var menuItem = new MenuFlyoutItem { Text = item.Label };
+            menuItem.Click += (_, _) => ItemMenuActionRequested?.Invoke(this, new ListItemMenuRequest(row.Model, action));
+            menu.Items.Add(menuItem);
+        }
+
+        menu.ShowAt(Rows, position);
+        args.Handled = true;
+    }
+
+    /// <summary>右键点在哪 —— 往上找到承载这一行的 ListViewItem（空白处返回 null）。</summary>
+    private static ListRowViewModel? FindRowFromSource(object? source)
+    {
+        var current = source as DependencyObject;
+
+        while (current is not null)
+        {
+            if (current is ListViewItem { DataContext: ListRowViewModel row })
+            {
+                return row;
+            }
+
+            try
+            {
+                current = VisualTreeHelper.GetParent(current);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
 
     /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽。</summary>
     public bool DragDropEnabled
@@ -337,3 +406,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
     private void HideDropIndicator() => DropIndicator.Visibility = Visibility.Collapsed;
 }
+
+/// <summary>一次列表行菜单动作请求（页面 → 宿主窗口）。与图块的 <c>IconMenuRequest</c> 同一套写法。</summary>
+public sealed record ListItemMenuRequest(ListItemModel Item, ListItemMenuAction Action);

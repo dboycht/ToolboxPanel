@@ -1477,6 +1477,8 @@ public sealed partial class MainWindow : Window
             var listPage = new ListViewPage(tab) { DragDropEnabled = !_isDemo };
             listPage.ItemActivated += OnListItemActivated;
             listPage.ItemDropped += OnItemDropped;
+            listPage.ItemMenuActionRequested += OnListItemMenuActionRequested;
+            listPage.NewListItemRequested += async (_, _) => await ShowCreateListItemAsync(listPage);
             ApplyThemeIfAnimated(listPage);
             return listPage;
         }
@@ -1491,6 +1493,184 @@ public sealed partial class MainWindow : Window
         gridPage.BulkModeChanged += OnBulkModeChanged;
         ApplyThemeIfAnimated(gridPage);
         return gridPage;
+    }
+
+    // ────────────────────────────── 列表页行菜单（W5）──────────────────────────────
+    //
+    // 菜单规格与字段规则全在 Core（`ListItemContextMenu` / `ListItemEditor`，都有单测）；
+    // 这里只管"每个动作具体怎么做"—— 与图块那一套完全对称。
+
+    private async void OnListItemMenuActionRequested(object? sender, ListItemMenuRequest request)
+    {
+        if (_viewModel is null || sender is not ListViewPage page)
+        {
+            return;
+        }
+
+        switch (request.Action)
+        {
+            case ListItemMenuAction.EditProperties:
+                await ShowEditListItemAsync(page, request.Item);
+                return;
+
+            case ListItemMenuAction.Rename:
+                await ShowRenameListItemAsync(page, request.Item);
+                return;
+
+            case ListItemMenuAction.Remove:
+                await ConfirmRemoveListItemAsync(page, request.Item);
+                return;
+        }
+    }
+
+    /// <summary>空白处右键 → 新建列表项（原版语义：直接弹对话框）。</summary>
+    private async Task ShowCreateListItemAsync(ListViewPage page)
+    {
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var dialog = ListItemEditDialog.CreateForNew(AppWindow.Id);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Result is not { } values)
+            {
+                return;
+            }
+
+            var item = ListItemEditor.Create(values.Description, values.Path);
+            if (item is null || _viewModel?.AddListItem(page.Tab.Id, item) != true)
+            {
+                ReportTransient(ListItemEditor.ErrorBothEmpty);
+                return;
+            }
+
+            _log.AppendLine($"新建列表项：{ListItemEditor.DisplayName(item.Description)} → {item.Path}");
+            ReportTransient(ListItemEditor.ItemAddedText(ListItemEditor.DisplayName(item.Description)));
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ShowCreateListItemAsync", ex);
+        }
+    }
+
+    /// <summary>编辑属性…：改说明与路径。</summary>
+    private async Task ShowEditListItemAsync(ListViewPage page, ListItemModel item)
+    {
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var dialog = ListItemEditDialog.CreateForEdit(AppWindow.Id, item.Description, item.Path);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Result is not { } values)
+            {
+                return;
+            }
+
+            // 两个字段都为空 ⇒ 不改（Core 里判，规则只一份）
+            if (!ListItemEditor.TryApplyEdit(item, values.Description, values.Path))
+            {
+                ReportTransient(ListItemEditor.ErrorBothEmpty);
+                return;
+            }
+
+            _viewModel?.UpdateListItem(item);
+            page.Tab.ListItems.FirstOrDefault(row => row.Model.Id == item.Id)?.Refresh();
+
+            _log.AppendLine($"编辑列表项：{ListItemEditor.DisplayName(item.Description)} → {item.Path}");
+            ReportTransient(ListItemEditor.DescriptionUpdatedText);
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ShowEditListItemAsync", ex);
+        }
+    }
+
+    /// <summary>重命名：只改说明（路径不动）。</summary>
+    private async Task ShowRenameListItemAsync(ListViewPage page, ListItemModel item)
+    {
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var dialog = RenameListItemDialog.Create(item.Description);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.NewDescription is not { } description)
+            {
+                return;
+            }
+
+            if (!ListItemEditor.TryRename(item, description))
+            {
+                ReportTransient(ListItemEditor.ErrorNameRequired);
+                return;
+            }
+
+            _viewModel?.RenameListItem(item);
+            page.Tab.ListItems.FirstOrDefault(row => row.Model.Id == item.Id)?.Refresh();
+
+            _log.AppendLine($"重命名列表项：{description}");
+            ReportTransient(ListItemEditor.DescriptionUpdatedText);
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ShowRenameListItemAsync", ex);
+        }
+    }
+
+    /// <summary>删除：二次确认（说明为空时文案用「此行」兜底，照原版）。</summary>
+    private async Task ConfirmRemoveListItemAsync(ListViewPage page, ListItemModel item)
+    {
+        if (_isDemo)
+        {
+            ReportTransient("演示模式：不会真的保存");
+            return;
+        }
+
+        try
+        {
+            var confirmed = await ConfirmAsync(
+                ListItemEditor.DeleteTitle,
+                ListItemEditor.DeleteConfirmText(item.Description),
+                "删除");
+            if (!confirmed)
+            {
+                return;
+            }
+
+            var name = ListItemEditor.DisplayName(item.Description);
+            if (_viewModel?.RemoveListItem(item) == true)
+            {
+                _log.AppendLine($"删除列表项：{name}");
+                ReportTransient(ListItemEditor.RemovedText(name));
+                FlushLog();
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ConfirmRemoveListItemAsync", ex);
+        }
     }
 
     // ────────────────────────────── 批量管理（勾选多项删除，W5）──────────────────────────────    //

@@ -195,6 +195,76 @@ public sealed class MainViewModel
     }
 
     /// <summary>
+    /// 「列表项」的新建 / 编辑属性 / 重命名 / 删除（列表页行右键菜单）。
+    /// 规则与文案全在 Core 的 `ListItemEditor`（有单测）；这里只负责落库 + 界面集合跟随。
+    /// </summary>
+    public bool AddListItem(string tabId, ListItemModel item)
+    {
+        if (_store is null || FindTab(tabId) is not { IsList: true } tab)
+        {
+            return false;
+        }
+
+        _store.AddListItem(tabId, item);
+        tab.ListItems.Add(new ListRowViewModel(item));
+        tab.NotifyCountLabel();
+        return true;
+    }
+
+    /// <summary>编辑属性：改说明与路径（两个字段都写，与原版一致）。</summary>
+    public bool UpdateListItem(ListItemModel item)
+    {
+        if (_store is null)
+        {
+            return false;
+        }
+
+        _store.UpdateListItem(item.Id, item.Description, item.Path);
+        RefreshRowOf(item.Id);
+        return true;
+    }
+
+    /// <summary>重命名：只改说明（路径不动）—— 调用方先用 Core 的 TryRename 校验并写入模型。</summary>
+    public bool RenameListItem(ListItemModel item)
+    {
+        if (_store is null)
+        {
+            return false;
+        }
+
+        _store.UpdateListItem(item.Id, item.Description, null);
+        RefreshRowOf(item.Id);
+        return true;
+    }
+
+    public bool RemoveListItem(ListItemModel item)
+    {
+        if (_store is null || FindListItemOwner(item.Id) is not { } owner)
+        {
+            return false;
+        }
+
+        _store.RemoveListItem(item.Id);
+
+        var row = owner.ListItems.FirstOrDefault(r => r.Model.Id == item.Id);
+        if (row is not null)
+        {
+            owner.ListItems.Remove(row);
+        }
+
+        owner.NotifyCountLabel();
+        return true;
+    }
+
+    /// <summary>哪一页持有这个列表项（找不到返回 null）。</summary>
+    private TabItemViewModel? FindListItemOwner(string itemId)
+        => Tabs.FirstOrDefault(tab => tab.ListItems.Any(row => row.Model.Id == itemId));
+
+    /// <summary>模型字段改过之后让那一行就地刷新（不重建整行，保住滚动位置）。</summary>
+    private void RefreshRowOf(string itemId)
+        => FindListItemOwner(itemId)?.ListItems.FirstOrDefault(row => row.Model.Id == itemId)?.Refresh();
+
+    /// <summary>
     /// 「删除」：Core 落库（连带删掉图标缓存文件）→ 从界面集合里移除 → 刷新标签栏数量。
     /// 返回 false 表示演示模式或找不到该图标（此时**什么都不做**）。
     /// </summary>

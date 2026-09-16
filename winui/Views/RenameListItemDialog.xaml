@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    RenameListItemDialog.xaml —— 列表行「重命名」小对话框
+    对应原版的"就地编辑列 0（说明）"；WinUI 这里用迷你对话框代替（行为一致：只改说明、说明必填）。
+-->
+<ContentDialog
+    x:Class="ToolboxPanel.Views.RenameListItemDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="重命名"
+    PrimaryButtonText="确定"
+    CloseButtonText="取消"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryButtonClick">
+
+    <StackPanel Spacing="8" MinWidth="320">
+        <TextBox x:Name="NameBox" Header="说明" />
+        <TextBlock x:Name="ErrorText" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                   Visibility="Collapsed" />
+    </StackPanel>
+</ContentDialog>

@@ -36,10 +36,11 @@
                     <ColumnDefinition Width="3*" />
                 </Grid.ColumnDefinitions>
 
-                <TextBlock Grid.Column="0" Text="{x:Bind Description}"
+                <!-- ⚠️ Mode=OneWay：编辑属性/重命名之后要能**就地刷新**（x:Bind 默认是 OneTime） -->
+                <TextBlock Grid.Column="0" Text="{x:Bind Description, Mode=OneWay}"
                            FontSize="12" TextTrimming="CharacterEllipsis" />
 
-                <TextBlock Grid.Column="1" Text="{x:Bind Path}"
+                <TextBlock Grid.Column="1" Text="{x:Bind Path, Mode=OneWay}"
                            FontSize="11" Opacity="0.6"
                            TextTrimming="CharacterEllipsis" />
             </Grid>
@@ -63,6 +64,7 @@
                   DragOver="OnRowDragOver"
                   Drop="OnRowDrop"
                   DragItemsCompleted="OnRowDragItemsCompleted"
+                  ContextRequested="OnRowContextRequested"
                   Padding="6,4"
                   Background="Transparent">
 

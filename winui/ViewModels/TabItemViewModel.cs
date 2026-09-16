@@ -380,18 +380,27 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
 }
 
 /// <summary>列表页里的一行（第 1 列说明，第 2 列路径）。</summary>
-public sealed class ListRowViewModel
+public sealed class ListRowViewModel : INotifyPropertyChanged
 {
     public ListRowViewModel(ListItemModel model)
     {
         Model = model;
-        Description = model.Description;
-        Path = model.Path;
     }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 
     public ListItemModel Model { get; }
 
-    public string Description { get; }
+    // ⚠️ 直接**透读模型**（而不是构造时拷一份）：编辑属性/重命名之后就地把模型改了，
+    //    这里再 Refresh() 一通知，模板（x:Bind Mode=OneWay）立刻刷新 —— 不用重建整行、不丢滚动位置。
+    public string Description => Model.Description;
 
-    public string Path { get; }
+    public string Path => Model.Path;
+
+    /// <summary>模型字段被改过之后刷新显示。</summary>
+    public void Refresh()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Description)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Path)));
+    }
 }
