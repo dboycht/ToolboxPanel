@@ -27,7 +27,7 @@ using Windows.Foundation;
 
 namespace ToolboxPanel.Views;
 
-public sealed partial class ListViewPage : UserControl, IAnimatedPage
+public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchablePage
 {
     private readonly TabItemViewModel _tab;
     private readonly EntranceAnimator _entrance;
@@ -38,14 +38,46 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
 
         InitializeComponent();
 
-        Rows.ItemsSource = tab.ListItems;
-        EmptyHint.Visibility = tab.ListItems.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // ⚠️ 绑的是**可见集合**（过滤后的子集，仍是 Core 顺序），不是 _tab.ListItems ——
+        //    理由见 TabItemViewModel 的"搜索过滤"一节。
+        Rows.ItemsSource = tab.VisibleListItems;
+        NoMatchText.Text = SearchFilter.NoResultListText;
+
+        tab.VisibleListItems.CollectionChanged += (_, _) => UpdateEmptyHints();
 
         _entrance = new EntranceAnimator(Rows);
 
         // ⚠️ 不再挂 PointerPressed / DragStarting / DragItemsStarting —— 实测**全都收不到**
         //    （ERROR.md E25）。拖动链路只靠：目标端 DragOver（登记落点）+ 源端 DragItemsCompleted
         //    （带着 args.Items 与 DropResult 来收口）。
+
+        UpdateEmptyHints();
+    }
+
+    // ────────────────────────────── 搜索过滤（W5）──────────────────────────────
+    //
+    // 与网格页同一套（判定在 Core 的 `SearchFilter`，有单测）：
+    // 列表项按**说明 / 路径**过滤；过滤态下拖动排序照样可用（落点是"可见位"，
+    // 由 MainViewModel 用 Core 的换算函数换回 Core 下标）。
+
+    public void ApplySearch(string? query)
+    {
+        _tab.SetFilter(query);
+        HideDropIndicator();
+        UpdateEmptyHints();
+    }
+
+    /// <summary>
+    /// 空页提示 vs 搜索无匹配提示（每次集合变化都重算：新建/删除/过滤都会走到这里）。
+    /// ⚠️ 此前只在构造时算一次 —— "给空页新建一行后提示还在"是本轮顺手修掉的真 bug。
+    /// </summary>
+    private void UpdateEmptyHints()
+    {
+        var empty = _tab.ListItems.Count == 0;
+        var noMatch = !empty && _tab.VisibleListItems.Count == 0;
+
+        EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        NoMatchHint.Visibility = noMatch ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>点了一行 —— 把该行的路径交给宿主窗口打开。</summary>
@@ -353,12 +385,15 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage
         return DropIndexCalculator.Compute(bounds, position.X, position.Y);
     }
 
-    /// <summary>已实现行的矩形（相对本页，DIP），顺序 = 从上到下。</summary>
+    /// <summary>
+    /// 已实现行的矩形（相对本页，DIP），顺序 = 从上到下。
+    /// ⚠️ 遍历的是**可见集合**（= ItemsSource）：落点是"可见位"，过滤态下由 MainViewModel 换算回 Core 下标。
+    /// </summary>
     private List<ItemBounds> CollectRowBounds()
     {
-        var result = new List<ItemBounds>(_tab.ListItems.Count);
+        var result = new List<ItemBounds>(_tab.VisibleListItems.Count);
 
-        for (int i = 0; i < _tab.ListItems.Count; i++)
+        for (int i = 0; i < _tab.VisibleListItems.Count; i++)
         {
             if (Rows.ContainerFromIndex(i) is not FrameworkElement container)
             {

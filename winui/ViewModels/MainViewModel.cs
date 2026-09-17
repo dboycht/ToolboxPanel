@@ -157,6 +157,9 @@ public sealed class MainViewModel
 
         _store.RenameIcon(icon.Id, icon.DisplayName);
         FindTile(icon.Id)?.RefreshName();
+
+        // 名字变了 ⇒ 是否命中当前搜索可能也变了（集合没动，订阅收不到）
+        FindTabOfIcon(icon.Id)?.ReapplyFilter();
         return result;
     }
 
@@ -221,6 +224,7 @@ public sealed class MainViewModel
 
         _store.UpdateListItem(item.Id, item.Description, item.Path);
         RefreshRowOf(item.Id);
+        FindListItemOwner(item.Id)?.ReapplyFilter();   // 说明/路径变了 ⇒ 重新判定过滤
         return true;
     }
 
@@ -234,6 +238,7 @@ public sealed class MainViewModel
 
         _store.UpdateListItem(item.Id, item.Description, null);
         RefreshRowOf(item.Id);
+        FindListItemOwner(item.Id)?.ReapplyFilter();   // 说明变了 ⇒ 重新判定过滤
         return true;
     }
 
@@ -381,7 +386,7 @@ public sealed class MainViewModel
             return DragDropResult.Fail("演示模式：不会真的保存", request);
         }
 
-        var result = _store.ApplyDragDrop(request);
+        var result = _store.ApplyDragDrop(MapDropIndexToCore(request));
         if (!result.Success)
         {
             return result;
@@ -399,6 +404,45 @@ public sealed class MainViewModel
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// ★ 搜索（过滤）态下的落点换算：界面算出来的落点是"**可见位**"，而
+    /// <see cref="DataStore.ApplyDragDrop"/> 的 <c>TargetIndex</c> 是 **Core 列表下标**。
+    ///
+    /// <para>不换算的话，过滤时把图标拖到第 2 个可见位，会按"整表第 2 位"落库 ——
+    /// 观感就是"插错地方"。换算函数在 Core 的 <see cref="SearchFilter.MapViewIndexToModelIndex"/>
+    /// （有单测）；**没有过滤时它是恒等映射**，所以这里可以无条件走一遍。</para>
+    ///
+    /// <para>放在这一层而不是页面里：落点是页面算的，但"可见集合 ↔ 完整集合"的对应关系只有
+    /// 标签页（<see cref="TabItemViewModel"/>）知道，而 ViewModel 手里有全部标签页 —— 一处收口，
+    /// 两个页面、标签栏追加、跨页移动三条路都自动正确。</para>
+    /// </summary>
+    private DragDropRequest MapDropIndexToCore(DragDropRequest request)
+    {
+        var target = FindTab(request.TargetTabId);
+        if (target is null || !target.IsFilterActive)
+        {
+            return request;   // 没过滤（或页不在了）= 恒等；页不在时 Core 会照常报"目标页不存在"
+        }
+
+        var mapped = request.Payload.Kind == DragItemKind.Icon
+            ? SearchFilter.MapViewIndexToModelIndex(
+                target.VisibleIcons.Select(tile => tile.Model.Id).ToList(),
+                target.Icons.Select(tile => tile.Model.Id).ToList(),
+                request.TargetIndex)
+            : SearchFilter.MapViewIndexToModelIndex(
+                target.VisibleListItems.Select(row => row.Model.Id).ToList(),
+                target.ListItems.Select(row => row.Model.Id).ToList(),
+                request.TargetIndex);
+
+        if (mapped != request.TargetIndex)
+        {
+            // 拖动链路日志（%TEMP%\toolboxpanel-probe.log）：落点被换算过时留一条，便于核对
+            App.ProbeLog($"[搜索] 落点换算：「{target.Name}」可见位 {request.TargetIndex} → Core 下标 {mapped}");
+        }
+
+        return new DragDropRequest(request.Payload, request.TargetTabId, mapped);
     }
 
     private TabItemViewModel? FindTab(string tabId)
@@ -464,11 +508,17 @@ public sealed class MainViewModel
         var source = RefreshIconCache(icon, result.Refresh);
         _store.UpdateIcon(icon);
         FindTile(icon.Id)?.Refresh(source);
+
+        // 名称 / 路径都可能被改过 ⇒ 重新判定一次过滤（集合没动，订阅收不到）
+        FindTabOfIcon(icon.Id)?.ReapplyFilter();
         return result;
     }
 
+    private TabItemViewModel? FindTabOfIcon(string iconId)
+        => Tabs.FirstOrDefault(tab => tab.Icons.Any(tile => tile.Model.Id == iconId));
+
     private IconTileViewModel? FindTile(string iconId)
-        => Tabs.SelectMany(tab => tab.Icons).FirstOrDefault(tile => tile.Model.Id == iconId);
+        => FindTabOfIcon(iconId)?.Icons.FirstOrDefault(tile => tile.Model.Id == iconId);
 
     /// <summary>
     /// 按 Core 给的刷新计划重取图标缓存，写回 <see cref="IconModel.IconCacheFile"/>，返回可显示的图片源。

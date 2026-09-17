@@ -20,16 +20,20 @@
 
     <Grid x:Name="RootGrid" Background="Transparent">
         <!--
-            备份快捷键：与原版 v1.11.6 的「文件」菜单一致（Ctrl+Shift+E 导出 / Ctrl+Shift+I 导入）。
+            快捷键：与原版 v1.11.6 的「文件」菜单一致（Ctrl+Shift+E 导出 / Ctrl+Shift+I 导入）；
+            外加 Ctrl+F 开关搜索栏（原版 `app_window._toggle_search` 的快捷键）。
             挂在根 Grid 上 ⇒ 焦点在窗口内任意位置都生效。
         -->
         <Grid.KeyboardAccelerators>
             <KeyboardAccelerator Key="E" Modifiers="Control,Shift" Invoked="OnExportBackupAccelerator" />
             <KeyboardAccelerator Key="I" Modifiers="Control,Shift" Invoked="OnImportBackupAccelerator" />
+            <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="OnSearchAccelerator" />
         </Grid.KeyboardAccelerators>
 
         <Grid.RowDefinitions>
             <RowDefinition Height="34" />
+            <RowDefinition Height="Auto" />
+            <!-- 搜索栏（默认隐藏；🔍 / Ctrl+F 切换） -->
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -72,11 +76,64 @@
                         Click="OnAboutButtonClick" ToolTipService.ToolTip="关于">
                     <FontIcon Glyph="&#xE946;" FontSize="12" />
                 </Button>
+                <!--
+                    搜索按钮：与设置/关于同一套写法（同一套 E15 纪律：关掉焦点视觉）。
+                    行为照原版 v1.11.6：**隐藏式搜索栏**，点一下开、再点一下关（Ctrl+F 同效）。
+                -->
+                <Button x:Name="SearchButton" Padding="6,2" Margin="2,0,0,0"
+                        Background="Transparent" BorderThickness="0"
+                        IsTabStop="False"
+                        UseSystemFocusVisuals="False"
+                        FocusVisualPrimaryThickness="0"
+                        FocusVisualSecondaryThickness="0"
+                        Click="OnSearchButtonClick" ToolTipService.ToolTip="搜索（Ctrl+F）">
+                    <FontIcon Glyph="&#xE721;" FontSize="12" />
+                </Button>
             </StackPanel>
         </Grid>
 
         <!-- ② 标签栏 -->
         <views:TabStripView x:Name="TabStrip" Grid.Row="1" />
+
+        <!--
+            ②' 搜索栏（默认隐藏；🔍 按钮 / Ctrl+F 切换，Esc 关闭）
+              · 查询是**全局一个**：过滤"当前显示的那一页"，切页后继续生效；
+              · 关闭搜索栏 = 清空查询（否则会出现"看不见的过滤"，页面莫名其妙少一半图标）；
+              · 底色用框架主题资源（与批量条同一套），不写死颜色 —— 浅深色自动跟。
+        -->
+        <Border x:Name="SearchBar" Grid.Row="2" Visibility="Collapsed"
+                Margin="8,2,8,4" Padding="8,3" CornerRadius="6"
+                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+            <Grid ColumnSpacing="8">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="12" VerticalAlignment="Center" />
+
+                <TextBox x:Name="SearchBox" Grid.Column="1"
+                         BorderThickness="0" Background="Transparent" Padding="2,0"
+                         FontSize="12" VerticalAlignment="Center"
+                         TextChanged="OnSearchTextChanged"
+                         KeyDown="OnSearchBoxKeyDown" />
+
+                <TextBlock x:Name="SearchCount" Grid.Column="2" FontSize="11" Opacity="0.7"
+                           VerticalAlignment="Center" />
+
+                <Button x:Name="SearchCloseButton" Grid.Column="3" Padding="6,2"
+                        Background="Transparent" BorderThickness="0"
+                        IsTabStop="False"
+                        UseSystemFocusVisuals="False"
+                        FocusVisualPrimaryThickness="0"
+                        FocusVisualSecondaryThickness="0"
+                        Click="OnSearchCloseClick" ToolTipService.ToolTip="关闭搜索（Esc）">
+                    <FontIcon Glyph="&#xE711;" FontSize="11" />
+                </Button>
+            </Grid>
+        </Border>
 
         <!--
             ③ 内容区：网格页 / 列表页在这里切换。
@@ -89,10 +146,10 @@
               **首次**展示（容器还没实现）时页面级不透明度=0 兜住，
               之后容器不再被销毁，入场动效必然是"从无到有"。
         -->
-        <Grid x:Name="PageHost" Grid.Row="2" Background="Transparent" />
+        <Grid x:Name="PageHost" Grid.Row="3" Background="Transparent" />
 
         <!-- ④ 状态栏（单行、矮）——底色/描边全部走主题令牌 -->
-        <Border x:Name="StatusBar" Grid.Row="3" Margin="8,5,8,8" Padding="8,4"
+        <Border x:Name="StatusBar" Grid.Row="4" Margin="8,5,8,8" Padding="8,4"
                 CornerRadius="5" Background="{ThemeResource StatusSurfaceDark}">
             <TextBlock x:Name="StatusText" FontSize="10.5"
                        TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"
@@ -100,7 +157,7 @@
         </Border>
 
         <!-- ⑤ 设置面板（单独面板，右侧滑出；有滑入/滑出动画） -->
-        <Grid x:Name="SettingsOverlay" Grid.RowSpan="4" Visibility="Collapsed" Canvas.ZIndex="10">
+        <Grid x:Name="SettingsOverlay" Grid.RowSpan="5" Visibility="Collapsed" Canvas.ZIndex="10">
             <!-- 点空白处关闭：这层在面板"下面"，点面板本身不会命中它 -->
             <Grid x:Name="SettingsBackdrop" Background="{ThemeResource OverlaySurfaceDark}"
                   Tapped="OnSettingsBackdropTapped" />

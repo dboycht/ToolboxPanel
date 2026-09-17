@@ -10,6 +10,7 @@ using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 
 namespace ToolboxPanel.ViewModels;
@@ -26,6 +27,12 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
         Id = model.Id;
         Name = string.IsNullOrEmpty(model.Name) ? "(未命名标签页)" : model.Name;
         IsList = model.IsListTab;
+
+        // 集合一变（新建 / 删除 / 拖拽重排 / 导入后重建）可见视图跟着重算 ——
+        // 少了这一条就会出现"过滤着新建了一个图标，界面却什么都不动"。
+        Icons.CollectionChanged += (_, _) => RebuildVisible();
+        ListItems.CollectionChanged += (_, _) => RebuildVisible();
+        RebuildVisible();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -75,6 +82,91 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     /// <summary>数量变了（拖拽搬走/搬来图标）之后刷新标签栏上的数量文字。</summary>
     public void NotifyCountLabel() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountLabel)));
+
+    // ────────────────────────────── 搜索过滤（W5）──────────────────────────────
+    //
+    // **界面绑的是下面这两个可见集合**（过滤后仍是 Core 顺序的一个子集），不是 Icons / ListItems 本身。
+    //
+    // 为什么不用"在模板里把不匹配的项 Visibility 隐藏"：GridView/ListView 照样给隐藏项留一格
+    // （ItemsWrapGrid 按集合项数排），观感是"图标之间一片空档"；而"把不匹配的从集合里删掉"
+    // 又会让界面顺序与 Core 顺序脱钩（拖拽落库、重启后的顺序全靠这两者一致）。
+    // 所以：**Icons / ListItems 永远是完整顺序（与 Core 对齐），另存一份过滤后的可见视图**。
+    //
+    // 判定与"可见位 → Core 下标"的换算都在 Core 的 `SearchFilter`（有单测）；这里只负责搬运。
+
+    /// <summary>过滤后仍然显示的图块（网格页的 ItemsSource）。</summary>
+    public ObservableCollection<IconTileViewModel> VisibleIcons { get; } = new();
+
+    /// <summary>过滤后仍然显示的行（列表页的 ItemsSource）。</summary>
+    public ObservableCollection<ListRowViewModel> VisibleListItems { get; } = new();
+
+    /// <summary>当前查询（空 / 全空白 = 不过滤）。</summary>
+    public string Filter { get; private set; } = string.Empty;
+
+    public bool IsFilterActive => SearchFilter.IsActive(Filter);
+
+    /// <summary>可见项数量（搜索栏上的「匹配 N / M」）。</summary>
+    public int VisibleCount => IsList ? VisibleListItems.Count : VisibleIcons.Count;
+
+    /// <summary>这一页真实持有的项数（与可见数无关）。</summary>
+    public int TotalCount => IsList ? ListItems.Count : Icons.Count;
+
+    /// <summary>套用查询（幂等：同一查询重复下发什么都不做）。</summary>
+    public void SetFilter(string? query)
+    {
+        var next = query?.Trim() ?? string.Empty;
+        if (string.Equals(next, Filter, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        Filter = next;
+
+        // 过滤会让一部分项消失；勾选留着的话，清空过滤后会冒出"莫名其妙被勾上"的项
+        foreach (var tile in Icons)
+        {
+            tile.IsChecked = false;
+        }
+
+        RebuildVisible();
+    }
+
+    /// <summary>
+    /// 模型字段被改过（重命名 / 改路径 / 编辑属性）之后重新判定一次 —— 命中与否可能变了
+    /// （集合本身没动，所以订阅 CollectionChanged 收不到这种变化）。
+    /// </summary>
+    public void ReapplyFilter() => RebuildVisible();
+
+    /// <summary>按当前查询重算两个可见集合（不做过滤时 = 全量，与完整集合逐项一致）。</summary>
+    private void RebuildVisible()
+    {
+        SyncVisible(Icons, VisibleIcons, tile => SearchFilter.Matches(tile.Model, Filter));
+        SyncVisible(ListItems, VisibleListItems, row => SearchFilter.Matches(row.Model, Filter));
+    }
+
+    /// <summary>
+    /// 把 <paramref name="target"/> 调成"按当前过滤条件筛出来的 source 顺序"。
+    /// 先剔除不该出现的（保持剩余项的相对顺序），再补齐/重排 —— 尽量走 Move/Insert，
+    /// 避免 Clear+Add 让 GridView 丢掉容器（那会把入场动画、滚动位置一起重置）。
+    /// </summary>
+    private void SyncVisible<T>(IReadOnlyList<T> source, ObservableCollection<T> target, Func<T, bool> matches)
+        where T : class
+    {
+        var desired = IsFilterActive
+            ? source.Where(matches).ToList()
+            : source.ToList();
+
+        var wanted = new HashSet<T>(desired);
+        for (int i = target.Count - 1; i >= 0; i--)
+        {
+            if (!wanted.Contains(target[i]))
+            {
+                target.RemoveAt(i);
+            }
+        }
+
+        ReorderObservable(target, desired);
+    }
 
     // ────────────────────────────── 视图 ↔ Core 顺序同步（拖拽排序用）──────────────────────────────
 

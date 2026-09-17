@@ -176,6 +176,21 @@
         </StackPanel>
 
         <!--
+            搜索无匹配提示（**这一页有图标，但当前查询一个都没命中**）——
+            与上面的"空页提示"是两个不同的状态，别合并：
+            前者要引导"去新建"，后者要引导"改关键词 / 关掉搜索"。
+        -->
+        <StackPanel x:Name="NoMatchHint"
+                    Grid.Row="1"
+                    VerticalAlignment="Center" HorizontalAlignment="Center"
+                    Spacing="6" Visibility="Collapsed">
+            <FontIcon Glyph="&#xE721;" FontSize="32" Opacity="0.45" />
+            <TextBlock x:Name="NoMatchText" Opacity="0.65" FontSize="12" />
+            <TextBlock Text="换个关键词试试，或按 Esc 关闭搜索" Opacity="0.4" FontSize="10.5"
+                       TextAlignment="Center" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <!--
             拖拽**插入竖条**：绘制在内容之上（放在 Grid 最后）。
             高度 = 目标图块的高度（靠代码设），宽度 3、强调色圆角竖条 ——
             拖动时它出现在"松手会插进去"的那个相邻图块位置上（用户 2026-09-15 定的形态）。

@@ -37,7 +37,7 @@ using Windows.Storage;
 
 namespace ToolboxPanel.Views;
 
-public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPage
+public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPage, ISearchablePage
 {
     private readonly TabItemViewModel _tab;
     private readonly EntranceAnimator _entrance;
@@ -51,8 +51,18 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
         InitializeComponent();
 
-        TileGrid.ItemsSource = tab.Icons;
-        EmptyHint.Visibility = tab.Icons.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        // ⚠️ 绑的是**可见集合**（过滤后的子集，仍是 Core 顺序），不是 _tab.Icons ——
+        //    理由见 TabItemViewModel 的"搜索过滤"一节：模板里隐藏会留空档，改完整集合会让顺序脱钩。
+        TileGrid.ItemsSource = tab.VisibleIcons;
+        NoMatchText.Text = SearchFilter.NoResultIconText;
+
+        // 可见集合一变就要重算"空页 / 无匹配"两种提示（新建、删除、过滤都会走到这里）；
+        // 顺带补一次容器尺寸与拖拽状态（过滤后容器是重建的）。
+        tab.VisibleIcons.CollectionChanged += (_, _) =>
+        {
+            UpdateEmptyHints();
+            RefreshRealizedContainers();
+        };
 
         _entrance = new EntranceAnimator(TileGrid);
 
@@ -70,6 +80,53 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         // ⚠️ 这里**不再挂 PointerPressed**：实测它也收不到（日志里"按下"一行都没有）。
         //    拖动链路只依赖两个实测可靠的事件：目标端 `DragOver` + 源端 `DragItemsCompleted`，
         //    落点由 DragSession 在拖动中登记。详见 ERROR.md E25。
+
+        UpdateEmptyHints();
+    }
+
+    // ────────────────────────────── 搜索过滤（W5）──────────────────────────────
+    //
+    // 判定在 Core 的 `SearchFilter`（有单测）；页面只做三件事：
+    //   ① 把查询交给标签页（它重算可见集合，界面绑的就是那个集合）；
+    //   ② 摆对"空页 / 无匹配"两种提示；
+    //   ③ 过滤会重建容器 ⇒ 补一次尺寸与拖拽状态、收起落点指示条。
+    // ⚠️ 拖动排序在过滤态下**照样能用**：落点是"可见位"，由 MainViewModel 用 Core 的
+    //    `SearchFilter.MapViewIndexToModelIndex` 换回 Core 下标再落库（无过滤时是恒等映射）。
+
+    public void ApplySearch(string? query)
+    {
+        _tab.SetFilter(query);
+        RefreshRealizedContainers();
+        HideDropIndicator();
+        UpdateEmptyHints();
+        UpdateBulkBar();   // 过滤会清掉勾选，批量条上的计数要跟着走
+    }
+
+    /// <summary>把"已实现"的容器补成当前档位尺寸 + 当前拖拽开关（过滤/换档后调）。</summary>
+    private void RefreshRealizedContainers()
+    {
+        for (int i = 0; i < _tab.VisibleIcons.Count; i++)
+        {
+            if (TileGrid.ContainerFromIndex(i) is FrameworkElement container)
+            {
+                ApplyContainerSize(container);
+                ApplyContainerDrag(container);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 空页提示 vs 搜索无匹配提示：前者=这一页真的没有图标，后者=有图标但当前查询一个都没命中。
+    /// ⚠️ 必须**每次集合变化都重算**：此前只在构造时算一次，于是"给空页新建一个图标后提示还在"、
+    ///    "删光图标后提示不出现"（本轮顺手修掉的真 bug）。
+    /// </summary>
+    private void UpdateEmptyHints()
+    {
+        var empty = _tab.Icons.Count == 0;
+        var noMatch = !empty && _tab.VisibleIcons.Count == 0;
+
+        EmptyHint.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+        NoMatchHint.Visibility = noMatch ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>
@@ -78,6 +135,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     /// ② **已实现**容器的尺寸立刻改；未实现的会在 <c>ContainerContentChanging</c> 里补。
     /// ⚠️ 幂等：同一档重复下发不产生任何变化（设置一变就整份重套，见 MainWindow.ApplyAllSettings）。
     /// ⚠️ 图标位图**不重新提取**：缓存仍是同一份（默认 64px），这里只改显示尺寸。
+    /// ⚠️ 尺寸要下发给**所有**图块（含被过滤隐藏的）—— 它们重新可见时不该是旧尺寸。
     /// </summary>
     public void ApplyIconSize(IconSizeMetrics metrics)
     {
@@ -88,13 +146,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
             tile.ApplySize(metrics);
         }
 
-        for (int i = 0; i < _tab.Icons.Count; i++)
-        {
-            if (TileGrid.ContainerFromIndex(i) is FrameworkElement container)
-            {
-                ApplyContainerSize(container);
-            }
-        }
+        RefreshRealizedContainers();
     }
 
     private void ApplyContainerSize(FrameworkElement container)
@@ -137,13 +189,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         BulkBar.Visibility = on ? Visibility.Visible : Visibility.Collapsed;
 
         // 批量模式下**禁用拖拽**：点图块的含义已经变成"勾选"，再让它可拖会互相打架
-        for (int i = 0; i < _tab.Icons.Count; i++)
-        {
-            if (TileGrid.ContainerFromIndex(i) is FrameworkElement container)
-            {
-                ApplyContainerDrag(container);
-            }
-        }
+        RefreshRealizedContainers();
 
         UpdateBulkBar();
         BulkModeChanged?.Invoke(this, on);
@@ -158,16 +204,20 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         }
     }
 
-    /// <summary>勾选清单（按页面顺序；界面是唯一来源，Core 会再收敛一次）。</summary>
+    /// <summary>
+    /// 勾选清单（按页面顺序；界面是唯一来源，Core 会再收敛一次）。
+    /// ⚠️ 只收**可见**的图块：过滤态下"看不见"的项不该被算进批量删除；
+    ///    过滤一变 SetFilter 就会清掉全部勾选，所以不会留下"看不见却被勾着"的项。
+    /// </summary>
     private IReadOnlyList<string> SelectedIconIds()
-        => _tab.Icons.Where(tile => tile.IsChecked).Select(tile => tile.Model.Id).ToList();
+        => _tab.VisibleIcons.Where(tile => tile.IsChecked).Select(tile => tile.Model.Id).ToList();
 
     private void UpdateBulkBar() => BulkCount.Text = BulkDelete.SelectedText(SelectedIconIds().Count);
 
     private void OnBulkSelectAllClick(object sender, RoutedEventArgs e)
     {
-        // 已经全勾了就变成"全不选"（一个按钮两用，省地方）
-        var all = _tab.Icons.ToList();
+        // 已经全勾了就变成"全不选"（一个按钮两用，省地方）；范围 = 当前可见的图块
+        var all = _tab.VisibleIcons.ToList();
         var selectAll = all.Any(tile => !tile.IsChecked);
 
         foreach (var tile in all)
@@ -679,12 +729,14 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     /// 收集每个已实现图块的矩形（**相对本页**，DIP），顺序 = 界面上看到的顺序。
     /// ⚠️ 只用"已实现"的容器：GridView 会虚拟化，屏幕外的项没有容器，
     ///    查不到就跳过（而不是塞一个 0 尺寸的假矩形，那会把落点算歪）。
+    /// ⚠️ 遍历的是**可见集合**（= ItemsSource）：算出来的落点是"可见位"，
+    ///    过滤态下由 MainViewModel 用 Core 的换算函数换回 Core 下标。
     /// </summary>
     private List<ItemBounds> CollectItemBounds()
     {
-        var result = new List<ItemBounds>(_tab.Icons.Count);
+        var result = new List<ItemBounds>(_tab.VisibleIcons.Count);
 
-        for (int i = 0; i < _tab.Icons.Count; i++)
+        for (int i = 0; i < _tab.VisibleIcons.Count; i++)
         {
             if (TileGrid.ContainerFromIndex(i) is not FrameworkElement container)
             {

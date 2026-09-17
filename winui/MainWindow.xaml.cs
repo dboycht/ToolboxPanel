@@ -74,6 +74,9 @@ public sealed partial class MainWindow : Window
 
         Title = "ToolboxPanel";
 
+        // 搜索框的占位文字来自 Core（原版 i18n 的 search.placeholder，只有一份）
+        SearchBox.PlaceholderText = SearchFilter.PlaceholderText;
+
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
 
@@ -779,6 +782,109 @@ public sealed partial class MainWindow : Window
 
     private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(!_settingsPanelOpen);
 
+    // ────────────────────────────── 搜索过滤（W5）──────────────────────────────
+    //
+    // 形态照原版 v1.11.6 的**隐藏式搜索栏**（用户 2026-09-16 选择题确认）：
+    //   · 标题栏 🔍 按钮 / Ctrl+F 切换显示；Esc 关闭；**关闭即清空查询**（原版 set_search_visible(False) 同义）；
+    //   · 查询是**全局一个**：过滤"当前显示的那一页"，切页后继续生效；
+    //   · 命中判定、文案、"可见位 → Core 下标"的换算全在 Core 的 `SearchFilter`（有单测）；
+    //     这里只负责把查询下发下去 + 显示匹配计数。
+    // ⚠️ 页面是**懒创建**的（切到才建），所以查询也要发给"标签页"本身（它自己维护可见集合），
+    //    这样后建的页面一绑上就已经是过滤后的样子。
+
+    /// <summary>当前查询（与搜索框内容一致；空 = 不过滤）。</summary>
+    private string _searchQuery = string.Empty;
+
+    private void OnSearchAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        args.Handled = true;
+        ToggleSearch();
+    }
+
+    private void OnSearchButtonClick(object sender, RoutedEventArgs e) => ToggleSearch();
+
+    private void OnSearchCloseClick(object sender, RoutedEventArgs e) => CloseSearch();
+
+    private void ToggleSearch()
+    {
+        if (SearchBar.Visibility == Visibility.Visible)
+        {
+            CloseSearch();
+        }
+        else
+        {
+            OpenSearch();
+        }
+    }
+
+    private void OpenSearch()
+    {
+        SearchBar.Visibility = Visibility.Visible;
+        SearchBox.Focus(FocusState.Programmatic);   // 打开就能直接打字（原版也是 setFocus）
+        UpdateSearchUi();
+    }
+
+    /// <summary>
+    /// 关闭搜索栏。⚠️ 必须**同时清空查询**：否则会出现"看不见的过滤" ——
+    /// 搜索栏没了、页面却还是少一半图标，用户只会觉得程序坏了。
+    /// </summary>
+    private void CloseSearch()
+    {
+        SearchBar.Visibility = Visibility.Collapsed;
+        SearchBox.Text = string.Empty;   // 触发 OnSearchTextChanged → 自动清掉过滤
+        ApplySearch(string.Empty);
+
+        _log.AppendLine("搜索：已关闭（查询清空）");
+        FlushLog();
+    }
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e) => ApplySearch(SearchBox.Text);
+
+    /// <summary>Esc 关闭搜索栏（原版把事件过滤器装在搜索框上，行为一致）。</summary>
+    private void OnSearchBoxKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key == Windows.System.VirtualKey.Escape)
+        {
+            e.Handled = true;
+            CloseSearch();
+        }
+    }
+
+    /// <summary>
+    /// 把查询下发给**所有**标签页与已建页面（页面懒创建 ⇒ 两条路都要走）。
+    /// 每一页都下发（而不是只发当前页）的理由：切页时就不需要再重算，各页自己已经是过滤后的状态。
+    /// </summary>
+    private void ApplySearch(string? query)
+    {
+        _searchQuery = query ?? string.Empty;
+
+        if (_viewModel is not null)
+        {
+            foreach (var tab in _viewModel.Tabs)
+            {
+                if (_pages.TryGetValue(tab.Id, out var page) && page is ISearchablePage searchable)
+                {
+                    searchable.ApplySearch(_searchQuery);   // 页面顺带把空页提示 / 批量条摆对
+                }
+                else
+                {
+                    tab.SetFilter(_searchQuery);            // 页面还没建：先记在标签页上
+                }
+            }
+        }
+
+        UpdateSearchUi();
+    }
+
+    /// <summary>搜索栏上的匹配计数（「匹配 3 / 19」）—— 一屏只剩几个时，一眼能看出是被过滤了。</summary>
+    private void UpdateSearchUi()
+    {
+        var tab = TabStrip.SelectedTab;
+        SearchCount.Text = tab is not null && SearchFilter.IsActive(_searchQuery)
+            ? SearchFilter.CountText(tab.VisibleCount, tab.TotalCount)
+            : string.Empty;
+    }
+
     // ────────────────────────────── 备份：导出 / 导入 ZIP（W5）──────────────────────────────    //
     // 逻辑全在 Core 的 `BackupManager`（14 项单测，含与**原版 Python 的双向兼容**）；
     // 这里只负责：选路径 → 二次确认 → 起进度对话框 → 后台线程跑 → 收尾反馈。
@@ -970,6 +1076,9 @@ public sealed partial class MainWindow : Window
             {
                 UpdateStatusBar();
             }
+
+            // 导入后标签页与页面都是新建的（过滤状态是空的）⇒ 把当前查询重新下发一遍
+            ApplySearch(_searchQuery);
         }
         catch (Exception ex)
         {
@@ -1346,6 +1455,7 @@ public sealed partial class MainWindow : Window
             App.WriteCrash("MainWindow.LoadData", ex);
         }
 
+        ApplySearch(_searchQuery);   // 数据重建后重新下发查询（导入/重载后页面与标签页都是新的）
         UpdateStatusBar();
         FlushLog();
     }
@@ -1423,6 +1533,7 @@ public sealed partial class MainWindow : Window
             _transientStatus = BulkDelete.StatusOnText;
         }
 
+        UpdateSearchUi();   // 搜索栏上的「匹配 N / M」跟着当前页走
         UpdateStatusBar();
     }
 
@@ -1841,7 +1952,8 @@ public sealed partial class MainWindow : Window
 
         if (result.Success)
         {
-            _log.AppendLine($"拖放落库：{request.Payload} → 页={name} 位置={request.TargetIndex}");
+            // ⚠️ 用落库后**解析过的**位置：过滤态下界面给的是"可见位"，Core 收到的是换算后的下标
+            _log.AppendLine($"拖放落库：{request.Payload} → 页={name} 位置={result.Request.TargetIndex}");
         }
 
         UpdateStatusBar();

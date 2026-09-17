@@ -441,7 +441,10 @@ public sealed partial class TabStripView : UserControl
         }
 
         // 落在这条标签上 ⇒ 登记"松手就追加到这一页末尾"（松手在标签上 = 快手跨页移动）
-        var appendIndex = tab.IsList ? tab.ListItems.Count : tab.Icons.Count;
+        // ⚠️ 用**可见数量**（`VisibleIcons/VisibleListItems`）而不是 `Icons/ListItems`：
+        //    落点的口径统一是"过滤视图里的第几位"，目标页若正在搜索，追加的含义就是
+        //    "放到最后一个**可见项**后面"（MainViewModel 会再换算成 Core 下标）。
+        var appendIndex = tab.IsList ? tab.VisibleListItems.Count : tab.VisibleIcons.Count;
         DragSession.ReportTarget(tab.Id, tab.IsList ? DragItemKind.ListItem : DragItemKind.Icon, appendIndex);
 
         if (ReferenceEquals(tab, _dragOverTab))
