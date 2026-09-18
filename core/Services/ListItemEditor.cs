@@ -22,56 +22,56 @@ namespace ToolboxPanel.Core.Services;
 /// <summary>列表项的字段规则与文案（原版 i18n 的 list.* / icon.menu.* / status.* 照抄）。</summary>
 public static class ListItemEditor
 {
-    // ── 对话框与按钮文案（原版 i18n） ──
+    // ── 对话框与按钮文案（原版 i18n 的 key；i18n 已到位 ⇒ 一律走 I18n.T） ──
 
     /// <summary>新建列表项（<c>list.new_item</c>）。</summary>
-    public const string NewItemTitle = "新建列表项";
+    public static string NewItemTitle => I18n.T("list.new_item");
 
     /// <summary>编辑列表项（<c>list.edit_item</c>）。</summary>
-    public const string EditTitle = "编辑列表项";
+    public static string EditTitle => I18n.T("list.edit_item");
 
     /// <summary>说明（列名 / 字段名，<c>list.col.desc</c>）。</summary>
-    public const string DescriptionLabel = "说明";
+    public static string DescriptionLabel => I18n.T("list.col.desc");
 
     /// <summary>路径（列名 / 字段名，<c>list.col.path</c>）。</summary>
-    public const string PathLabel = "路径";
+    public static string PathLabel => I18n.T("list.col.path");
 
     /// <summary>说明输入框的占位符（<c>list.desc_ph</c>）。</summary>
-    public const string DescriptionPlaceholder = "文本说明";
+    public static string DescriptionPlaceholder => I18n.T("list.desc_ph");
 
     /// <summary>选择文件（<c>list.select_file</c>）。</summary>
-    public const string SelectFileLabel = "选择文件";
+    public static string SelectFileLabel => I18n.T("list.select_file");
 
     /// <summary>选择文件夹（<c>list.select_folder</c>）。</summary>
-    public const string SelectFolderLabel = "选择文件夹";
+    public static string SelectFolderLabel => I18n.T("list.select_folder");
 
     /// <summary>删除确认框标题（<c>list.delete_title</c>）。</summary>
-    public const string DeleteTitle = "删除列表项";
+    public static string DeleteTitle => I18n.T("list.delete_title");
 
     /// <summary>说明为空时，确认/提示文案里的兜底称呼（<c>list.this_row</c>）。</summary>
-    public const string ThisRowText = "此行";
+    public static string ThisRowText => I18n.T("list.this_row");
 
     /// <summary>说明已更新（<c>list.desc_updated</c>）。</summary>
-    public const string DescriptionUpdatedText = "说明已更新";
+    public static string DescriptionUpdatedText => I18n.T("list.desc_updated");
 
     /// <summary>路径已更新（<c>list.path_updated</c>）。</summary>
-    public const string PathUpdatedText = "路径已更新";
+    public static string PathUpdatedText => I18n.T("list.path_updated");
 
-    /// <summary>重命名时说明留空（⚠️ WinUI 线新增措辞，原版允许清空）。</summary>
-    public const string ErrorNameRequired = "说明不能为空";
+    /// <summary>重命名时说明留空（WinUI 线新增 key <c>list.error.name_required</c>）。</summary>
+    public static string ErrorNameRequired => I18n.T("list.error.name_required");
 
-    /// <summary>新建/编辑时两个字段都为空（⚠️ WinUI 线新增措辞，原版是静默忽略）。</summary>
-    public const string ErrorBothEmpty = "说明和路径至少要填一个";
+    /// <summary>新建/编辑时两个字段都为空（WinUI 线新增 key <c>list.error.both_empty</c>）。</summary>
+    public static string ErrorBothEmpty => I18n.T("list.error.both_empty");
 
     /// <summary>已添加列表项: {desc}（<c>list.item_added</c>）。</summary>
-    public static string ItemAddedText(string name) => $"已添加列表项: {name}";
+    public static string ItemAddedText(string name) => I18n.T("list.item_added", ("desc", name));
 
     /// <summary>确定要删除列表项「{desc}」吗？（<c>list.confirm_delete</c>）。</summary>
     public static string DeleteConfirmText(string description)
-        => $"确定要删除列表项「{DisplayName(description)}」吗？";
+        => I18n.T("list.confirm_delete", ("desc", DisplayName(description)));
 
     /// <summary>已删除: {name}（<c>status.removed</c>）。</summary>
-    public static string RemovedText(string name) => $"已删除: {name}";
+    public static string RemovedText(string name) => I18n.T("status.removed", ("name", name));
 
     // ── 字段规则 ──
 

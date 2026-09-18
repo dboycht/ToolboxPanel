@@ -15,8 +15,12 @@ namespace ToolboxPanel.Core.Models;
 /// </summary>
 public sealed class TabModel
 {
-    /// <summary>默认页名（新建标签页用；注意 <c>DataStore.Load()</c> 的兜底默认页名是 "Home"，与原版一致）。</summary>
-    public const string DefaultName = "新建标签页";
+    /// <summary>
+    /// 默认页名（新建标签页用，原版 i18n <c>tab.default_name</c>）——
+    /// **跟着当前语言走**（原版的默认页名也是按语言取的），
+    /// 注意 <c>DataStore.Load()</c> 的兜底默认页名仍是英文 "Home"（与原版一致）。
+    /// </summary>
+    public static string DefaultName => I18n.T("tab.default_name");
 
     public const string TypeGrid = "grid";
     public const string TypeList = "list";

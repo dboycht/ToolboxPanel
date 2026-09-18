@@ -48,13 +48,13 @@ public sealed record DropDecision(
 public static class DropImporter
 {
     /// <summary>添加成功的状态文案（原版 <c>status.added</c>）。</summary>
-    public static string AddedMessage(string name) => $"已添加: {name}";
+    public static string AddedMessage(string name) => I18n.T("status.added", ("name", name));
 
     /// <summary>已存在的状态文案（原版 <c>status.already_exists</c>）。</summary>
-    public static string AlreadyExistsMessage(string name) => $"已存在: {name}";
+    public static string AlreadyExistsMessage(string name) => I18n.T("status.already_exists", ("name", name));
 
     /// <summary>路径不存在的状态文案（原版 <c>status.path_not_found</c>，与右键菜单那条同一个键）。</summary>
-    public static string PathNotFoundMessage(string? path) => $"路径不存在: {path}";
+    public static string PathNotFoundMessage(string? path) => I18n.T("status.path_not_found", ("path", path));
 
     /// <summary>
     /// 批量判定（原版 <c>_add_dropped_paths</c> 的循环）：

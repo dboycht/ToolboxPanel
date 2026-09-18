@@ -4,48 +4,49 @@
 // + `icon_grid.set_batch_mode` / `batch_delete`（复选框在 `icon_widget._check`）。
 //
 // 界面上是"进入批量管理模式 → 逐个勾选 → 批量删除"，这里只负责两件可测试的事：
-//   ① 文案（原版 i18n 的 6 条，逐字搬过来；i18n 到位后换成 key）；
+//   ① 文案（原版 i18n 的 key；i18n 已到位 ⇒ **一律走 `I18n.T(key)`**，不再写死中文）；
 //   ② **把界面勾选的 id 收敛成"这一页真实存在、去重、按页面顺序"的一份清单** ——
 //      二次确认框里的数量必须是"真要删掉的数量"，不能拿界面的原始勾选数（可能含已失效的 id）。
 //
 // ⚠️ 真正的删除动作在 `DataStore.RemoveIcons`（一次落盘 + 连带删缓存），**不在**这里。
+// ⚠️ 下面这些文案属性**每次读取都取当前语言**（不是构造时快照）—— 切换语言后界面重读即可。
 
 using ToolboxPanel.Core.Models;
 
 namespace ToolboxPanel.Core.Services;
 
-/// <summary>批量删除的文案与勾选收敛（原版 i18n 文案逐字保真）。</summary>
+/// <summary>批量删除的文案与勾选收敛（文案 key 与原版 i18n 一致）。</summary>
 public static class BulkDelete
 {
     /// <summary>菜单项：进入批量管理（原版 <c>app.menu.batch</c>）。</summary>
-    public const string MenuLabel = "批量管理";
+    public static string MenuLabel => I18n.T("app.menu.batch");
 
     /// <summary>菜单/按钮：批量删除勾选图标（原版 <c>app.menu.batch_delete</c>）。</summary>
-    public const string DeleteLabel = "批量删除勾选图标";
+    public static string DeleteLabel => I18n.T("app.menu.batch_delete");
 
     /// <summary>一个都没勾（原版 <c>batch.none_checked</c>）。</summary>
-    public const string NoneCheckedText = "未选中任何图标";
+    public static string NoneCheckedText => I18n.T("batch.none_checked");
 
     /// <summary>二次确认框标题（原版 <c>bulk_delete.title</c>）。</summary>
-    public const string ConfirmTitle = "批量删除图标";
+    public static string ConfirmTitle => I18n.T("bulk_delete.title");
 
     /// <summary>进入批量管理模式时的状态栏提示（原版 <c>status.batch_mode_on</c>）。</summary>
-    public const string StatusOnText = "批量管理模式：勾选图标后点击「批量删除勾选图标」";
+    public static string StatusOnText => I18n.T("status.batch_mode_on");
 
-    /// <summary>退出批量管理的按钮文案（WinUI 线新增：原版靠菜单勾选取消，我们没有菜单栏）。</summary>
-    public const string ExitLabel = "退出批量管理";
+    /// <summary>退出批量管理的按钮文案（WinUI 线新增，key <c>bulk.exit</c>）。</summary>
+    public static string ExitLabel => I18n.T("bulk.exit");
 
-    /// <summary>全选按钮（WinUI 线新增，原版没有；行数多时很实用）。</summary>
-    public const string SelectAllLabel = "全选";
+    /// <summary>全选按钮（WinUI 线新增，key <c>bulk.select_all</c>）。</summary>
+    public static string SelectAllLabel => I18n.T("bulk.select_all");
 
     /// <summary>二次确认正文（原版 <c>bulk_delete.confirm</c>）。</summary>
-    public static string ConfirmText(int count) => $"确定要删除选中的 {count} 个图标吗？";
+    public static string ConfirmText(int count) => I18n.T("bulk_delete.confirm", ("count", count));
 
     /// <summary>删除完成（原版 <c>bulk_delete.done</c>）。</summary>
-    public static string DoneText(int count) => $"已删除 {count} 个图标";
+    public static string DoneText(int count) => I18n.T("bulk_delete.done", ("count", count));
 
-    /// <summary>已选数量（WinUI 线新增，用于批量管理条上的计数）。</summary>
-    public static string SelectedText(int count) => $"已选 {count} 个";
+    /// <summary>已选数量（WinUI 线新增，key <c>bulk.selected</c>）。</summary>
+    public static string SelectedText(int count) => I18n.T("bulk.selected", ("count", count));
 
     /// <summary>
     /// 把界面勾选的 id 收敛成**这一页真实存在、去重、按页面顺序**的一份清单。

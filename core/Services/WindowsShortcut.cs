@@ -43,13 +43,13 @@ public static class WindowsShortcut
 
         if (string.IsNullOrWhiteSpace(lnkPath))
         {
-            error = "路径为空";
+            error = I18n.T("status.path_empty");
             return null;
         }
 
         if (!File.Exists(lnkPath))
         {
-            error = "文件不存在";
+            error = I18n.T("status.file_not_found");
             return null;
         }
 

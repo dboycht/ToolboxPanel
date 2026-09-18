@@ -38,18 +38,18 @@ public sealed record IconMenuItem(IconMenuAction Action, string Label, bool Sepa
 /// <summary>菜单规格 + 各处提示文案（原版 i18n 的 icon.menu.* / icon.remove.* / status.*）。</summary>
 public static class IconContextMenu
 {
-    public const string LabelOpen = "打开";
-    public const string LabelOpenWith = "用其他应用打开…";
-    public const string LabelOpenLocation = "打开文件位置";
-    public const string LabelEdit = "编辑属性…";
-    public const string LabelRename = "重命名";
-    public const string LabelRemove = "删除";
+    public static string LabelOpen => I18n.T("icon.menu.open");
+    public static string LabelOpenWith => I18n.T("icon.menu.open_with");
+    public static string LabelOpenLocation => I18n.T("icon.menu.open_location");
+    public static string LabelEdit => I18n.T("icon.menu.edit");
+    public static string LabelRename => I18n.T("icon.menu.rename");
+    public static string LabelRemove => I18n.T("icon.menu.remove");
 
     /// <summary>删除确认对话框的标题（原版 <c>icon.remove.title</c>）。</summary>
-    public const string RemoveTitle = "删除图标";
+    public static string RemoveTitle => I18n.T("icon.remove.title");
 
     /// <summary>图标没有名字时，确认文案里用它兜底（原版 <c>icon.remove.unknown</c>）。</summary>
-    public const string UnknownIconName = "此图标";
+    public static string UnknownIconName => I18n.T("icon.remove.unknown");
 
     /// <summary>
     /// 按图标类型生成菜单项（**顺序与原版一致**）。
@@ -80,23 +80,28 @@ public static class IconContextMenu
 
     /// <summary>删除确认文案（原版 <c>icon.remove.confirm</c>，名字为空时用「此图标」）。</summary>
     public static string ConfirmRemoveText(string? displayName)
-        => $"确定要从当前标签页中删除「{(string.IsNullOrWhiteSpace(displayName) ? UnknownIconName : displayName.Trim())}」吗？";
+        => I18n.T("icon.remove.confirm", ("name", DisplayNameOr(displayName)));
 
     /// <summary>删除之后的状态栏文案（原版 <c>status.removed</c>）。</summary>
     public static string RemovedStatus(string? displayName)
-        => $"已删除: {(string.IsNullOrWhiteSpace(displayName) ? UnknownIconName : displayName.Trim())}";
+        => I18n.T("status.removed", ("name", DisplayNameOr(displayName)));
 
     /// <summary>重命名之后的状态栏文案（原版 <c>status.renamed</c>）。</summary>
     public static string RenamedStatus(string? displayName)
-        => $"已重命名为「{(displayName ?? string.Empty).Trim()}」";
+        => I18n.T("status.renamed", ("name", (displayName ?? string.Empty).Trim()));
 
     /// <summary>编辑属性保存之后的状态栏文案（原版 <c>status.edited</c>）。</summary>
     public static string UpdatedStatus(string? displayName)
-        => $"已更新图标: {(displayName ?? string.Empty).Trim()}";
+        => I18n.T("status.edited", ("name", (displayName ?? string.Empty).Trim()));
 
     /// <summary>路径不存在（原版 <c>status.path_missing</c>）。</summary>
-    public static string PathMissingMessage(string? path) => $"路径不存在: {path}";
+    public static string PathMissingMessage(string? path) => I18n.T("status.path_missing", ("path", path));
 
     /// <summary>调「打开方式」失败（原版 <c>status.open_with_failed</c>）。</summary>
-    public static string OpenWithFailedMessage(string? error) => $"打开方式失败: {error}";
+    public static string OpenWithFailedMessage(string? error)
+        => I18n.T("status.open_with_failed", ("err", error));
+
+    /// <summary>没写名字时用「此图标 / this icon」兜底（原版 <c>icon.remove.unknown</c>）。</summary>
+    private static string DisplayNameOr(string? displayName)
+        => string.IsNullOrWhiteSpace(displayName) ? UnknownIconName : displayName.Trim();
 }

@@ -253,52 +253,9 @@ public class CrossImplementationTests
             + $"--- 期望（Python 写出）---\n{Context(e)}\n--- 实际（C# 写出）---\n{Context(a)}");
     }
 
-    private static bool PythonIsAvailable()
-    {
-        try
-        {
-            var (exitCode, _, _) = RunProcess("python", new[] { "--version" }, workingDirectory: null);
-            return exitCode == 0;
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
-        {
-            return false;
-        }
-    }
+    private static bool PythonIsAvailable() => PythonRunner.IsAvailable();
 
     private static (int ExitCode, string StdOut, string StdErr) RunPython(
         string scriptPath, string pythonSourceRoot, string dataDirectory)
-        => RunProcess("python", new[] { scriptPath, pythonSourceRoot, dataDirectory }, workingDirectory: null);
-
-    private static (int ExitCode, string StdOut, string StdErr) RunProcess(
-        string fileName, IEnumerable<string> arguments, string? workingDirectory)
-    {
-        var psi = new ProcessStartInfo(fileName)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            CreateNoWindow = true,
-        };
-
-        foreach (var argument in arguments)
-        {
-            psi.ArgumentList.Add(argument);
-        }
-
-        psi.Environment["PYTHONIOENCODING"] = "utf-8";
-        psi.Environment["PYTHONUTF8"] = "1";
-        if (workingDirectory is not null)
-        {
-            psi.WorkingDirectory = workingDirectory;
-        }
-
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(60_000);
-        return (process.HasExited ? process.ExitCode : -1, stdout, stderr);
-    }
+        => PythonRunner.RunScript(scriptPath, new[] { pythonSourceRoot, dataDirectory });
 }

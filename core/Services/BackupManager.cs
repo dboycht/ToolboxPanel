@@ -171,7 +171,7 @@ public static class BackupManager
     {
         try
         {
-            log?.Invoke("正在收集数据文件...");
+            log?.Invoke(I18n.T("backup.log.collect"));
 
             var files = Directory.Exists(dataDirectory)
                 ? Directory.GetFiles(dataDirectory, "*", SearchOption.AllDirectories)
@@ -179,7 +179,7 @@ public static class BackupManager
 
             var total = files.Length + 1;   // 元数据占一项（与原版 total = len(files) + 1 一致）
 
-            log?.Invoke($"创建压缩包: {Path.GetFileName(zipPath)}");
+            log?.Invoke(I18n.T("backup.log.create_zip", ("name", Path.GetFileName(zipPath))));
 
             var directory = Path.GetDirectoryName(Path.GetFullPath(zipPath));
             if (!string.IsNullOrEmpty(directory))
@@ -195,7 +195,7 @@ public static class BackupManager
             using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
             {
                 // ① 元数据
-                log?.Invoke("写入元数据...");
+                log?.Invoke(I18n.T("backup.log.write_metadata"));
                 var metadataEntry = archive.CreateEntry(MetadataEntryName, CompressionLevel.Optimal);
                 using (var stream = metadataEntry.Open())
                 using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false)))
@@ -210,7 +210,7 @@ public static class BackupManager
                 foreach (var file in files)
                 {
                     var relative = Path.GetRelativePath(dataDirectory, file).Replace('\\', '/');
-                    log?.Invoke($"压缩: {relative}");
+                    log?.Invoke(I18n.T("backup.log.compress", ("name", relative)));
 
                     archive.CreateEntryFromFile(file, DataEntryPrefix + relative, CompressionLevel.Optimal);
 
@@ -220,7 +220,8 @@ public static class BackupManager
             }
 
             var sizeKb = new FileInfo(zipPath).Length / 1024.0;
-            log?.Invoke($"导出完成 ({sizeKb:F1} KB)");
+            log?.Invoke(I18n.T("backup.log.exported",
+                ("size", sizeKb.ToString("F1", System.Globalization.CultureInfo.InvariantCulture))));
 
             return BackupResult.Ok(Path.GetFullPath(zipPath));
         }
@@ -242,12 +243,12 @@ public static class BackupManager
     {
         if (!File.Exists(zipPath))
         {
-            return BackupResult.Fail("找不到备份文件");   // 原版文案：File not found
+            return BackupResult.Fail(I18n.T("backup.error.not_found"));   // 原版文案：File not found
         }
 
         try
         {
-            log?.Invoke($"打开压缩包: {Path.GetFileName(zipPath)}");
+            log?.Invoke(I18n.T("backup.log.open_zip", ("name", Path.GetFileName(zipPath))));
 
             using var archive = ZipFile.OpenRead(zipPath);
 
@@ -257,10 +258,10 @@ public static class BackupManager
 
             if (!hasMetadata)
             {
-                return BackupResult.Fail("无效备份：缺少 metadata.json");
+                return BackupResult.Fail(I18n.T("backup.error.no_metadata"));
             }
 
-            log?.Invoke("读取元数据...");
+            log?.Invoke(I18n.T("backup.log.read_metadata"));
             BackupMetadata? metadata;
             using (var stream = archive.GetEntry(MetadataEntryName)!.Open())
             using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8))
@@ -270,15 +271,18 @@ public static class BackupManager
 
             if (metadata is null)
             {
-                return BackupResult.Fail("无效备份：metadata.json 解析失败");
+                return BackupResult.Fail(I18n.T("backup.error.bad_metadata"));
             }
 
-            log?.Invoke($"  版本: {(string.IsNullOrWhiteSpace(metadata.Version) ? "?" : metadata.Version)}");
-            log?.Invoke($"  导出时间: {(string.IsNullOrWhiteSpace(metadata.ExportedAt) ? "?" : metadata.ExportedAt)}");
-            log?.Invoke($"  标签页: {metadata.TabCount}  图标: {metadata.IconCount}");
+            log?.Invoke("  " + I18n.T("backup.log.meta_version",
+                ("version", string.IsNullOrWhiteSpace(metadata.Version) ? "?" : metadata.Version)));
+            log?.Invoke("  " + I18n.T("backup.log.meta_exported",
+                ("time", string.IsNullOrWhiteSpace(metadata.ExportedAt) ? "?" : metadata.ExportedAt)));
+            log?.Invoke("  " + I18n.T("backup.log.meta_counts",
+                ("tabs", metadata.TabCount), ("icons", metadata.IconCount)));
 
             // ② 清空当前数据（与原版同一套：icons 目录内容 + tabs.json + config.json）
-            log?.Invoke("清除当前数据...");
+            log?.Invoke(I18n.T("backup.log.clear"));
             ClearCurrentData(dataDirectory);
 
             // ③ 解压（跳过 metadata.json）
@@ -308,7 +312,7 @@ public static class BackupManager
                 // ⚠️ 安全线（原版没有）：拒绝写到数据目录之外（zip-slip）
                 if (!IsInside(root, destination))
                 {
-                    log?.Invoke($"跳过越界条目: {entry.FullName}");
+                    log?.Invoke(I18n.T("backup.log.skip_unsafe", ("name", entry.FullName)));
                     progress?.Invoke(new BackupProgress(index, total));
                     continue;
                 }
@@ -319,13 +323,13 @@ public static class BackupManager
                     Directory.CreateDirectory(parent);
                 }
 
-                log?.Invoke($"解压: {relative}");
+                log?.Invoke(I18n.T("backup.log.extract", ("name", relative)));
                 entry.ExtractToFile(destination, overwrite: true);
 
                 progress?.Invoke(new BackupProgress(index, total));
             }
 
-            log?.Invoke("导入完成");
+            log?.Invoke(I18n.T("backup.log.imported"));
             return BackupResult.Ok(Path.GetFullPath(zipPath), metadata);
         }
         catch (Exception ex)

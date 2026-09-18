@@ -16,12 +16,12 @@ namespace ToolboxPanel.Core.Storage;
 /// <summary>示例图标的定义与装配。</summary>
 public static class SampleIcons
 {
-    /// <summary>示例标签页的名字。</summary>
-    public const string SampleTabName = "示例";
+    /// <summary>示例标签页的名字（i18n key <c>data.sample_tab</c>；跟随创建时的界面语言）。</summary>
+    public static string SampleTabName => I18n.T("data.sample_tab");
 
-    /// <summary>一条示例图标的声明。</summary>
+    /// <summary>一条示例图标的声明（<paramref name="NameKey"/> 是文案 key —— 名字跟随创建时的语言）。</summary>
     private readonly record struct Spec(
-        string DisplayName,
+        string NameKey,
         IconType Type,
         string SourcePath,
         string TargetPath = "",
@@ -31,37 +31,38 @@ public static class SampleIcons
     /// <summary>
     /// 示例清单：覆盖**全部 5 种图标类型**（文件 / 文件夹 / 快捷方式 / 网址 / 命令），
     /// 这样用户一眼就能看出五类图标长什么样、行为差别在哪。
+    /// ⚠️ 名字是**数据**（首次运行写进 tabs.json）：跟随创建时的界面语言，之后切语言**不会**改写已有数据。
     /// </summary>
     private static readonly Spec[] Catalog =
     {
         // ── FILE：可执行文件 ──
-        new("记事本", IconType.File, @"C:\Windows\System32\notepad.exe"),
-        new("计算器", IconType.File, @"C:\Windows\System32\calc.exe"),
-        new("命令提示符", IconType.File, @"C:\Windows\System32\cmd.exe"),
-        new("PowerShell", IconType.File, @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
-        new("资源管理器", IconType.File, @"C:\Windows\explorer.exe"),
-        new("任务管理器", IconType.File, @"C:\Windows\System32\taskmgr.exe"),
-        new("注册表编辑器", IconType.File, @"C:\Windows\System32\regedt32.exe"),
-        new("系统信息", IconType.File, @"C:\Windows\System32\msinfo32.exe"),
-        new("磁盘清理", IconType.File, @"C:\Windows\System32\cleanmgr.exe"),
-        new("事件查看器", IconType.File, @"C:\Windows\System32\eventvwr.exe"),
-        new("设备管理器", IconType.File, @"C:\Windows\System32\devmgmt.msc"),
-        new("字符映射表", IconType.File, @"C:\Windows\System32\charmap.exe"),
-        new("屏幕键盘", IconType.File, @"C:\Windows\System32\osk.exe"),
-        new("控制面板", IconType.File, @"C:\Windows\System32\control.exe"),
+        new("sample.notepad", IconType.File, @"C:\Windows\System32\notepad.exe"),
+        new("sample.calc", IconType.File, @"C:\Windows\System32\calc.exe"),
+        new("sample.cmd", IconType.File, @"C:\Windows\System32\cmd.exe"),
+        new("sample.powershell", IconType.File, @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+        new("sample.explorer", IconType.File, @"C:\Windows\explorer.exe"),
+        new("sample.taskmgr", IconType.File, @"C:\Windows\System32\taskmgr.exe"),
+        new("sample.regedit", IconType.File, @"C:\Windows\System32\regedt32.exe"),
+        new("sample.msinfo", IconType.File, @"C:\Windows\System32\msinfo32.exe"),
+        new("sample.cleanmgr", IconType.File, @"C:\Windows\System32\cleanmgr.exe"),
+        new("sample.eventvwr", IconType.File, @"C:\Windows\System32\eventvwr.exe"),
+        new("sample.devmgmt", IconType.File, @"C:\Windows\System32\devmgmt.msc"),
+        new("sample.charmap", IconType.File, @"C:\Windows\System32\charmap.exe"),
+        new("sample.osk", IconType.File, @"C:\Windows\System32\osk.exe"),
+        new("sample.control", IconType.File, @"C:\Windows\System32\control.exe"),
 
         // ── FOLDER：文件夹 ──
-        new("配置目录", IconType.Folder, @"C:\Windows\System32\drivers\etc"),
+        new("sample.etc", IconType.Folder, @"C:\Windows\System32\drivers\etc"),
 
         // ── SHORTCUT：快捷方式（这里直接指向一个文件夹，走"文件夹"图标兜底；本机没有现成 .lnk 就跳过） ──
-        new("Windows 目录", IconType.Shortcut, @"C:\Windows"),
+        new("sample.windows", IconType.Shortcut, @"C:\Windows"),
 
         // ── URL：网址（不依赖本机文件，一定会有） ──
-        new("示例网站", IconType.Url, "https://example.com"),
-        new("必应搜索", IconType.Url, "https://www.bing.com"),
+        new("sample.website", IconType.Url, "https://example.com"),
+        new("sample.bing", IconType.Url, "https://www.bing.com"),
 
         // ── COMMAND：命令 ──
-        new("回显命令", IconType.Command, "cmd.exe /c echo ToolboxPanel", @"cmd.exe", "/c echo ToolboxPanel", @"C:\Windows\System32"),
+        new("sample.echo", IconType.Command, "cmd.exe /c echo ToolboxPanel", @"cmd.exe", "/c echo ToolboxPanel", @"C:\Windows\System32"),
     };
 
     /// <summary>按清单造出图标（**跳过目标不存在的**，避免生成点不开的死图标）。</summary>
@@ -79,7 +80,7 @@ public static class SampleIcons
             icons.Add(new IconModel
             {
                 Type = spec.Type,
-                DisplayName = spec.DisplayName,
+                DisplayName = I18n.T(spec.NameKey),   // 名字跟随"创建这一刻"的界面语言
                 SourcePath = spec.SourcePath,
                 TargetPath = spec.TargetPath,
                 Arguments = spec.Arguments,

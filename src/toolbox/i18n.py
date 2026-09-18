@@ -316,5 +316,92 @@ TEXTS: dict[str, dict[str, str]] = {
     # ── Shortcut dialog extras ──
     "shortcut.new_shortcut":       {"zh": "新建快捷方式图标",               "en": "New Shortcut Icon"},
     "shortcut.find":               {"zh": "查找图标",                       "en": "Find Icons"},
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # WinUI 3 线新增（2026-09-18，v2.0.3 i18n）
+    #   · 上面原有 key **一个字都没改**（key 名与文案照旧，C# 侧有保真测试逐条比对）；
+    #   · 下面这些是 WinUI 线独有的界面元素 / 提示语（原版没有对应条目）：
+    #     关于对话框的分项字段、批量管理条的按钮、搜索计数、拖放失败原因、
+    #     备份进度日志、示例图标名字（首次运行时写入 tabs.json 的数据）。
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # ── 关于对话框（WinUI 线把原版 QMessageBox 拆成了结构化字段）──
+    "about.subtitle":              {"zh": "手机桌面风格的启动器",           "en": "Phone-home-screen style launcher"},
+    "about.author":                {"zh": "作者: {author}",                 "en": "Author: {author}"},
+    "about.project":               {"zh": "项目地址: {url}",                "en": "Project: {url}"},
+    "about.diagnostics":           {"zh": "诊断信息:",                      "en": "Diagnostics:"},
+    "about.data_dir":              {"zh": "数据目录",                       "en": "Data directory"},
+    "about.mode":                  {"zh": "运行模式",                       "en": "Run mode"},
+    "about.mode.normal":           {"zh": "正常模式",                       "en": "Normal mode"},
+    "about.mode.demo":             {"zh": "演示模式（不读写数据文件）",      "en": "Demo mode (no files read or written)"},
+    "about.unlocated":             {"zh": "（未定位）",                     "en": "(not located)"},
+    "about.unknown":               {"zh": "未知",                           "en": "Unknown"},
+
+    # ── 校验 / 拖放 / 启动的补充错误 ──
+    "validate.unknown_type":       {"zh": "未知的图标类型: {type}",         "en": "Unknown icon type: {type}"},
+    "list.error.name_required":    {"zh": "说明不能为空",                   "en": "Description cannot be empty"},
+    "list.error.both_empty":       {"zh": "说明和路径至少要填一个",         "en": "Description or path is required"},
+    "status.url_empty":            {"zh": "URL 为空",                       "en": "URL is empty"},
+    "status.path_empty":           {"zh": "路径为空",                       "en": "Path is empty"},
+    "status.file_not_found":       {"zh": "文件不存在",                     "en": "File not found"},
+    "status.shortcut_target_missing": {"zh": "快捷方式目标不存在: {path}",  "en": "Shortcut target not found: {path}"},
+    "drag.error.source_missing":   {"zh": "来源标签页已不存在",             "en": "Source tab no longer exists"},
+    "drag.error.target_missing":   {"zh": "目标标签页已不存在",             "en": "Target tab no longer exists"},
+    "drag.error.icon_to_list":     {"zh": "图标不能放到列表页",             "en": "Icons cannot be dropped on a list tab"},
+    "drag.error.list_to_grid":     {"zh": "列表项不能放到网格页",           "en": "List items cannot be dropped on a grid tab"},
+    "drag.error.icon_gone":        {"zh": "被拖动的图标已不存在",           "en": "The dragged icon no longer exists"},
+    "drag.error.list_item_gone":   {"zh": "被拖动的列表项已不存在",         "en": "The dragged list item no longer exists"},
+    "drag.error.item_gone":        {"zh": "被拖动的项已不存在",             "en": "The dragged item no longer exists"},
+
+    # ── 搜索（WinUI 线的补充）──
+    "search.no_result_list":       {"zh": "没有匹配的列表项",               "en": "No matching list items"},
+    "search.count":                {"zh": "匹配 {matched} / {total}",       "en": "{matched} / {total} matched"},
+
+    # ── 批量管理条（原版是菜单项，WinUI 线做成了一条工具栏）──
+    "bulk.exit":                   {"zh": "退出批量管理",                   "en": "Exit Batch Mode"},
+    "bulk.select_all":             {"zh": "全选",                           "en": "Select All"},
+    "bulk.selected":               {"zh": "已选 {count} 个",                "en": "{count} selected"},
+
+    # ── 备份 / 恢复的进度日志与失败原因（WinUI 线进度对话框）──
+    "backup.log.collect":          {"zh": "正在收集数据文件...",            "en": "Collecting data files..."},
+    "backup.log.create_zip":       {"zh": "创建压缩包: {name}",             "en": "Creating archive: {name}"},
+    "backup.log.write_metadata":   {"zh": "写入元数据...",                  "en": "Writing metadata..."},
+    "backup.log.compress":         {"zh": "压缩: {name}",                   "en": "Compressing: {name}"},
+    "backup.log.exported":         {"zh": "导出完成 ({size} KB)",           "en": "Export complete ({size} KB)"},
+    "backup.log.open_zip":         {"zh": "打开压缩包: {name}",             "en": "Opening archive: {name}"},
+    "backup.log.read_metadata":    {"zh": "读取元数据...",                  "en": "Reading metadata..."},
+    "backup.log.meta_version":     {"zh": "版本: {version}",                "en": "Version: {version}"},
+    "backup.log.meta_exported":    {"zh": "导出时间: {time}",               "en": "Exported at: {time}"},
+    "backup.log.meta_counts":      {"zh": "标签页: {tabs} 图标: {icons}",   "en": "Tabs: {tabs} Icons: {icons}"},
+    "backup.log.clear":            {"zh": "清除当前数据...",                "en": "Clearing current data..."},
+    "backup.log.skip_unsafe":      {"zh": "跳过越界条目: {name}",           "en": "Skipping unsafe entry: {name}"},
+    "backup.log.extract":          {"zh": "解压: {name}",                   "en": "Extracting: {name}"},
+    "backup.log.imported":         {"zh": "导入完成",                       "en": "Import complete"},
+    "backup.error.not_found":      {"zh": "找不到备份文件",                 "en": "Backup file not found"},
+    "backup.error.no_metadata":    {"zh": "无效备份：缺少 metadata.json",   "en": "Invalid backup: metadata.json is missing"},
+    "backup.error.bad_metadata":   {"zh": "无效备份：metadata.json 解析失败",
+                                                                           "en": "Invalid backup: cannot parse metadata.json"},
+
+    # ── 示例图标（首次运行写入 tabs.json 的名字；跟着"创建时"的界面语言走）──
+    "data.sample_tab":             {"zh": "示例",                           "en": "Sample"},
+    "sample.notepad":              {"zh": "记事本",                         "en": "Notepad"},
+    "sample.calc":                 {"zh": "计算器",                         "en": "Calculator"},
+    "sample.cmd":                  {"zh": "命令提示符",                     "en": "Command Prompt"},
+    "sample.powershell":           {"zh": "PowerShell",                     "en": "PowerShell"},
+    "sample.explorer":             {"zh": "资源管理器",                     "en": "File Explorer"},
+    "sample.taskmgr":              {"zh": "任务管理器",                     "en": "Task Manager"},
+    "sample.regedit":              {"zh": "注册表编辑器",                   "en": "Registry Editor"},
+    "sample.msinfo":               {"zh": "系统信息",                       "en": "System Information"},
+    "sample.cleanmgr":             {"zh": "磁盘清理",                       "en": "Disk Cleanup"},
+    "sample.eventvwr":             {"zh": "事件查看器",                     "en": "Event Viewer"},
+    "sample.devmgmt":              {"zh": "设备管理器",                     "en": "Device Manager"},
+    "sample.charmap":              {"zh": "字符映射表",                     "en": "Character Map"},
+    "sample.osk":                  {"zh": "屏幕键盘",                       "en": "On-Screen Keyboard"},
+    "sample.control":              {"zh": "控制面板",                       "en": "Control Panel"},
+    "sample.etc":                  {"zh": "配置目录",                       "en": "Config Folder"},
+    "sample.windows":              {"zh": "Windows 目录",                   "en": "Windows Folder"},
+    "sample.website":              {"zh": "示例网站",                       "en": "Example Website"},
+    "sample.bing":                 {"zh": "必应搜索",                       "en": "Bing Search"},
+    "sample.echo":                 {"zh": "回显命令",                       "en": "Echo Command"},
 }
 # fmt: on

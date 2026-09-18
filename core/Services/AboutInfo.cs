@@ -35,16 +35,33 @@ public sealed record AboutInfo
     /// <summary>诊断键值对（数据目录 / 运行模式 / 运行时版本等，展示顺序即添加顺序）。</summary>
     public required IReadOnlyList<(string Label, string Value)> Diagnostics { get; init; }
 
-    /// <summary>原版那 6 条操作提示（v1.11.6 i18n 的 app.about.text 逐条照搬）。</summary>
-    public static readonly IReadOnlyList<string> DefaultFeatures = new[]
+    /// <summary>
+    /// 原版那 6 条操作提示 —— **直接从原版 <c>app.about.text</c> 里解析出来**（单一来源）。
+    ///
+    /// <para>为什么不另存 6 条独立文案：原版就是一段整文本，各条之间隔着一堆特殊字符
+    /// （英文里用的是**不换行连字符 U+2011**）。另存一份必然会漂移，索性按行解析 ——
+    /// 顺带保证"对话框里那 6 条"与"原版整段文本"逐字一致（有一条单测钉住）。</para>
+    /// <para>每次读取都取当前语言，所以切换语言后重开对话框就是新语言。</para>
+    /// </summary>
+    public static IReadOnlyList<string> DefaultFeatures
     {
-        "从资源管理器拖入文件/文件夹/快捷方式即可创建图标",
-        "双击图标打开，右键查看更多选项",
-        "右键空白区域创建 URL / 命令图标",
-        "图标和标签页均可拖动排序",
-        "数据自动保存到 data/ 文件夹",
-        "支持搜索过滤、图标大小切换、打开方式",
-    };
+        get
+        {
+            var text = I18n.T("app.about.text", ("version", string.Empty));
+            var features = new List<string>();
+
+            foreach (var line in text.Split('\n'))
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("• ", StringComparison.Ordinal))
+                {
+                    features.Add(trimmed[2..].Trim());
+                }
+            }
+
+            return features;
+        }
+    }
 
     /// <summary>
     /// 组装「关于」内容。
@@ -61,8 +78,8 @@ public sealed record AboutInfo
     {
         var diagnostics = new List<(string Label, string Value)>
         {
-            ("数据目录", string.IsNullOrWhiteSpace(dataDirectory) ? "（未定位）" : dataDirectory),
-            ("运行模式", isDemo ? "演示模式（不读写数据文件）" : "正常模式"),
+            (I18n.T("about.data_dir"), string.IsNullOrWhiteSpace(dataDirectory) ? I18n.T("about.unlocated") : dataDirectory),
+            (I18n.T("about.mode"), isDemo ? I18n.T("about.mode.demo") : I18n.T("about.mode.normal")),
         };
 
         if (extraDiagnostics is not null)
@@ -73,8 +90,8 @@ public sealed record AboutInfo
         return new AboutInfo
         {
             Title = "ToolboxPanel",
-            Version = string.IsNullOrWhiteSpace(version) ? "未知" : version.Trim(),
-            Subtitle = "手机桌面风格的启动器",
+            Version = string.IsNullOrWhiteSpace(version) ? I18n.T("about.unknown") : version.Trim(),
+            Subtitle = I18n.T("about.subtitle"),
             Author = "dboycht",
             ProjectUrl = "https://github.com/dboycht/ToolboxPanel",
             Features = DefaultFeatures,
@@ -91,8 +108,8 @@ public sealed record AboutInfo
         var lines = new List<string>
         {
             $"{Title} v{Version} — {Subtitle}",
-            $"作者: {Author}",
-            $"项目地址: {ProjectUrl}",
+            I18n.T("about.author", ("author", Author)),
+            I18n.T("about.project", ("url", ProjectUrl)),
             string.Empty,
         };
 
@@ -104,7 +121,7 @@ public sealed record AboutInfo
         if (Diagnostics.Count > 0)
         {
             lines.Add(string.Empty);
-            lines.Add("诊断信息:");
+            lines.Add(I18n.T("about.diagnostics"));
             foreach (var (label, value) in Diagnostics)
             {
                 lines.Add($"  {label}: {value}");

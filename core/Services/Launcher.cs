@@ -140,7 +140,7 @@ public sealed class Launcher
             IconType.Folder => OpenFileOrFolder(PreferTarget(icon)),
             IconType.Shortcut => OpenShortcut(icon),
             IconType.Command => LaunchCommand(icon.TargetPath, icon.Arguments, icon.WorkingDir),
-            _ => LaunchResult.Fail($"未知的图标类型: {icon.Type}"),
+            _ => LaunchResult.Fail(I18n.T("validate.unknown_type", ("type", icon.Type))),
         };
     }
 
@@ -149,7 +149,7 @@ public sealed class Launcher
     {
         if (string.IsNullOrWhiteSpace(url))
         {
-            return LaunchResult.Fail("URL 为空");
+            return LaunchResult.Fail(I18n.T("status.url_empty"));
         }
 
         var normalized = url;
@@ -176,7 +176,7 @@ public sealed class Launcher
     {
         if (string.IsNullOrWhiteSpace(path))
         {
-            return LaunchResult.Fail("路径为空");
+            return LaunchResult.Fail(I18n.T("status.path_empty"));
         }
 
         if (!File.Exists(path) && !Directory.Exists(path))
@@ -246,7 +246,7 @@ public sealed class Launcher
             return OpenFileOrFolder(icon.TargetPath);
         }
 
-        return LaunchResult.Fail($"快捷方式目标不存在: {icon.SourcePath}");
+        return LaunchResult.Fail(I18n.T("status.shortcut_target_missing", ("path", icon.SourcePath)));
     }
 
     /// <summary>
@@ -261,7 +261,7 @@ public sealed class Launcher
         var path = PreferTarget(icon);
         if (string.IsNullOrWhiteSpace(path))
         {
-            return LaunchResult.Fail("路径为空");
+            return LaunchResult.Fail(I18n.T("status.path_empty"));
         }
 
         try
@@ -301,7 +301,7 @@ public sealed class Launcher
         var path = PreferTarget(icon);
         if (string.IsNullOrWhiteSpace(path))
         {
-            return LaunchResult.Fail("路径为空");
+            return LaunchResult.Fail(I18n.T("status.path_empty"));
         }
 
         if (!File.Exists(path) && !Directory.Exists(path))

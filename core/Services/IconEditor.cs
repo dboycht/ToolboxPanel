@@ -155,11 +155,11 @@ public sealed class IconEditResult
 /// <summary>新建 / 编辑图标的字段语义。<b>只做校验与字段写入，不碰磁盘</b>（落库由调用方做）。</summary>
 public static class IconEditor
 {
-    // 错误消息（对应原版 i18n 的 validate.* 四条）
-    public const string ErrorNameRequired = "名称不能为空";
-    public const string ErrorPathRequired = "路径不能为空";
-    public const string ErrorUrlRequired = "网址不能为空";
-    public const string ErrorCommandRequired = "命令不能为空";
+    // 错误消息（对应原版 i18n 的 validate.* 四条；i18n 已到位 ⇒ 一律走 key）
+    public static string ErrorNameRequired => I18n.T("validate.name_required");
+    public static string ErrorPathRequired => I18n.T("validate.path_required");
+    public static string ErrorUrlRequired => I18n.T("validate.url_required");
+    public static string ErrorCommandRequired => I18n.T("validate.command_required");
 
     /// <summary>
     /// 新建模式的校验（**不改任何东西**，只回答"能不能存"）。
@@ -258,7 +258,7 @@ public static class IconEditor
                 return IconEditResult.Ok(icon, IconRefreshPlan.Standard);
 
             default:
-                return IconEditResult.Fail($"未知的图标类型: {draft.Type}");
+                return IconEditResult.Fail(I18n.T("validate.unknown_type", ("type", draft.Type)));
         }
     }
 
@@ -343,7 +343,7 @@ public static class IconEditor
                 return IconEditResult.Ok(icon, IconRefreshPlan.None);
 
             default:
-                return IconEditResult.Fail($"未知的图标类型: {icon.Type}");
+                return IconEditResult.Fail(I18n.T("validate.unknown_type", ("type", icon.Type)));
         }
     }
 

@@ -26,12 +26,12 @@ public enum ListItemMenuAction
 /// <summary>菜单项（<see cref="SeparatorBefore"/> = 这一项之前画一条分隔线，与原版一致）。</summary>
 public sealed record ListItemMenuItem(ListItemMenuAction Action, string Label, bool SeparatorBefore = false);
 
-/// <summary>列表行菜单规格（原版 i18n 的 icon.menu.* 文案逐条照抄）。</summary>
+/// <summary>列表行菜单规格（文案 key 与原版 i18n 的 icon.menu.* 一致）。</summary>
 public static class ListItemContextMenu
 {
-    public const string LabelEdit = "编辑属性…";
-    public const string LabelRename = "重命名";
-    public const string LabelRemove = "删除";
+    public static string LabelEdit => I18n.T("icon.menu.edit");
+    public static string LabelRename => I18n.T("icon.menu.rename");
+    public static string LabelRemove => I18n.T("icon.menu.remove");
 
     /// <summary>菜单项（顺序与原版一致；删除前有分隔线）。</summary>
     public static IReadOnlyList<ListItemMenuItem> Build() => new List<ListItemMenuItem>

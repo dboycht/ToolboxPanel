@@ -26,13 +26,13 @@ namespace ToolboxPanel.Core.Services;
 public static class SearchFilter
 {
     /// <summary>搜索框占位文字（原版 i18n <c>search.placeholder</c>：「搜索图标…」）。</summary>
-    public const string PlaceholderText = "搜索图标…";
+    public static string PlaceholderText => I18n.T("search.placeholder");
 
     /// <summary>网格页"一个都没命中"的提示（原版 i18n <c>search.no_result</c>）。</summary>
-    public const string NoResultIconText = "没有匹配的图标";
+    public static string NoResultIconText => I18n.T("search.no_result");
 
-    /// <summary>列表页"一个都没命中"的提示（WinUI 线新增：原版只有图标页，没有这条 key）。</summary>
-    public const string NoResultListText = "没有匹配的列表项";
+    /// <summary>列表页"一个都没命中"的提示（WinUI 线新增 key <c>search.no_result_list</c>）。</summary>
+    public static string NoResultListText => I18n.T("search.no_result_list");
 
     /// <summary>查询是否生效（空 / 全空白 = 不过滤）。</summary>
     public static bool IsActive(string? query) => !string.IsNullOrWhiteSpace(query);
@@ -105,7 +105,8 @@ public static class SearchFilter
     }
 
     /// <summary>搜索栏上的匹配计数（如「匹配 3 / 19」）—— 让"为什么只看到几个"一眼可读。</summary>
-    public static string CountText(int matched, int total) => $"匹配 {matched} / {total}";
+    public static string CountText(int matched, int total)
+        => I18n.T("search.count", ("matched", matched), ("total", total));
 
     private static bool Contains(string? text, string needle)
         => !string.IsNullOrEmpty(text) && text.Contains(needle, StringComparison.OrdinalIgnoreCase);

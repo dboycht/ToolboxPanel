@@ -582,23 +582,23 @@ public sealed class DataStore
         var sourceTab = FindTab(payload.SourceTabId);
         if (sourceTab is null)
         {
-            return DragDropResult.Fail("来源标签页已不存在", request);
+            return DragDropResult.Fail(I18n.T("drag.error.source_missing"), request);
         }
 
         var targetTab = FindTab(request.TargetTabId);
         if (targetTab is null)
         {
-            return DragDropResult.Fail("目标标签页已不存在", request);
+            return DragDropResult.Fail(I18n.T("drag.error.target_missing"), request);
         }
 
         if (payload.Kind == DragItemKind.Icon && targetTab.IsListTab)
         {
-            return DragDropResult.Fail("图标不能放到列表页", request);
+            return DragDropResult.Fail(I18n.T("drag.error.icon_to_list"), request);
         }
 
         if (payload.Kind == DragItemKind.ListItem && !targetTab.IsListTab)
         {
-            return DragDropResult.Fail("列表项不能放到网格页", request);
+            return DragDropResult.Fail(I18n.T("drag.error.list_to_grid"), request);
         }
 
         return payload.Kind == DragItemKind.Icon
@@ -611,7 +611,7 @@ public sealed class DataStore
     {
         if (!sourceTab.Icons.Any(i => i.Id == payload.ItemId))
         {
-            return DragDropResult.Fail("被拖动的图标已不存在", request);
+            return DragDropResult.Fail(I18n.T("drag.error.icon_gone"), request);
         }
 
         if (ReferenceEquals(sourceTab, targetTab))
@@ -640,7 +640,7 @@ public sealed class DataStore
     {
         if (!sourceTab.ListItems.Any(it => it.Id == payload.ItemId))
         {
-            return DragDropResult.Fail("被拖动的列表项已不存在", request);
+            return DragDropResult.Fail(I18n.T("drag.error.list_item_gone"), request);
         }
 
         if (ReferenceEquals(sourceTab, targetTab))
@@ -675,7 +675,7 @@ public sealed class DataStore
     {
         if (fromIndex < 0)
         {
-            return DragDropResult.Fail("被拖动的项已不存在", request);
+            return DragDropResult.Fail(I18n.T("drag.error.item_gone"), request);
         }
 
         var adjusted = toIndex > fromIndex ? toIndex - 1 : toIndex;
