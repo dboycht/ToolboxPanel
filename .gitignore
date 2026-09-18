@@ -225,3 +225,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ────────────────────────── ToolboxPanel 项目自有规则 ──────────────────────────
+# 推送只含源码（工作区 AGENTS.md 规则 2）：
+#   · data/ 是**运行时数据目录**（tabs.json / config.json / icons/*.png）——
+#     应用首次运行会自己创建它，仓库里不需要（历史上 1.00.2 误入库过两个默认空文件，
+#     2026-09-18 已 git rm --cached 清掉）。
+#   · pack/*result*.txt 是发布脚本的结果文件（含 token 长度等一次性信息），只留开发副本。
+data/
+pack/*result*.txt
+
