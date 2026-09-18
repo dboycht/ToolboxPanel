@@ -10,6 +10,7 @@
 using System.Collections.ObjectModel;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
@@ -57,11 +58,38 @@ public sealed class MainViewModel
 
     public ObservableCollection<TabItemViewModel> Tabs { get; } = new();
 
-    public string DataDirectory => _store?.DataDirectory ?? "(演示模式：未使用数据目录)";
+    public string DataDirectory => _store?.DataDirectory ?? I18n.T("status.demo.data_dir");
 
     public bool IsDemo => _isDemo;
 
-    public string StatusText { get; private set; } = "正在载入…";
+    /// <summary>状态栏文字（语言切换后用 <see cref="RebuildStatusText"/> 重算）。</summary>
+    public string StatusText { get; private set; } = I18n.T("status.loading");
+
+    // 上一次装配出来的计数 —— 语言切换时用它重算状态栏（不必重新读盘）
+    private int _statusTabCount;
+    private int _statusIconCount;
+    private int _statusListItemCount;
+    private int _statusExtractedCount;
+    private bool _statusIsDemoSummary;
+    private string _statusDirectory = string.Empty;
+
+    /// <summary>
+    /// 用"上一次装配的计数"重算状态栏文字（语言切换后调用）。
+    /// 语言变了但数据没变，所以只重排文案、不重新读盘。
+    /// </summary>
+    public void RebuildStatusText()
+    {
+        StatusText = _statusIsDemoSummary
+            ? I18n.T("status.demo.summary")
+              + " · " + I18n.T("status.summary",
+                  ("tabs", _statusTabCount), ("icons", _statusIconCount), ("items", _statusListItemCount))
+            : I18n.T("status.summary",
+                  ("tabs", _statusTabCount), ("icons", _statusIconCount), ("items", _statusListItemCount))
+              + (_statusExtractedCount > 0
+                  ? I18n.T("status.summary.extracted", ("count", _statusExtractedCount))
+                  : string.Empty)
+              + (_statusDirectory.Length > 0 ? " · " + _statusDirectory : string.Empty);
+    }
 
     /// <summary>读数据并把界面模型建好。</summary>
     public void Load()
@@ -115,28 +143,32 @@ public sealed class MainViewModel
             _store.Save();
         }
 
-        StatusText = $"{tabs.Count} 个标签页 · {iconCount} 个图标 · {listItemCount} 个列表项"
-                     + (extracted > 0 ? $"（新提取 {extracted} 个图标）" : string.Empty)
-                     + $" · {_store.DataDirectory}";
+        _statusIsDemoSummary = false;
+        _statusTabCount = tabs.Count;
+        _statusIconCount = iconCount;
+        _statusListItemCount = listItemCount;
+        _statusExtractedCount = extracted;
+        _statusDirectory = _store.DataDirectory;
+        RebuildStatusText();
     }
 
     /// <summary>打开一个图标（文件/文件夹/网址/快捷方式/命令）。演示模式下不启动任何程序。</summary>
     public LaunchResult Launch(IconModel icon)
-        => _isDemo ? LaunchResult.Fail("演示模式：不会真的打开") : _launcher!.Open(icon);
+        => _isDemo ? LaunchResult.Fail(I18n.T("demo.no_open")) : _launcher!.Open(icon);
 
     /// <summary>打开列表页的一行（路径）。演示模式下不启动任何程序。</summary>
     public LaunchResult LaunchListItem(ListItemModel item)
-        => _isDemo ? LaunchResult.Fail("演示模式：不会真的打开") : _launcher!.OpenFileOrFolder(item.Path);
+        => _isDemo ? LaunchResult.Fail(I18n.T("demo.no_open")) : _launcher!.OpenFileOrFolder(item.Path);
 
     // ────────────────────────────── 右键菜单的四个动作（W5）──────────────────────────────
 
     /// <summary>「用其他应用打开…」（原版 <c>_open_with</c>：rundll32 的「打开方式」对话框）。</summary>
     public LaunchResult OpenWith(IconModel icon)
-        => _isDemo ? LaunchResult.Fail("演示模式：不会真的打开") : _launcher!.OpenWith(icon);
+        => _isDemo ? LaunchResult.Fail(I18n.T("demo.no_open")) : _launcher!.OpenWith(icon);
 
     /// <summary>「打开文件位置」（原版 <c>_open_file_location</c>：文件 → explorer /select；文件夹 → 打开它）。</summary>
     public LaunchResult OpenFileLocation(IconModel icon)
-        => _isDemo ? LaunchResult.Fail("演示模式：不会真的打开") : _launcher!.OpenFileLocation(icon);
+        => _isDemo ? LaunchResult.Fail(I18n.T("demo.no_open")) : _launcher!.OpenFileLocation(icon);
 
     /// <summary>
     /// 「重命名」：Core 校验（名称必填）→ 落库 → 刷新图块上的名字。
@@ -317,7 +349,7 @@ public sealed class MainViewModel
         var tab = FindTab(tabId);
         if (tab is null || tab.IsList)
         {
-            return DropImportResult.Fail("目标标签页不存在或不是网格页");
+            return DropImportResult.Fail(I18n.T("drag.error.target_not_grid"));
         }
 
         var decisions = DropImporter.Plan(paths, tab.Icons.Select(tile => tile.Model.SourcePath));
@@ -383,7 +415,7 @@ public sealed class MainViewModel
     {
         if (_store is null)
         {
-            return DragDropResult.Fail("演示模式：不会真的保存", request);
+            return DragDropResult.Fail(I18n.T("demo.no_save"), request);
         }
 
         var result = _store.ApplyDragDrop(MapDropIndexToCore(request));
@@ -456,7 +488,7 @@ public sealed class MainViewModel
     //   ③ 图标缓存按 Core 给的「刷新计划」提取（不要再在 UI 里写 if 判断类型）；
     //   ④ 演示模式下什么都不写（返回失败），绝不产生持久化副作用。
 
-    private const string DemoNoSave = "演示模式：不会真的保存";
+    private static string DemoNoSave => I18n.T("demo.no_save");
 
     /// <summary>
     /// 新建一个图标：校验 → 提取图标 → Core 落库 → 加进界面集合。
@@ -471,7 +503,7 @@ public sealed class MainViewModel
         var tab = FindTab(tabId);
         if (tab is null || tab.IsList)
         {
-            return IconEditResult.Fail("目标标签页不存在或不是网格页");
+            return IconEditResult.Fail(I18n.T("drag.error.target_not_grid"));
         }
 
         var result = IconEditor.Create(draft);
@@ -703,7 +735,14 @@ public sealed class MainViewModel
 
         var iconTotal = Tabs.Where(t => !t.IsList).Sum(t => t.Icons.Count);
         var itemTotal = Tabs.Where(t => t.IsList).Sum(t => t.ListItems.Count);
-        StatusText = $"演示数据（不读写任何文件）· {Tabs.Count} 个标签页 · {iconTotal} 个图标 · {itemTotal} 个列表项";
+
+        _statusIsDemoSummary = true;
+        _statusTabCount = Tabs.Count;
+        _statusIconCount = iconTotal;
+        _statusListItemCount = itemTotal;
+        _statusExtractedCount = 0;
+        _statusDirectory = string.Empty;
+        RebuildStatusText();
     }
 
     /// <summary>演示用：取图标失败也不抛异常，交给模板的字形兜底。</summary>

@@ -6,13 +6,14 @@
 
 using System.Reflection;
 using Microsoft.UI.Xaml;
+using ToolboxPanel.Core;
 
 namespace ToolboxPanel;
 
 /// <summary>运行时环境事实。全部读实际值，任何一项取不到都回落「未知」，绝不抛。</summary>
 internal static class AppInfo
 {
-    /// <summary>本程序版本号（如 <c>2.0.2</c>）。</summary>
+    /// <summary>本程序版本号（如 <c>2.0.3</c>）。</summary>
     public static string Version => ReadVersion(typeof(App).Assembly);
 
     /// <summary>.NET 运行时版本（如 <c>9.0.0</c>）。</summary>
@@ -26,7 +27,7 @@ internal static class AppInfo
             }
             catch (Exception)
             {
-                return "未知";
+                return I18n.T("about.unknown");
             }
         }
     }
@@ -45,7 +46,7 @@ internal static class AppInfo
             }
             catch (Exception)
             {
-                return "未知";
+                return I18n.T("about.unknown");
             }
         }
     }
@@ -57,25 +58,25 @@ internal static class AppInfo
         {
             try
             {
-                return Environment.ProcessPath ?? "未知";
+                return Environment.ProcessPath ?? I18n.T("about.unknown");
             }
             catch (Exception)
             {
-                return "未知";
+                return I18n.T("about.unknown");
             }
         }
     }
 
     /// <summary>
-    /// 「关于」里的诊断项（顺序即展示顺序）。
+    /// 「关于」里的诊断项（顺序即展示顺序；标签取当前语言）。
     /// ⚠️ 「数据目录 / 运行模式」由 Core 的 <c>AboutInfo.Create</c> 固定放在最前，这里不再重复。
     /// </summary>
     public static IReadOnlyList<(string Label, string Value)> Diagnostics() => new[]
     {
-        (".NET 运行时", DotNetVersion),
-        ("Windows App SDK", WindowsAppSdkVersion),
-        ("系统", OsVersion),
-        ("程序路径", ExecutablePath),
+        (I18n.T("diag.dotnet"), DotNetVersion),
+        (I18n.T("diag.windows_app_sdk"), WindowsAppSdkVersion),
+        (I18n.T("diag.system"), OsVersion),
+        (I18n.T("diag.exe_path"), ExecutablePath),
     };
 
     /// <summary>
@@ -97,12 +98,12 @@ internal static class AppInfo
                 return plus > 0 ? informational[..plus] : informational.Trim();
             }
 
-            // 2.0.2.0 → 2.0.2
-            return assembly.GetName().Version?.ToString(3) ?? "未知";
+            // 2.0.3.0 → 2.0.3
+            return assembly.GetName().Version?.ToString(3) ?? I18n.T("about.unknown");
         }
         catch (Exception)
         {
-            return "未知";
+            return I18n.T("about.unknown");
         }
     }
 }

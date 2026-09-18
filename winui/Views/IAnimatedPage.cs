@@ -41,4 +41,12 @@ public interface IAnimatedPage
     /// <c>EntranceAnimator.RevealWhenReady</c> 的轮询实现）。</para>
     /// </summary>
     void RevealWhenReady();
+
+    /// <summary>
+    /// 套用当前语言的文案（v2.0.3 i18n）。
+    ///
+    /// <para>分工：XAML 里标了 <c>ui:Tr.Key</c> 的静态文字由 `Tr.RefreshAll()` 统一重刷，
+    /// **不在这里重复处理**；这里只管"由代码设置的"那几处（空页提示、无匹配提示、计数文字）。</para>
+    /// </summary>
+    void ApplyLanguage();
 }

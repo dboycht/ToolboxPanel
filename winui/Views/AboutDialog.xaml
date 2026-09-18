@@ -24,7 +24,7 @@
     x:Class="ToolboxPanel.Views.AboutDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    CloseButtonText="关闭"
+    xmlns:ui="using:ToolboxPanel"
     DefaultButton="Close">
 
     <!-- 外层滚动：整份内容超出对话框高度时可上下滚（MaxHeight 保证不顶出屏幕） -->
@@ -67,7 +67,7 @@
                  逐行像素统计证明每条文字都是单一连续行、行间是纯背景，那条带其实是 Expander
                  表头自带的浅灰底，属正常外观。详见 ERROR.md E18。）
             -->
-            <Expander x:Name="DiagnosticsExpander" Header="诊断信息"
+            <Expander x:Name="DiagnosticsExpander" ui:Tr.Header="about.diagnostics_header"
                       HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
                 <TextBlock x:Name="DiagnosticsText"
                            FontFamily="Consolas" FontSize="11"

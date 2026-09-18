@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Storage;
 
 namespace ToolboxPanel.Views;
@@ -19,6 +20,7 @@ public sealed partial class SettingsPanel : UserControl
     private SettingsStore? _store;
     private AppSettings? _settings;
     private bool _syncingUi;
+    private string? _dataDirectory;
 
     public SettingsPanel()
     {
@@ -50,7 +52,28 @@ public sealed partial class SettingsPanel : UserControl
 
     /// <summary>显示数据目录（"数据"一节里的那行小字）—— 由宿主传入，面板不去定位路径。</summary>
     public void SetDataDirectory(string? path)
-        => DataDirText.Text = $"数据目录：{path ?? "（未定位）"}";
+    {
+        _dataDirectory = path;
+        RefreshDataDirectoryText();
+    }
+
+    /// <summary>
+    /// 语言切换后由宿主调用：重写"由代码设置的"那几处文字。
+    /// <para>⚠️ XAML 里标了 <c>ui:Tr.Key</c> 的静态文案由 `Tr.RefreshAll()` 统一重刷，
+    /// 不在这里重复处理；这里只管 XAML 表达不了的（ToggleSwitch 的开/关文字、带占位符的提示行）。</para>
+    /// </summary>
+    public void ApplyLanguage()
+    {
+        ShowCountsSwitch.OnContent = I18n.T("settings.on");
+        ShowCountsSwitch.OffContent = I18n.T("settings.off");
+        AnimationSwitch.OnContent = I18n.T("settings.animations.on");
+        AnimationSwitch.OffContent = I18n.T("settings.animations.off");
+        RefreshDataDirectoryText();
+    }
+
+    private void RefreshDataDirectoryText()
+        => DataDirText.Text = I18n.T("settings.data_dir",
+            ("path", _dataDirectory ?? I18n.T("about.unlocated")));
 
     private void OnExportBackupClick(object sender, RoutedEventArgs e)
         => ExportBackupRequested?.Invoke(this, EventArgs.Empty);
@@ -111,6 +134,8 @@ public sealed partial class SettingsPanel : UserControl
                 AnimationEasing.Snappy => 2,
                 _ => 1,
             };
+
+            LanguageChoices.SelectedIndex = I18n.Normalize(_settings.Language) == "en" ? 1 : 0;
         }
         finally
         {
@@ -165,6 +190,15 @@ public sealed partial class SettingsPanel : UserControl
 
     private void OnShowCountsToggled(object sender, RoutedEventArgs e)
         => Apply(s => s.ShowTabCounts = ShowCountsSwitch.IsOn);
+
+    /// <summary>语言：只写线名（zh / en），由 Core 的 `I18n` 归一化（未知一律回落到默认语言）。</summary>
+    private void OnLanguageChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (LanguageChoices.SelectedItem is RadioButton { Tag: string wire })
+        {
+            Apply(s => s.Language = wire);
+        }
+    }
 
     /// <summary>图标大小：只写线名（small/medium/large），由 Core 的尺寸表解释。</summary>
     private void OnIconSizeChanged(object sender, SelectionChangedEventArgs e)

@@ -7,6 +7,7 @@ using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Windows.Storage.Pickers;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Services;
 
 namespace ToolboxPanel.Views;
@@ -24,6 +25,10 @@ public sealed partial class ListItemEditDialog : ContentDialog
 
         _windowId = windowId;
         Title = title;
+
+        // 对话框按钮文字（Tr 管不到 ContentDialog 的按钮属性）
+        PrimaryButtonText = I18n.T("btn.ok");
+        CloseButtonText = I18n.T("btn.cancel");
 
         // 标题/字段名/占位符都取自 Core（原版 i18n 文案）
         DescriptionBox.Header = ListItemEditor.DescriptionLabel;

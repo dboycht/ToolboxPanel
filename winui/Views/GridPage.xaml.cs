@@ -27,6 +27,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
@@ -82,6 +83,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         //    落点由 DragSession 在拖动中登记。详见 ERROR.md E25。
 
         UpdateEmptyHints();
+        UpdateBulkBar();   // 批量条的计数文字（"已选 N 个"）也走 Core 文案，构造时按当前语言摆好
     }
 
     // ────────────────────────────── 搜索过滤（W5）──────────────────────────────
@@ -100,6 +102,16 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         HideDropIndicator();
         UpdateEmptyHints();
         UpdateBulkBar();   // 过滤会清掉勾选，批量条上的计数要跟着走
+    }
+
+    /// <summary>
+    /// 套用当前语言（v2.0.3 i18n）：XAML 上标了 `ui:Tr.Key` 的静态文字由 `Tr.RefreshAll()` 负责，
+    /// 这里只重写"由代码设置的"两处 —— 无匹配提示（文案来自 Core）与批量条的计数。
+    /// </summary>
+    public void ApplyLanguage()
+    {
+        NoMatchText.Text = SearchFilter.NoResultIconText;
+        UpdateBulkBar();
     }
 
     /// <summary>把"已实现"的容器补成当前档位尺寸 + 当前拖拽开关（过滤/换档后调）。</summary>
@@ -423,12 +435,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     {
         var menu = new MenuFlyout();
 
-        AddNew("新建文件图标…", IconType.File);
-        AddNew("新建文件夹图标…", IconType.Folder);
-        AddNew("新建快捷方式图标…", IconType.Shortcut);
+        AddNew(I18n.T("grid.menu.file"), IconType.File);
+        AddNew(I18n.T("grid.menu.folder"), IconType.Folder);
+        AddNew(I18n.T("grid.menu.shortcut"), IconType.Shortcut);
         menu.Items.Add(new MenuFlyoutSeparator());
-        AddNew("新建网址图标…", IconType.Url);
-        AddNew("新建命令图标…", IconType.Command);
+        AddNew(I18n.T("grid.menu.url"), IconType.Url);
+        AddNew(I18n.T("grid.menu.command"), IconType.Command);
 
         // 批量管理（原版在菜单栏里；我们没有菜单栏，放在页面级菜单的末尾）
         menu.Items.Add(new MenuFlyoutSeparator());

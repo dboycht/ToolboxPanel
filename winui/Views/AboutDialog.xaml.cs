@@ -7,6 +7,7 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Services;
 
 namespace ToolboxPanel.Views;
@@ -21,10 +22,13 @@ public sealed partial class AboutDialog : ContentDialog
 
         InitializeComponent();
 
-        Title = $"关于 {info.Title}";
+        // ⚠️ ContentDialog 的按钮文字不是可视元素 ⇒ `ui:Tr.Key` 管不到，在这里按 key 设
+        CloseButtonText = I18n.T("btn.close");
+
+        Title = I18n.T("about.title", ("product", info.Title));
         VersionLine.Text = $"{info.Title} v{info.Version}";
         SubtitleLine.Text = info.Subtitle;
-        AuthorLine.Text = $"作者: {info.Author}";
+        AuthorLine.Text = I18n.T("about.author", ("author", info.Author));
 
         ProjectLink.Content = info.ProjectUrl;
 

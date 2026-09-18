@@ -8,6 +8,7 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Services;
 
 namespace ToolboxPanel.Views;
@@ -20,6 +21,11 @@ public sealed partial class RenameIconDialog : ContentDialog
     private RenameIconDialog(string? currentName)
     {
         InitializeComponent();
+
+        // 标题与按钮文字（Tr 管不到 ContentDialog 的 Title / 按钮属性）
+        Title = I18n.T("icon.rename.title");
+        PrimaryButtonText = I18n.T("btn.ok");
+        CloseButtonText = I18n.T("btn.cancel");
 
         NameBox.Text = currentName ?? string.Empty;
         NameBox.SelectAll();

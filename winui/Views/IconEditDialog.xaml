@@ -11,13 +11,16 @@
     ⚠️ 校验在 Core（IconEditor.ValidateCreate / ValidateEdit）：
        点「确定」不通过时**不关对话框**，把消息显示在 ErrorText。
        （原版是关掉窗口后把错误写进状态栏，用户得再开一次 —— 这里体验更好，逻辑不变。）
+
+    ⚠️ 文案（v2.0.3 i18n）：静态标签走 `ui:Tr.Key`；**随类型变**的那几处（标题、主字段标签、
+       占位符）在代码里按 key 设（见 IconEditDialog.xaml.cs）；对话框按钮文字在构造函数里设
+       （ContentDialog 的按钮不是可视元素，`Tr` 管不到）。
 -->
 <ContentDialog
     x:Class="ToolboxPanel.Views.IconEditDialog"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    PrimaryButtonText="确定"
-    CloseButtonText="取消"
+    xmlns:ui="using:ToolboxPanel"
     DefaultButton="Primary"
     PrimaryButtonClick="OnPrimaryButtonClick">
 
@@ -42,7 +45,7 @@
                    Opacity="0.55" FontSize="11" />
 
         <!-- 1 名称（所有类型通用，必填） -->
-        <TextBlock Grid.Row="1" Text="名称:" VerticalAlignment="Center" />
+        <TextBlock Grid.Row="1" ui:Tr.Key="edit.field.name" VerticalAlignment="Center" />
         <TextBox x:Name="NameBox" Grid.Row="1" Grid.Column="1" />
 
         <!-- 2 主字段：路径 / 命令 / 网址（标签随类型变；网址没有浏览按钮） -->
@@ -51,44 +54,44 @@
             <TextBox x:Name="MainBox" VerticalAlignment="Center" MinWidth="280" />
             <Button x:Name="BrowseMainButton" Content="…" Padding="8,4"
                     VerticalAlignment="Center" Click="OnBrowseMainClick"
-                    ToolTipService.ToolTip="浏览…" />
+                    ui:Tr.Tip="edit.browse" />
         </StackPanel>
 
         <!-- 3 参数（快捷方式 / 命令） -->
-        <TextBlock x:Name="ArgsLabel" Grid.Row="3" Text="参数:" VerticalAlignment="Center" />
+        <TextBlock x:Name="ArgsLabel" Grid.Row="3" ui:Tr.Key="cmd.label.args" VerticalAlignment="Center" />
         <TextBox x:Name="ArgsBox" Grid.Row="3" Grid.Column="1"
-                 PlaceholderText="--verbose backup.py" />
+                 ui:Tr.Key="cmd.placeholder.args" />
 
         <!-- 4 工作目录（快捷方式 / 命令） -->
-        <TextBlock x:Name="WdLabel" Grid.Row="4" Text="工作目录:" VerticalAlignment="Center" />
+        <TextBlock x:Name="WdLabel" Grid.Row="4" ui:Tr.Key="cmd.label.wd" VerticalAlignment="Center" />
         <StackPanel Grid.Row="4" Grid.Column="1" Orientation="Horizontal" Spacing="6">
             <TextBox x:Name="WdBox" VerticalAlignment="Center" MinWidth="280" />
             <Button x:Name="BrowseWdButton" Content="…" Padding="8,4"
                     VerticalAlignment="Center" Click="OnBrowseWdClick"
-                    ToolTipService.ToolTip="浏览…" />
+                    ui:Tr.Tip="edit.browse" />
         </StackPanel>
 
         <!-- 5 描述（仅快捷方式） -->
-        <TextBlock x:Name="DescLabel" Grid.Row="5" Text="描述:" VerticalAlignment="Center" />
+        <TextBlock x:Name="DescLabel" Grid.Row="5" ui:Tr.Key="edit.field.desc" VerticalAlignment="Center" />
         <TextBox x:Name="DescBox" Grid.Row="5" Grid.Column="1"
-                 PlaceholderText="快捷方式说明（可选）" />
+                 ui:Tr.Key="edit.field.desc_ph" />
 
         <!-- 6 自定义图标（仅快捷方式）：文件 + 索引 + 重置 -->
-        <TextBlock x:Name="IconLabel" Grid.Row="6" Text="图标:" VerticalAlignment="Center" />
+        <TextBlock x:Name="IconLabel" Grid.Row="6" ui:Tr.Key="edit.field.icon" VerticalAlignment="Center" />
         <StackPanel x:Name="IconRowPanel" Grid.Row="6" Grid.Column="1"
                     Orientation="Horizontal" Spacing="6">
             <TextBox x:Name="IconPathBox" VerticalAlignment="Center" MinWidth="150"
-                     PlaceholderText="自定义图标文件（可选）" />
+                     ui:Tr.Key="edit.field.icon_ph" />
             <Button x:Name="BrowseIconButton" Content="…" Padding="8,4"
                     VerticalAlignment="Center" Click="OnBrowseIconClick"
-                    ToolTipService.ToolTip="浏览…" />
-            <TextBlock Text="索引:" VerticalAlignment="Center" Opacity="0.6" />
+                    ui:Tr.Tip="edit.browse" />
+            <TextBlock ui:Tr.Key="edit.field.icon_index" VerticalAlignment="Center" Opacity="0.6" />
             <NumberBox x:Name="IndexBox" Width="76" Minimum="0" Maximum="999"
                        SpinButtonPlacementMode="Compact" Value="0"
                        VerticalAlignment="Center" />
-            <Button x:Name="ResetIconButton" Content="使用默认" Padding="8,4"
+            <Button x:Name="ResetIconButton" ui:Tr.Key="edit.btn.reset_icon" Padding="8,4"
                     VerticalAlignment="Center" Click="OnResetIconClick"
-                    ToolTipService.ToolTip="恢复使用目标程序的默认图标" />
+                    ui:Tr.Tip="edit.btn.reset_icon_tip" />
         </StackPanel>
 
         <!-- 7 错误提示（校验不过时显示，平时收起） -->

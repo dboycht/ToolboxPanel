@@ -5,6 +5,7 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Services;
 
 namespace ToolboxPanel.Views;
@@ -19,6 +20,7 @@ public sealed partial class BackupProgressDialog : ContentDialog
         InitializeComponent();
 
         Title = title;
+        CloseButtonText = I18n.T("btn.close");   // ContentDialog 的按钮文字 Tr 管不到，这里设
         Closing += OnClosing;
     }
 

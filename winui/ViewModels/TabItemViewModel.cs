@@ -9,6 +9,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
@@ -25,7 +26,7 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     {
         Model = model;
         Id = model.Id;
-        Name = string.IsNullOrEmpty(model.Name) ? "(未命名标签页)" : model.Name;
+        Name = string.IsNullOrEmpty(model.Name) ? I18n.T("tab.unnamed") : model.Name;
         IsList = model.IsListTab;
 
         // 集合一变（新建 / 删除 / 拖拽重排 / 导入后重建）可见视图跟着重算 ——
@@ -77,8 +78,10 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     public ObservableCollection<ListRowViewModel> ListItems { get; } = new();
 
-    /// <summary>标签栏上的数量文字（如「20 个图标」）。</summary>
-    public string CountLabel => IsList ? $"{ListItems.Count} 项" : $"{Icons.Count} 个图标";
+    /// <summary>标签栏上的数量文字（如「20 个图标」）。语言切换后由页面/窗口调 <see cref="NotifyCountLabel"/> 重算。</summary>
+    public string CountLabel => IsList
+        ? I18n.T("tab.count.items", ("count", ListItems.Count))
+        : I18n.T("tab.count.icons", ("count", Icons.Count));
 
     /// <summary>数量变了（拖拽搬走/搬来图标）之后刷新标签栏上的数量文字。</summary>
     public void NotifyCountLabel() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountLabel)));
@@ -415,11 +418,11 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
 
     public string TypeLabel => Model.Type switch
     {
-        IconType.Folder => "文件夹",
-        IconType.Shortcut => "快捷方式",
-        IconType.Url => "网址",
-        IconType.Command => "命令",
-        _ => "文件",
+        IconType.Folder => I18n.T("icon.type.folder"),
+        IconType.Shortcut => I18n.T("icon.type.shortcut"),
+        IconType.Url => I18n.T("icon.type.url"),
+        IconType.Command => I18n.T("icon.type.command"),
+        _ => I18n.T("icon.type.file"),
     };
 
     /// <summary>
@@ -445,7 +448,7 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
         var source = !string.IsNullOrWhiteSpace(model.SourcePath) ? model.SourcePath : model.TargetPath;
         if (string.IsNullOrWhiteSpace(source))
         {
-            return "(未命名)";
+            return I18n.T("icon.unnamed");
         }
 
         try

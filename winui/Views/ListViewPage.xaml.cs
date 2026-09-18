@@ -68,6 +68,12 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
     }
 
     /// <summary>
+    /// 套用当前语言（v2.0.3 i18n）：XAML 上标了 `ui:Tr.Key` 的静态文字由 `Tr.RefreshAll()` 负责，
+    /// 这里只重写"由代码设置的"无匹配提示（文案来自 Core）。
+    /// </summary>
+    public void ApplyLanguage() => NoMatchText.Text = SearchFilter.NoResultListText;
+
+    /// <summary>
     /// 空页提示 vs 搜索无匹配提示（每次集合变化都重算：新建/删除/过滤都会走到这里）。
     /// ⚠️ 此前只在构造时算一次 —— "给空页新建一行后提示还在"是本轮顺手修掉的真 bug。
     /// </summary>

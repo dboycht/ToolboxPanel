@@ -12,6 +12,7 @@
     x:Class="ToolboxPanel.Views.GridPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:ToolboxPanel"
     xmlns:vm="using:ToolboxPanel.ViewModels">
 
     <UserControl.Resources>
@@ -101,15 +102,15 @@
                 Background="{ThemeResource SubtleFillColorSecondaryBrush}">
             <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xE762;" FontSize="14" VerticalAlignment="Center" />
-                <TextBlock x:Name="BulkTitle" Text="批量管理" FontSize="12" FontWeight="SemiBold"
+                <TextBlock x:Name="BulkTitle" ui:Tr.Key="app.menu.batch" FontSize="12" FontWeight="SemiBold"
                            VerticalAlignment="Center" />
                 <TextBlock x:Name="BulkCount" Text="已选 0 个" FontSize="12" Opacity="0.75"
                            VerticalAlignment="Center" />
-                <Button x:Name="BulkSelectAllButton" Content="全选" Padding="8,2" FontSize="12"
+                <Button x:Name="BulkSelectAllButton" ui:Tr.Key="bulk.select_all" Padding="8,2" FontSize="12"
                         Click="OnBulkSelectAllClick" />
-                <Button x:Name="BulkDeleteButton" Content="批量删除勾选图标" Padding="8,2" FontSize="12"
+                <Button x:Name="BulkDeleteButton" ui:Tr.Key="app.menu.batch_delete" Padding="8,2" FontSize="12"
                         Click="OnBulkDeleteClick" />
-                <Button x:Name="BulkExitButton" Content="退出批量管理" Padding="8,2" FontSize="12"
+                <Button x:Name="BulkExitButton" ui:Tr.Key="bulk.exit" Padding="8,2" FontSize="12"
                         Click="OnBulkExitClick" />
             </StackPanel>
         </Border>
@@ -170,8 +171,8 @@
                     VerticalAlignment="Center" HorizontalAlignment="Center"
                     Spacing="6" Visibility="Collapsed">
             <FontIcon Glyph="&#xE8A5;" FontSize="32" Opacity="0.45" />
-            <TextBlock Text="这一页还没有图标" Opacity="0.65" FontSize="12" />
-            <TextBlock Text="在空白处点右键新建，或把文件 / 文件夹 / 快捷方式拖进来" Opacity="0.4" FontSize="10.5"
+            <TextBlock ui:Tr.Key="grid.empty_title" Opacity="0.65" FontSize="12" />
+            <TextBlock ui:Tr.Key="grid.empty_hint" Opacity="0.4" FontSize="10.5"
                        TextAlignment="Center" TextWrapping="Wrap" />
         </StackPanel>
 
@@ -186,7 +187,7 @@
                     Spacing="6" Visibility="Collapsed">
             <FontIcon Glyph="&#xE721;" FontSize="32" Opacity="0.45" />
             <TextBlock x:Name="NoMatchText" Opacity="0.65" FontSize="12" />
-            <TextBlock Text="换个关键词试试，或按 Esc 关闭搜索" Opacity="0.4" FontSize="10.5"
+            <TextBlock ui:Tr.Key="search.no_match_hint" Opacity="0.4" FontSize="10.5"
                        TextAlignment="Center" TextWrapping="Wrap" />
         </StackPanel>
 

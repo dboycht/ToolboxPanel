@@ -1,16 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    SettingsPanel.xaml —— 设置面板（单独面板，按"窗口 / 标签栏 / 动效"分节）
+    SettingsPanel.xaml —— 设置面板（单独面板，按"主题 / 窗口 / 标签栏 / 图标 / 动效 / 语言 / 数据"分节）
 
     约定：
       · 面板自己负责"改模型 + 立刻落盘"（SettingsStore），然后抛 SettingApplied 让主窗口重新套用；
       · 动效参数改动可以点「预览动效」立刻看效果（不用来回切标签页试）；
       · 关掉"启用动效"时，动效细则整体禁用（灰掉）但仍保留数值。
+
+    ⚠️ 文案一律走 `ui:Tr.Key="<key>"`（元素主文案）与 `ui:Tr.Header="<key>"`（表单表头）——
+       由 Core 的 I18n 取文案，语言一换由 Tr.RefreshAll() 统一重刷。
+       不要在这里写死中文，也不要在代码里逐个赋值（见 Tr.cs 的说明）。
 -->
 <UserControl
     x:Class="ToolboxPanel.Views.SettingsPanel"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:ToolboxPanel">
 
     <!-- Esc 关闭（面板打开时会拿到焦点，见 MainWindow.ShowSettings） -->
     <UserControl.KeyboardAccelerators>
@@ -42,14 +47,14 @@
             panel 自己的 ✕ 若贴在最上面会被它盖住且点不到（用户实测反馈）。
         -->
         <Grid Grid.Row="0" Padding="16,44,10,8">
-            <TextBlock Text="设置" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
+            <TextBlock ui:Tr.Key="settings.title" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
             <!-- ⚠️ 同 ⚙：关掉焦点视觉，避免"看起来像被选中"（见 MainWindow.xaml 的说明） -->
             <Button HorizontalAlignment="Right" Padding="6,2"
                     Background="Transparent" BorderThickness="0"
                     UseSystemFocusVisuals="False"
                     FocusVisualPrimaryThickness="0"
                     FocusVisualSecondaryThickness="0"
-                    Click="OnCloseClick" ToolTipService.ToolTip="关闭（Esc / 点空白处也可以）">
+                    Click="OnCloseClick" ui:Tr.Tip="settings.close_tip">
                 <FontIcon Glyph="&#xE711;" FontSize="12" />
             </Button>
         </Grid>
@@ -57,89 +62,91 @@
         <ScrollViewer Grid.Row="1" Padding="16,0,16,16">
             <StackPanel Spacing="8">
 
-                <!-- ── 窗口 ── -->
-                <TextBlock Text="主题" Style="{StaticResource SectionHeaderStyle}" />
-                <RadioButtons x:Name="UiThemeChoices" Header="界面主题"
+                <!-- ── 主题 ── -->
+                <TextBlock ui:Tr.Key="settings.section.theme" Style="{StaticResource SectionHeaderStyle}" />
+                <RadioButtons x:Name="UiThemeChoices" ui:Tr.Header="settings.ui_theme"
                               SelectionChanged="OnUiThemeChanged">
-                    <RadioButton Content="跟随系统" Tag="system" />
-                    <RadioButton Content="浅色" Tag="light" />
-                    <RadioButton Content="深色" Tag="dark" />
+                    <RadioButton ui:Tr.Key="settings.theme.system" Tag="system" />
+                    <RadioButton ui:Tr.Key="theme.light" Tag="light" />
+                    <RadioButton ui:Tr.Key="theme.dark" Tag="dark" />
                 </RadioButtons>
-                <TextBlock Style="{StaticResource SectionHintStyle}"
-                           Text="主题是全局的：主窗口、标签栏、状态栏与这个设置面板用同一套颜色令牌。" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.theme.hint" />
 
-                <TextBlock Text="窗口" Style="{StaticResource SectionHeaderStyle}" />
-                <ComboBox x:Name="BackdropBox" Header="窗口材质" HorizontalAlignment="Stretch"
+                <!-- ── 窗口 ── -->
+                <TextBlock ui:Tr.Key="settings.section.window" Style="{StaticResource SectionHeaderStyle}" />
+                <ComboBox x:Name="BackdropBox" ui:Tr.Header="settings.backdrop" HorizontalAlignment="Stretch"
                           SelectionChanged="OnBackdropChanged">
-                    <ComboBoxItem Content="Mica（推荐）" Tag="mica" />
-                    <ComboBoxItem Content="Mica 变体（BaseAlt）" Tag="micaAlt" />
-                    <ComboBoxItem Content="桌面 Acrylic" Tag="acrylic" />
-                    <ComboBoxItem Content="桌面 Acrylic（更透）" Tag="acrylicThin" />
-                    <ComboBoxItem Content="纯色（不启用材质）" Tag="none" />
+                    <ComboBoxItem ui:Tr.Key="settings.backdrop.mica" Tag="mica" />
+                    <ComboBoxItem ui:Tr.Key="settings.backdrop.mica_alt" Tag="micaAlt" />
+                    <ComboBoxItem ui:Tr.Key="settings.backdrop.acrylic" Tag="acrylic" />
+                    <ComboBoxItem ui:Tr.Key="settings.backdrop.acrylic_thin" Tag="acrylicThin" />
+                    <ComboBoxItem ui:Tr.Key="settings.backdrop.none" Tag="none" />
                 </ComboBox>
-                <TextBlock Style="{StaticResource SectionHintStyle}"
-                           Text="Mica 需要 Win11；系统在省电 / 关闭透明效果 / 远程桌面等情况下会自动回退纯色。" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.backdrop.hint" />
 
                 <!-- ── 标签栏 ── -->
-                <TextBlock Text="标签栏" Style="{StaticResource SectionHeaderStyle}" />
-                <RadioButtons x:Name="TabIconModeChoices" Header="标签图标"
+                <TextBlock ui:Tr.Key="settings.section.tabbar" Style="{StaticResource SectionHeaderStyle}" />
+                <RadioButtons x:Name="TabIconModeChoices" ui:Tr.Header="settings.tab_icons"
                               SelectionChanged="OnTabIconModeChanged">
-                    <RadioButton Content="只保留文字" Tag="text" />
-                    <RadioButton Content="常驻显示图标" Tag="always" />
-                    <RadioButton Content="悬停时显示（图标浮现 + 标签拉伸）" Tag="hover" />
+                    <RadioButton ui:Tr.Key="settings.tab_icons.text" Tag="text" />
+                    <RadioButton ui:Tr.Key="settings.tab_icons.always" Tag="always" />
+                    <RadioButton ui:Tr.Key="settings.tab_icons.hover" Tag="hover" />
                 </RadioButtons>
-                <ToggleSwitch x:Name="ShowCountsSwitch" Header="显示数量"
-                              OnContent="显示" OffContent="隐藏"
+                <ToggleSwitch x:Name="ShowCountsSwitch" ui:Tr.Header="settings.show_counts"
                               Toggled="OnShowCountsToggled" />
-                <TextBlock Style="{StaticResource SectionHintStyle}"
-                           Text="网格页的图标字形是密集方格，列表页是项目符号列表，便于一眼区分。" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.tabbar.hint" />
 
                 <!-- ── 图标 ── -->
-                <TextBlock Text="图标" Style="{StaticResource SectionHeaderStyle}" />
-                <RadioButtons x:Name="IconSizeChoices" Header="图标大小"
+                <TextBlock ui:Tr.Key="settings.section.icons" Style="{StaticResource SectionHeaderStyle}" />
+                <RadioButtons x:Name="IconSizeChoices" ui:Tr.Header="settings.icon_size"
                               SelectionChanged="OnIconSizeChanged">
-                    <RadioButton Content="小" Tag="small" />
-                    <RadioButton Content="中（默认）" Tag="medium" />
-                    <RadioButton Content="大" Tag="large" />
+                    <RadioButton ui:Tr.Key="app.menu.size_small" Tag="small" />
+                    <RadioButton ui:Tr.Key="settings.icon_size.medium" Tag="medium" />
+                    <RadioButton ui:Tr.Key="app.menu.size_large" Tag="large" />
                 </RadioButtons>
-                <TextBlock Style="{StaticResource SectionHintStyle}"
-                           Text="只影响网格页图块的显示大小；图标位图仍是同一份缓存，切换不会重新提取。" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.icons.hint" />
 
                 <!-- ── 动效 ── -->
-                <TextBlock Text="动效" Style="{StaticResource SectionHeaderStyle}" />
-                <ToggleSwitch x:Name="AnimationSwitch" Header="启用动效"
-                              OnContent="开" OffContent="关"
+                <TextBlock ui:Tr.Key="settings.section.animation" Style="{StaticResource SectionHeaderStyle}" />
+                <ToggleSwitch x:Name="AnimationSwitch" ui:Tr.Header="settings.animations.enabled"
                               Toggled="OnAnimationsToggled" />
 
                 <StackPanel x:Name="AnimationDetails" Spacing="6">
-                    <Slider x:Name="DurationSlider" Header="动画时长（毫秒）"
+                    <Slider x:Name="DurationSlider" ui:Tr.Header="settings.animations.duration"
                             Minimum="60" Maximum="600" StepFrequency="20"
                             ValueChanged="OnDurationChanged" />
-                    <ComboBox x:Name="EasingBox" Header="动画曲线" HorizontalAlignment="Stretch"
+                    <ComboBox x:Name="EasingBox" ui:Tr.Header="settings.animations.easing" HorizontalAlignment="Stretch"
                               SelectionChanged="OnEasingChanged">
-                        <ComboBoxItem Content="柔和（起步快、收尾很慢）" Tag="soft" />
-                        <ComboBoxItem Content="标准（推荐）" Tag="standard" />
-                        <ComboBoxItem Content="干脆（收尾快）" Tag="snappy" />
+                        <ComboBoxItem ui:Tr.Key="settings.animations.soft" Tag="soft" />
+                        <ComboBoxItem ui:Tr.Key="settings.animations.standard" Tag="standard" />
+                        <ComboBoxItem ui:Tr.Key="settings.animations.snappy" Tag="snappy" />
                     </ComboBox>
-                    <Button x:Name="PreviewButton" Content="预览动效" Click="OnPreviewClick" />
-                    <TextBlock Style="{StaticResource SectionHintStyle}"
-                               Text="入场是**整页一起淡入**（图标/列表项同时从无到有），没有逐个浮现的交错。" />
+                    <Button x:Name="PreviewButton" ui:Tr.Key="settings.animations.preview" Click="OnPreviewClick" />
+                    <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.animations.hint" />
                 </StackPanel>
+
+                <!-- ── 语言 ── -->
+                <TextBlock ui:Tr.Key="settings.language" Style="{StaticResource SectionHeaderStyle}" />
+                <RadioButtons x:Name="LanguageChoices" ui:Tr.Header="settings.ui_language"
+                              SelectionChanged="OnLanguageChanged">
+                    <RadioButton ui:Tr.Key="settings.lang.zh" Tag="zh" />
+                    <RadioButton ui:Tr.Key="settings.lang.en" Tag="en" />
+                </RadioButtons>
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.language.hint" />
 
                 <!-- ── 数据（备份）── -->
-                <TextBlock Text="数据" Style="{StaticResource SectionHeaderStyle}" />
+                <TextBlock ui:Tr.Key="settings.section.data" Style="{StaticResource SectionHeaderStyle}" />
                 <TextBlock x:Name="DataDirText" Style="{StaticResource SectionHintStyle}" Text="" />
                 <StackPanel Orientation="Horizontal" Spacing="8">
-                    <Button x:Name="ExportBackupButton" Content="导出备份…" Click="OnExportBackupClick"
-                            ToolTipService.ToolTip="把 tabs.json / config.json / 图标缓存打包成 ZIP（Ctrl+Shift+E）" />
-                    <Button x:Name="ImportBackupButton" Content="导入备份…" Click="OnImportBackupClick"
-                            ToolTipService.ToolTip="从 ZIP 恢复数据（会先清空当前数据，Ctrl+Shift+I）" />
+                    <Button x:Name="ExportBackupButton" ui:Tr.Key="settings.export" Click="OnExportBackupClick"
+                            ui:Tr.Tip="settings.export.tip" />
+                    <Button x:Name="ImportBackupButton" ui:Tr.Key="settings.import" Click="OnImportBackupClick"
+                            ui:Tr.Tip="settings.import.tip" />
                 </StackPanel>
-                <TextBlock Style="{StaticResource SectionHintStyle}"
-                           Text="备份包为 ZIP：内含 metadata.json 与 data/ 下的 tabs.json、config.json、图标缓存；与旧版（v1.11.6 / v2.0.1）互相兼容。" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.data.hint" />
 
                 <!-- ── 底部 ── -->
-                <Button x:Name="ResetButton" Content="恢复默认设置" Margin="0,12,0,0" Click="OnResetClick" />
+                <Button x:Name="ResetButton" ui:Tr.Key="settings.reset_all" Margin="0,12,0,0" Click="OnResetClick" />
             </StackPanel>
         </ScrollViewer>
     </Grid>

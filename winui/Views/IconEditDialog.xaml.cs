@@ -7,6 +7,7 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Services;
 
@@ -34,11 +35,20 @@ public sealed partial class IconEditDialog : ContentDialog
 
         InitializeComponent();
 
-        Title = editing is null ? CreateTitle(type) : "编辑图标属性";
+        // 标题与按钮文字（Tr 管不到 ContentDialog 的 Title / 按钮属性）
+        PrimaryButtonText = I18n.T("btn.ok");
+        CloseButtonText = I18n.T("btn.cancel");
+
+        Title = editing is null ? CreateTitle(type) : I18n.T("edit.title");
         TypeHint.Text = TypeLabel(type);
         MainLabel.Text = MainFieldLabel(type);
         MainBox.PlaceholderText = MainPlaceholder(type);
-        NameBox.PlaceholderText = type is IconType.Url ? "我的网站" : type is IconType.Command ? "备份脚本" : "显示名称";
+        NameBox.PlaceholderText = type switch
+        {
+            IconType.Url => I18n.T("url.placeholder.name"),
+            IconType.Command => I18n.T("cmd.placeholder.name"),
+            _ => I18n.T("edit.field.name_ph"),
+        };
 
         ApplyPrefill(prefill);
         ApplyTypeVisibility();
@@ -200,35 +210,35 @@ public sealed partial class IconEditDialog : ContentDialog
 
     private static string CreateTitle(IconType type) => type switch
     {
-        IconType.File => "新建文件图标",
-        IconType.Folder => "新建文件夹图标",
-        IconType.Shortcut => "新建快捷方式图标",
-        IconType.Url => "新建网址图标",
-        _ => "新建命令图标",
+        IconType.File => I18n.T("create.title.file"),
+        IconType.Folder => I18n.T("create.title.folder"),
+        IconType.Shortcut => I18n.T("create.title.shortcut"),
+        IconType.Url => I18n.T("url.dialog.title"),
+        _ => I18n.T("cmd.dialog.title"),
     };
 
     private static string TypeLabel(IconType type) => type switch
     {
-        IconType.File => "文件图标",
-        IconType.Folder => "文件夹图标",
-        IconType.Shortcut => "快捷方式图标",
-        IconType.Url => "网址图标",
-        _ => "命令图标",
+        IconType.File => I18n.T("edit.type.file"),
+        IconType.Folder => I18n.T("edit.type.folder"),
+        IconType.Shortcut => I18n.T("edit.type.shortcut"),
+        IconType.Url => I18n.T("edit.type.url"),
+        _ => I18n.T("edit.type.command"),
     };
 
     private static string MainFieldLabel(IconType type) => type switch
     {
-        IconType.Url => "网址:",
-        IconType.Command => "命令:",
-        _ => "路径:",
+        IconType.Url => I18n.T("url.label.url"),
+        IconType.Command => I18n.T("cmd.label.command"),
+        _ => I18n.T("edit.field.path"),
     };
 
     private static string MainPlaceholder(IconType type) => type switch
     {
-        IconType.Url => "https://example.com",
-        IconType.Command => "python",
+        IconType.Url => I18n.T("url.placeholder.url"),
+        IconType.Command => I18n.T("cmd.placeholder.command"),
         IconType.Folder => "C:\\Program Files",
-        IconType.Shortcut => "目标程序或 .lnk 路径",
+        IconType.Shortcut => I18n.T("edit.title.path_ph"),
         _ => "C:\\Program Files\\app.exe",
     };
 }

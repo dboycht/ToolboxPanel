@@ -22,6 +22,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
@@ -61,7 +62,7 @@ public sealed partial class MainWindow : Window
     private DispatcherQueueTimer? _sizeSaveTimer;
     private Storyboard? _settingsAnimation;
     private bool _settingsPanelOpen;
-    private string _backdropLine = "窗口材质：未初始化";
+    private string _backdropLine = I18n.T("window.backdrop.initializing");
     private string? _transientStatus;
 
     public MainWindow()
@@ -74,8 +75,8 @@ public sealed partial class MainWindow : Window
 
         Title = "ToolboxPanel";
 
-        // 搜索框的占位文字来自 Core（原版 i18n 的 search.placeholder，只有一份）
-        SearchBox.PlaceholderText = SearchFilter.PlaceholderText;
+        // ⚠️ 搜索框的占位文字不在这里设：XAML 上标了 `ui:Tr.Key="search.placeholder"`，
+        //    文案（含语言切换后的重刷）统一由 Tr / ApplyLanguage 负责 —— 一处来源。
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(AppTitleBar);
@@ -117,9 +118,6 @@ public sealed partial class MainWindow : Window
         {
             DispatcherQueue.TryEnqueue(async () => await RunThemeSwitchProbeAsync());
         }
-
-
-
 
     }
 
@@ -696,6 +694,9 @@ public sealed partial class MainWindow : Window
 
             _settingsData = _settings.Load();
 
+            // 语言要尽早生效：后面所有文案（含 XAML 上标了 ui:Tr.Key 的静态文字）都按它取
+            I18n.SetLanguage(_settingsData.Language);
+
             // 命令行临时覆盖（**不落盘**，只在本次运行生效）
             if (_tabIconOverride is { } iconMode)
             {
@@ -777,7 +778,44 @@ public sealed partial class MainWindow : Window
             page.ApplyIconSize(iconSize);
         }
 
+        // 语言放在最后：它要重刷"其它几项套用过程中可能刚被写上的"文字（状态栏、空页提示、计数）
+        ApplyLanguage();
+
         Settings.Refresh();
+    }
+
+    // ────────────────────────────── 语言 / 文案（W5 · v2.0.3 i18n）──────────────────────────────
+    //
+    // 三件事分工清楚，别互相重复：
+    //   ① **XAML 里的静态文案** —— 标 `ui:Tr.Key="<key>"`，由 `Tr.RefreshAll()` 统一重刷；
+    //   ② **代码里设的文案** —— 各页面 / 面板自己的 `ApplyLanguage()`（本方法逐个下发）；
+    //   ③ **数据型文案**（状态栏摘要、标签栏计数）—— 让 ViewModel 重算。
+    // 语言本身来自 `config.json` 的 `language`（设置面板「语言」一节改它 → SettingApplied → 这里）。
+
+    /// <summary>把当前语言套用到整个界面（幂等：同一语言重复调用只是重写一遍同样的字）。</summary>
+    private void ApplyLanguage()
+    {
+        I18n.SetLanguage(_settingsData?.Language);
+
+        Tr.RefreshAll();          // ① XAML 上标了 ui:Tr.Key / ui:Tr.Tip 的元素
+        Settings.ApplyLanguage(); // ② 设置面板里由代码设置的文字（开关的开/关、数据目录行）
+
+        foreach (var page in _pages.Values.OfType<IAnimatedPage>())
+        {
+            page.ApplyLanguage();
+        }
+
+        if (_viewModel is not null)
+        {
+            _viewModel.RebuildStatusText();          // ③ 状态栏摘要
+            foreach (var tab in _viewModel.Tabs)
+            {
+                tab.NotifyCountLabel();              // ③ 标签栏上的「N 个图标 / N 项」
+            }
+        }
+
+        UpdateSearchUi();     // 搜索栏上的「匹配 N / M」
+        UpdateStatusBar();
     }
 
     private void OnSettingsButtonClick(object sender, RoutedEventArgs e) => ShowSettings(!_settingsPanelOpen);
@@ -914,7 +952,7 @@ public sealed partial class MainWindow : Window
 
             if (_isDemo)
             {
-                ReportTransient("演示模式：不会真的导出");
+                ReportTransient(I18n.T("demo.no_export"));
                 return;
             }
 
@@ -929,7 +967,7 @@ public sealed partial class MainWindow : Window
             var version = AppInfo.Version;   // 版本号只读程序集（csproj 是单一来源）
 
             ShowSettings(false);
-            var dialog = ShowBackupDialog("导出数据");
+            var dialog = ShowBackupDialog(I18n.T("export.title"));
 
             var result = await Task.Run(() => BackupManager.Export(
                 dataDirectory,
@@ -938,17 +976,17 @@ public sealed partial class MainWindow : Window
                 progress => DispatcherQueue.TryEnqueue(() => dialog.Report(progress)),
                 line => DispatcherQueue.TryEnqueue(() => dialog.AppendLog(line))));
 
-            ReportBackupResult(dialog, "导出", result);
+            ReportBackupResult(dialog, I18n.T("action.export"), result);
 
             if (result.Success)
             {
-                ReportTransient($"数据已导出到 {result.Message}");
+                ReportTransient(I18n.T("export.done", ("path", result.Message)));
             }
         }
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.ExportBackupAsync", ex);
-            ReportTransient($"导出失败：{ex.Message}");
+            ReportTransient(I18n.T("export.failed", ("err", ex.Message)));
         }
     }
 
@@ -967,7 +1005,7 @@ public sealed partial class MainWindow : Window
 
             if (_isDemo)
             {
-                ReportTransient("演示模式：不会真的导入");
+                ReportTransient(I18n.T("demo.no_import"));
                 return;
             }
 
@@ -978,9 +1016,9 @@ public sealed partial class MainWindow : Window
             }
 
             var confirmed = await ConfirmAsync(
-                "确认导入",
-                "导入将清空当前所有标签页、图标和设置，并用备份文件的内容覆盖。\n此操作不可撤销，确定继续吗？",
-                "导入");
+                I18n.T("import.confirm.title"),
+                I18n.T("import.confirm.text"),
+                I18n.T("import.button"));
             if (!confirmed)
             {
                 return;
@@ -989,7 +1027,7 @@ public sealed partial class MainWindow : Window
             var dataDirectory = _viewModel.DataDirectory;
 
             ShowSettings(false);
-            var dialog = ShowBackupDialog("导入数据");
+            var dialog = ShowBackupDialog(I18n.T("import.title"));
 
             var result = await Task.Run(() => BackupManager.Import(
                 zipPath,
@@ -997,18 +1035,18 @@ public sealed partial class MainWindow : Window
                 progress => DispatcherQueue.TryEnqueue(() => dialog.Report(progress)),
                 line => DispatcherQueue.TryEnqueue(() => dialog.AppendLog(line))));
 
-            ReportBackupResult(dialog, "导入", result);
+            ReportBackupResult(dialog, I18n.T("action.import"), result);
 
             if (result.Success)
             {
                 ReloadAfterImport();
-                ReportTransient("数据已导入，界面已刷新");
+                ReportTransient(I18n.T("import.done"));
             }
         }
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.ImportBackupAsync", ex);
-            ReportTransient($"导入失败：{ex.Message}");
+            ReportTransient(I18n.T("import.failed", ("err", ex.Message)));
         }
     }
 
@@ -1029,14 +1067,15 @@ public sealed partial class MainWindow : Window
     {
         if (result.Success)
         {
-            dialog.MarkDone(true, $"{action}完成：{result.Message}");
+            dialog.MarkDone(true, I18n.T("progress.action_done", ("action", action), ("message", result.Message)));
             _log.AppendLine($"{action}备份成功 = {result.Message}");
         }
         else
         {
-            dialog.MarkDone(false, $"{action}失败：{result.Message}");
+            var failed = I18n.T("progress.action_failed", ("action", action), ("message", result.Message));
+            dialog.MarkDone(false, failed);
             _log.AppendLine($"{action}备份失败 = {result.Message}");
-            ReportTransient($"{action}失败：{result.Message}");
+            ReportTransient(failed);
         }
 
         FlushLog();
@@ -1327,7 +1366,7 @@ public sealed partial class MainWindow : Window
                 case BackdropKinds.None:
                     backdrop = null;
                     supported = true;
-                    label = "纯色回退";
+                    label = I18n.T("window.backdrop.solid");
                     break;
                 case BackdropKinds.MicaAlt:
                     backdrop = new MicaBackdrop { Kind = MicaKind.BaseAlt };
@@ -1353,7 +1392,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            (backdrop, supported, label) = (null, false, "构造失败：" + ex.Message);
+            (backdrop, supported, label) = (null, false, I18n.T("window.backdrop.failed") + ": " + ex.Message);
             App.WriteCrash("ApplyBackdrop/" + kind, ex);
         }
 
@@ -1374,7 +1413,8 @@ public sealed partial class MainWindow : Window
         _glassActive = glass;
         ApplyThemeToHandWrittenBrushes();
 
-        _backdropLine = $"窗口材质 = {label}；本机支持 = {supported}；启用 = {glass}";
+        _backdropLine = I18n.T("window.backdrop.line",
+            ("label", label), ("supported", supported), ("glass", glass));
         BackdropLabel.Text = label;
         UpdateStatusBar();
     }
@@ -1427,7 +1467,7 @@ public sealed partial class MainWindow : Window
 
             if (_isDemo)
             {
-                Title = "ToolboxPanel · 纯 UI 演示";
+                Title = I18n.T("demo.title");
             }
 
             TabStrip.ItemsSource = _viewModel.Tabs;
@@ -1639,7 +1679,7 @@ public sealed partial class MainWindow : Window
     {
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -1676,7 +1716,7 @@ public sealed partial class MainWindow : Window
     {
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -1716,7 +1756,7 @@ public sealed partial class MainWindow : Window
     {
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -1755,7 +1795,7 @@ public sealed partial class MainWindow : Window
     {
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -1764,7 +1804,7 @@ public sealed partial class MainWindow : Window
             var confirmed = await ConfirmAsync(
                 ListItemEditor.DeleteTitle,
                 ListItemEditor.DeleteConfirmText(item.Description),
-                "删除");
+                ListItemContextMenu.LabelRemove);
             if (!confirmed)
             {
                 return;
@@ -1822,7 +1862,7 @@ public sealed partial class MainWindow : Window
             var confirmed = await ConfirmAsync(
                 BulkDelete.ConfirmTitle,
                 BulkDelete.ConfirmText(effective.Count),
-                "删除");
+                IconContextMenu.LabelRemove);
             if (!confirmed)
             {
                 return;
@@ -1839,7 +1879,7 @@ public sealed partial class MainWindow : Window
             }
             else
             {
-                ReportTransient(_isDemo ? "演示模式：不会真的保存" : BulkDelete.NoneCheckedText);
+                ReportTransient(_isDemo ? I18n.T("demo.no_save") : BulkDelete.NoneCheckedText);
             }
 
             FlushLog();
@@ -1865,7 +1905,7 @@ public sealed partial class MainWindow : Window
 
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -1886,13 +1926,13 @@ public sealed partial class MainWindow : Window
 
             // 原版是"每处理一个就发一条状态消息"；状态栏单行，这里用 · 串起来（过长自动省略号）
             ReportTransient(result.Messages.Count == 0
-                ? "没有可添加的项目"
+                ? I18n.T("status.nothing_to_add")
                 : string.Join("   ·   ", result.Messages));
         }
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.OnFilesDropped", ex);
-            ReportTransient("拖入添加失败：" + ex.Message);
+            ReportTransient(I18n.T("status.drop_failed", ("err", ex.Message)));
         }
     }
 
@@ -1923,7 +1963,7 @@ public sealed partial class MainWindow : Window
 
         if (!KindMatches(request.Payload, target))
         {
-            _transientStatus = $"「{target.Name}」不收这一类项目";
+            _transientStatus = I18n.T("status.tab_rejects", ("name", target.Name));
             UpdateStatusBar();
             return;
         }
@@ -1947,8 +1987,8 @@ public sealed partial class MainWindow : Window
         var name = target?.Name ?? "?";
 
         _transientStatus = result.Success
-            ? $"已移动：{DescribeDroppedItem(request.Payload)} → 「{name}」"
-            : $"移动失败：{result.Reason}";
+            ? I18n.T("status.moved_to", ("item", DescribeDroppedItem(request.Payload)), ("tab", name))
+            : I18n.T("status.action_failed_detail", ("action", I18n.T("action.move")), ("err", result.Reason));
 
         if (result.Success)
         {
@@ -2001,7 +2041,7 @@ public sealed partial class MainWindow : Window
 
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -2028,7 +2068,8 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.OnNewIconRequested", ex);
-            ReportTransient("新建图标失败：" + ex.Message);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.create")), ("err", ex.Message)));
         }
     }
 
@@ -2052,11 +2093,11 @@ public sealed partial class MainWindow : Window
                 return;
 
             case IconMenuAction.OpenWith:
-                ReportMenuLaunch(_viewModel.OpenWith(request.Icon), request.Icon, "用其他应用打开");
+                ReportMenuLaunch(_viewModel.OpenWith(request.Icon), request.Icon, IconContextMenu.LabelOpenWith);
                 return;
 
             case IconMenuAction.OpenLocation:
-                ReportMenuLaunch(_viewModel.OpenFileLocation(request.Icon), request.Icon, "打开文件位置");
+                ReportMenuLaunch(_viewModel.OpenFileLocation(request.Icon), request.Icon, IconContextMenu.LabelOpenLocation);
                 return;
 
             case IconMenuAction.EditProperties:
@@ -2088,7 +2129,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        ReportTransient(result.Error ?? $"{actionLabel}失败");
+        ReportTransient(result.Error ?? I18n.T("status.action_failed", ("action", actionLabel)));
         _log.AppendLine($"{actionLabel}失败：{name} → {result.Error}");
         FlushLog();
     }
@@ -2098,7 +2139,7 @@ public sealed partial class MainWindow : Window
     {
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -2118,7 +2159,8 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.ShowEditIconAsync", ex);
-            ReportTransient("编辑图标失败：" + ex.Message);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.edit")), ("err", ex.Message)));
         }
     }
 
@@ -2127,7 +2169,7 @@ public sealed partial class MainWindow : Window
     {
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -2144,7 +2186,7 @@ public sealed partial class MainWindow : Window
             var result = _viewModel!.RenameIcon(icon, newName);
             if (!result.Success)
             {
-                ReportTransient(result.ErrorMessage ?? "重命名失败");
+                ReportTransient(result.ErrorMessage ?? I18n.T("status.rename_failed"));
                 return;
             }
 
@@ -2154,7 +2196,8 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.ShowRenameIconAsync", ex);
-            ReportTransient("重命名失败：" + ex.Message);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.rename")), ("err", ex.Message)));
         }
     }
 
@@ -2163,7 +2206,7 @@ public sealed partial class MainWindow : Window
     {
         if (_isDemo)
         {
-            ReportTransient("演示模式：不会真的保存");
+            ReportTransient(I18n.T("demo.no_save"));
             return;
         }
 
@@ -2172,7 +2215,7 @@ public sealed partial class MainWindow : Window
             var confirmed = await ConfirmAsync(
                 IconContextMenu.RemoveTitle,
                 IconContextMenu.ConfirmRemoveText(icon.DisplayName),
-                "删除");
+                IconContextMenu.LabelRemove);
 
             if (!confirmed || !_viewModel!.RemoveIcon(icon))
             {
@@ -2185,7 +2228,8 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.ConfirmRemoveIconAsync", ex);
-            ReportTransient("删除失败：" + ex.Message);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.delete")), ("err", ex.Message)));
         }
     }
 
@@ -2201,7 +2245,7 @@ public sealed partial class MainWindow : Window
             Title = title,
             Content = new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
             PrimaryButtonText = primaryText,
-            CloseButtonText = "取消",
+            CloseButtonText = I18n.T("btn.cancel"),
             DefaultButton = ContentDialogButton.Close,
             XamlRoot = RootGrid.XamlRoot,
             RequestedTheme = CurrentElementTheme,
@@ -2292,14 +2336,16 @@ public sealed partial class MainWindow : Window
     {
         if (!result.Success)
         {
-            ReportTransient(result.ErrorMessage ?? "操作失败");
+            ReportTransient(result.ErrorMessage ?? I18n.T("progress.failed_short"));
             _log.AppendLine($"{(created ? "新建" : "编辑")}图标失败：{result.ErrorMessage}");
             FlushLog();
             return;
         }
 
         _log.AppendLine($"{(created ? "新建" : "编辑")}图标：{name}（图标刷新={result.Refresh.Kind}）");
-        ReportTransient(created ? $"已添加: {name}" : $"已编辑: {name}");
+        ReportTransient(created
+            ? I18n.T("status.added", ("name", name))
+            : I18n.T("status.edited", ("name", name)));
     }
 
     private void ReportTransient(string message)
@@ -2320,7 +2366,9 @@ public sealed partial class MainWindow : Window
 
         var result = _viewModel.Launch(icon);
         var name = string.IsNullOrWhiteSpace(icon.DisplayName) ? icon.SourcePath : icon.DisplayName;
-        _transientStatus = result.Success ? $"已打开：{name}" : $"打开失败（{name}）：{result.Error}";
+        _transientStatus = result.Success
+            ? I18n.T("status.open_short", ("name", name))
+            : I18n.T("status.open_failed_short", ("name", name), ("err", result.Error));
         UpdateStatusBar();
         FlushLog();
     }
@@ -2334,8 +2382,8 @@ public sealed partial class MainWindow : Window
 
         var result = _viewModel.LaunchListItem(item);
         _transientStatus = result.Success
-            ? $"已打开：{item.Path}"
-            : $"打开失败（{item.Path}）：{result.Error}";
+            ? I18n.T("status.open_short", ("name", item.Path))
+            : I18n.T("status.open_failed_short", ("name", item.Path), ("err", result.Error));
         UpdateStatusBar();
         FlushLog();
     }
