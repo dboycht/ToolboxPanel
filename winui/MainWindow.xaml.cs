@@ -131,7 +131,6 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(async () => await RunThemeSwitchProbeAsync());
         }
 
-
     }
 
     /// <summary>
@@ -186,6 +185,8 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// <summary>
+    /// <summary>
+
     /// <summary>
 
     /// <summary>
@@ -768,6 +769,7 @@ public sealed partial class MainWindow : Window
                 Settings.ExportBackupRequested += async (_, _) => await ExportBackupAsync();
                 Settings.ImportBackupRequested += async (_, _) => await ImportBackupAsync();
                 Settings.ResetDataRequested += async (_, _) => await ResetDataAsync();
+        Settings.ShortcutSettingsRequested += async (_, _) => await OpenShortcutSettingsAsync();
             }
 
             _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
@@ -1667,11 +1669,16 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 标题栏 ❓ —— 弹「快捷键设置」窗口（v2.0.6 起从只读参考升级为可改键 + 冲突管理）。
-    /// 规则全在 Core（`ShortcutCatalog` / `ShortcutBindings` / `HotkeyProbe`，都有单测），
-    /// 这里只负责弹窗、以及把改好的绑定**落盘 + 立刻重新注册**。
+    /// 弹「快捷键设置」窗口（由 **设置面板** 的「快捷键设置」一节触发）。
+    ///
+    /// <para>⚠️ 入口只有这一个（2026-09-19 用户决定从标题栏的那个 ❓ 搬进设置面板）：
+    /// 用户找设置的第一反应是打开设置面板，而摆在标题栏图标上他根本找不到
+    /// （用户实际反馈："快捷键在哪里设置？"）。</para>
+    ///
+    /// <para>规则全在 Core（`ShortcutCatalog` / `ShortcutBindings` / `HotkeyProbe`，都有单测），
+    /// 这里只负责弹窗、以及把改好的绑定**落盘 + 立刻重新注册**。</para>
     /// </summary>
-    private async void OnShortcutButtonClick(object sender, RoutedEventArgs e)
+    private async Task OpenShortcutSettingsAsync()
     {
         try
         {
@@ -1684,7 +1691,7 @@ public sealed partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            App.WriteCrash("MainWindow.OnShortcutButtonClick", ex);
+            App.WriteCrash("MainWindow.OpenShortcutSettingsAsync", ex);
         }
     }
 

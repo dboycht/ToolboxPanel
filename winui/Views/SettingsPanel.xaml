@@ -125,6 +125,17 @@
                     <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.animations.hint" />
                 </StackPanel>
 
+                <!-- ── 快捷键 ──
+                     ⚠️ 入口**故意只放在这里**（2026-09-19 用户决定：从标题栏搬进来，标题栏不再放 ❓）。
+                     理由：用户找"设置"的第一反应就是打开这个面板 —— 原来摆在标题栏那个 ❓ 图标上，
+                     用户根本找不到（用户实际反馈就是"快捷键在哪里设置？"）。
+                     面板只发事件，弹窗与落盘由宿主负责（与「导出/导入备份」同一套纪律）。
+                     文案全用现成 key，**没有新增任何文案**。 -->
+                <TextBlock ui:Tr.Key="shortcut.settings.title" Style="{StaticResource SectionHeaderStyle}" />
+                <Button x:Name="ShortcutSettingsButton" ui:Tr.Key="action.edit" Margin="0,4,0,0"
+                        Click="OnShortcutSettingsClick" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="shortcut.hint" />
+
                 <!-- ── 语言 ── -->
                 <TextBlock ui:Tr.Key="settings.language" Style="{StaticResource SectionHeaderStyle}" />
                 <RadioButtons x:Name="LanguageChoices" ui:Tr.Header="settings.ui_language"

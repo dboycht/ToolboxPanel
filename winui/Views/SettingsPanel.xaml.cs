@@ -49,6 +49,13 @@ public sealed partial class SettingsPanel : UserControl
     /// </summary>
     public event EventHandler? ResetDataRequested;
 
+    /// <summary>
+    /// 点「快捷键设置」那一节的「编辑」—— 宿主负责弹「快捷键设置」窗口（面板不碰窗口与持久化）。
+    /// <para>⚠️ 入口只在这里（2026-09-19 用户决定从标题栏搬进来）：用户找设置的第一反应是开这个面板，
+    /// 摆在标题栏的 ❓ 图标上根本找不到（用户实际反馈："快捷键在哪里设置？"）。</para>
+    /// </summary>
+    public event EventHandler? ShortcutSettingsRequested;
+
     /// <summary>绑定设置与存储（面板只读这两者的引用，不接管生命周期）。</summary>
     public void Bind(SettingsStore store, AppSettings settings)
     {
@@ -90,6 +97,11 @@ public sealed partial class SettingsPanel : UserControl
 
     private void OnResetDataClick(object sender, RoutedEventArgs e)
         => ResetDataRequested?.Invoke(this, EventArgs.Empty);
+
+    /// <summary>点「快捷键设置」→ 请宿主弹窗。
+    /// <para>`internal`：自检探针走同一条链路（不必模拟鼠标点击）。</para></summary>
+    internal void OnShortcutSettingsClick(object sender, RoutedEventArgs e)
+        => ShortcutSettingsRequested?.Invoke(this, EventArgs.Empty);
 
     /// <summary>外部（如命令行的临时覆盖）改了模型后，让面板重新显示一次。</summary>
     public void Refresh() => SyncUiFromModel();
