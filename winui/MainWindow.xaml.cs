@@ -976,12 +976,20 @@ public sealed partial class MainWindow : Window
             }
 
             var action = entry.Action;
-            accelerator.Invoked += (_, args) => OnShortcutInvoked(action, args);
+            var safeWhileTyping = entry.SafeWhileTyping;
+            accelerator.Invoked += (_, args) => OnShortcutInvoked(action, safeWhileTyping, args);
             RootGrid.KeyboardAccelerators.Add(accelerator);
             registered++;
         }
 
-        _log.AppendLine($"快捷键已注册 {registered} 条（来自 Core 的 ShortcutCatalog）");
+        // 把"打字时放行哪条"写进自检文件：这是**守卫策略**，出问题时一眼能看出当前生效的是哪一套
+        // （比"我去读一遍代码"快得多；也让"标错了 SafeWhileTyping"这件事在自检产物里暴露）
+        var allowedWhileTyping = ShortcutCatalog.ShortcutsSafeWhileTyping
+            .Select(entry => entry.Gesture.Display)
+            .ToList();
+
+        _log.AppendLine($"快捷键已注册 {registered} 条（来自 Core 的 ShortcutCatalog）；"
+            + $"打字时放行：{(allowedWhileTyping.Count == 0 ? "（无）" : string.Join("、", allowedWhileTyping))}");
     }
 
     /// <summary>Core 的键位描述 → WinUI 的加速器。</summary>
@@ -1011,11 +1019,20 @@ public sealed partial class MainWindow : Window
         return new KeyboardAccelerator { Key = key, Modifiers = modifiers };
     }
 
-    private void OnShortcutInvoked(ShortcutAction action, KeyboardAcceleratorInvokedEventArgs args)
+    private void OnShortcutInvoked(ShortcutAction action, bool safeWhileTyping, KeyboardAcceleratorInvokedEventArgs args)
     {
-        if (IsTextInputFocused() || !IsFocusInsideMainContent())
+        // ① 焦点在弹层（有对话框开着）⇒ 一律不接管：否则 `Ctrl+T` 会去开第二个 ContentDialog，
+        //    而 WinUI 同一 XamlRoot **只允许一个**（抛 "Only a single ContentDialog can be open"）。
+        if (!IsFocusInsideMainContent())
         {
-            // 不接管：让文本框/对话框自己处理（`args.Handled` 保持 false）
+            return;   // 让对话框自己处理（`args.Handled` 保持 false）
+        }
+
+        // ② 焦点在文本框里（用户正在输入）⇒ 默认不接管，否则会抢走文本框自己的键
+        //    （最典型的是 `Shift+Delete`：那是**剪切**，被抢走就变成删图标）。
+        //    ⚠️ 例外由**目录自己声明**（`SafeWhileTyping`）—— 别在这里写死动作名，那会变成两处口径。
+        if (IsTextInputFocused() && !safeWhileTyping)
+        {
             return;
         }
 

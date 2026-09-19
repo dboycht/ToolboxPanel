@@ -109,8 +109,26 @@ public sealed record ShortcutGesture(string Key, bool Ctrl = false, bool Shift =
     }
 }
 
-/// <summary>一行：动作 + 功能名（i18n key）+ 键位 + 谁来处理。</summary>
-public sealed record ShortcutEntry(ShortcutAction Action, string LabelKey, ShortcutGesture Gesture, ShortcutKind Kind);
+/// <summary>一行：动作 + 功能名（i18n key）+ 键位 + 谁来处理 + 打字时是否放行。</summary>
+/// <param name="Action">动作。</param>
+/// <param name="LabelKey">功能名的文案 key（原版 <c>shortcut.*</c>）。</param>
+/// <param name="Gesture">键位。</param>
+/// <param name="Kind">谁负责（本应用 / 系统）。</param>
+/// <param name="SafeWhileTyping">
+/// **焦点在文本框里（用户正在输入）时要不要照样接管**。
+///
+/// <para>⚠️ 默认 <c>false</c>：应用级加速器是"窗口级"的，不问青红皂白就会抢键 ——
+/// 最典型的是 `Shift+Delete`：在文本框里那是**剪切**，被抢走就变成删图标。
+/// 只有**在文本框里也语义明确、且不会造成破坏**的才标 <c>true</c>
+/// （例：`Ctrl+F` 开关搜索栏 —— 用户正在搜索框里打字时按它，期望就是"关掉搜索"，
+/// 而 Esc 虽然也能关，但没理由让原来能用的快捷键退化）。</para>
+/// </param>
+public sealed record ShortcutEntry(
+    ShortcutAction Action,
+    string LabelKey,
+    ShortcutGesture Gesture,
+    ShortcutKind Kind,
+    bool SafeWhileTyping = false);
 
 /// <summary>快捷键目录。<b>界面只读它，不另外维护一份列表。</b></summary>
 public static class ShortcutCatalog
@@ -136,7 +154,11 @@ public static class ShortcutCatalog
         new(ShortcutAction.NextTab, "shortcut.next_tab", new ShortcutGesture("Tab", Ctrl: true), ShortcutKind.App),
 
         // ── 查找 / 批量 ──
-        new(ShortcutAction.Find, "shortcut.find", new ShortcutGesture("F", Ctrl: true), ShortcutKind.App),
+        // ⚠️ 只有 `Ctrl+F` 标了 SafeWhileTyping：它是搜索栏自己的开关，
+        //    用户在搜索框里打字时按它期望就是"关掉搜索"（原版行为），不该因为输入焦点而失效。
+        //    其余一律**不标** —— 正在输入时按 Ctrl+W/Ctrl+T/Ctrl+B 之类，语义可疑还可能误删。
+        new(ShortcutAction.Find, "shortcut.find", new ShortcutGesture("F", Ctrl: true), ShortcutKind.App,
+            SafeWhileTyping: true),
         new(ShortcutAction.BatchMode, "shortcut.batch_mode", new ShortcutGesture("B", Ctrl: true), ShortcutKind.App),
         new(ShortcutAction.BatchDelete, "shortcut.batch_delete", new ShortcutGesture("Delete", Shift: true), ShortcutKind.App),
 
@@ -157,6 +179,10 @@ public static class ShortcutCatalog
     /// <summary>需要本应用注册并处理的那些（界面照着它建加速器）。</summary>
     public static IEnumerable<ShortcutEntry> AppShortcuts
         => All.Where(entry => entry.Kind == ShortcutKind.App);
+
+    /// <summary>打字时也放行的那些（见 <see cref="ShortcutEntry.SafeWhileTyping"/>）。</summary>
+    public static IEnumerable<ShortcutEntry> ShortcutsSafeWhileTyping
+        => AppShortcuts.Where(entry => entry.SafeWhileTyping);
 
     /// <summary>功能名（走文案表 ⇒ 跟随语言）。</summary>
     public static string Label(ShortcutEntry entry) => I18n.T(entry.LabelKey);

@@ -166,6 +166,27 @@ public class ShortcutCatalogTests
     }
 
     [Fact]
+    public void 打字时放行的快捷键_只有Ctrl加F这一条()
+    {
+        // ⚠️ 这条是"守门员"测试：`SafeWhileTyping` 会让快捷键在**用户正在输入时**也接管，
+        //    标错了就会抢走文本框自己的键（最危险的是 `Shift+Delete` = 文本框的「剪切」）。
+        //    将来要放宽哪一条，必须在这里显式改断言 —— 逼着人想清楚"为什么它在文本框里也安全"。
+        var safe = ShortcutCatalog.ShortcutsSafeWhileTyping.ToList();
+
+        Assert.Single(safe);
+        Assert.Equal(ShortcutAction.Find, safe[0].Action);
+        Assert.Equal("Ctrl+F", safe[0].Gesture.Display);
+    }
+
+    [Fact]
+    public void 删除类快捷键_绝不允许打字时放行()
+    {
+        // 单独再钉一遍最危险的两条：删图标 / 删标签 都必须被文本框守卫挡住
+        Assert.False(ShortcutCatalog.Find(ShortcutAction.BatchDelete)!.SafeWhileTyping);
+        Assert.False(ShortcutCatalog.Find(ShortcutAction.CloseTab)!.SafeWhileTyping);
+    }
+
+    [Fact]
     public void 标签页那六条都覆盖到了()
     {
         // 批次 1 做的标签页操作，每一条都该有快捷键（这是本批次的重点）
