@@ -110,6 +110,19 @@ public sealed class AppSettings
     public Dictionary<string, JsonElement>? ThemeOverrides { get; set; }
 
     /// <summary>
+    /// 用户改过的快捷键（**差分存储**：动作名 → 键位串，只存与默认不同的那些）。
+    ///
+    /// <para>⚠️ 差分的好处：将来我们改了某个默认键位，**没动过那条的用户会自动跟上**；
+    /// 若是全量存储，改默认值对老用户就永远无效了（见 <see cref="Services.ShortcutBindings.ToOverrides"/>）。</para>
+    ///
+    /// <para>⚠️ 旧版（v2.0.5 及更早）读到这个键会**原样保留**、不影响使用；
+    /// 反过来本版读到没有这个键的旧配置也一切照旧（null = 全用默认）。</para>
+    /// </summary>
+    [JsonPropertyName("shortcut_bindings")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public Dictionary<string, string>? ShortcutBindings { get; set; }
+
+    /// <summary>
     /// 标签栏图标形态的**线上值**：text | always | hover。
     /// ⚠️ 新字段刻意用「null = 文件里没有这个键」：这样**没被改过的配置写回时逐字节不变**
     /// （不会因为我们加了字段就去动用户的 config.json）。
@@ -481,6 +494,29 @@ public sealed class SettingsStore
         if (settings.UiThemeRaw is not null)
         {
             settings.UiThemeRaw = ThemeTokens.ToWire(ThemeTokens.ParseMode(settings.UiThemeRaw));
+        }
+
+        // 快捷键覆盖：清掉**认不出**的条目（动作名不认得 / 键位串解析不出来 / 键位不合法），
+        // 空表归一成 null（= 全用默认），免得把一个空对象一直写在用户的 config.json 里。
+        if (settings.ShortcutBindings is { } bindings)
+        {
+            var cleaned = new Dictionary<string, string>(StringComparer.Ordinal);
+
+            foreach (var (action, keys) in bindings)
+            {
+                if (!Enum.TryParse<Services.ShortcutAction>(action, ignoreCase: false, out var parsedAction)
+                    || Services.ShortcutGesture.Parse(keys) is not { } gesture)
+                {
+                    continue;
+                }
+
+                // ⚠️ 这里**不**因为"缺修饰键 / 与编辑键冲突"就丢掉 ——
+                //    用户的决定是"允许改，但给出明确警告"（2026-09-19），
+                //    校验只负责"能不能解析"，"好不好"由界面标黄提示。
+                cleaned[parsedAction.ToString()] = gesture.Display;
+            }
+
+            settings.ShortcutBindings = cleaned.Count == 0 ? null : cleaned;
         }
 
         // 窗口尺寸：只在记录过时才夹取（不合法 → 当作没记录，回落默认尺寸）

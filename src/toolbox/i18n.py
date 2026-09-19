@@ -535,5 +535,31 @@ TEXTS: dict[str, dict[str, str]] = {
     "settings.ui_language":        {"zh": "界面语言",                       "en": "Interface language"},
     "settings.lang.zh":            {"zh": "中文",                           "en": "Chinese"},
     "settings.lang.en":            {"zh": "English",                        "en": "English"},
+
+    # ── WinUI 追加（2026-09-19，v2.0.6「快捷键设置」）────────────────────────────
+    # ⚠️ 这一段是 **WinUI 线专用的界面文案**（原版 v1.11.6 只有只读的「快捷键参考」窗口）。
+    #    加在这里而不是只加 C# 侧，是因为 `tests/I18nTests.cs` 有一条**保真测试**：
+    #    它用真实 Python 解析本文件，要求**两边的 key 集合完全一致、中英逐字一致** ——
+    #    只改 C# 那半边会立刻变红（见开发副本 ERROR.md E36）。
+    #    改完这里必须重跑 `python gen-i18n-table.py` 重新生成 `core/I18n.Table.cs`。
+    "shortcut.settings.title":     {"zh": "快捷键设置",                     "en": "Shortcut Settings"},
+    "shortcut.col.status":         {"zh": "状态",                           "en": "Status"},
+    "shortcut.hint":               {"zh": "点「快捷键」那一列的按钮即可改键；改动立即生效并保存。",
+                                                                           "en": "Click a key to rebind it; changes apply and are saved immediately."},
+    "shortcut.status.ok":          {"zh": "可用",                           "en": "Available"},
+    "shortcut.status.duplicate":   {"zh": "与「{name}」重复",               "en": "Duplicate of '{name}'"},
+    "shortcut.status.text_editing": {"zh": "输入文字时会先被输入框接管",     "en": "Taken by text boxes while typing"},
+    "shortcut.status.reserved":    {"zh": "系统保留组合",                   "en": "Reserved by Windows"},
+    "shortcut.status.taken":       {"zh": "已被其他程序占用",               "en": "Taken by another app"},
+    "shortcut.status.no_modifier": {"zh": "必须包含 Ctrl 或 Alt",           "en": "Must include Ctrl or Alt"},
+    "shortcut.recording":          {"zh": "请按下新的组合键…（Esc 取消）",   "en": "Press the new shortcut... (Esc to cancel)"},
+    "shortcut.changed":            {"zh": "「{name}」已改为 {keys}",        "en": "'{name}' is now {keys}"},
+    "shortcut.reset_one":          {"zh": "恢复这一条的默认键位",           "en": "Reset this shortcut"},
+    "shortcut.reset_all":          {"zh": "全部恢复默认",                   "en": "Reset all to defaults"},
+    "shortcut.reset_done":         {"zh": "快捷键已全部恢复默认",           "en": "Shortcuts reset to defaults"},
+    "shortcut.check":              {"zh": "检测冲突",                       "en": "Check conflicts"},
+    "shortcut.check_done":         {"zh": "已检测 {total} 条：{issues} 条有问题",
+                                                                           "en": "Checked {total}: {issues} issue(s)"},
+    "shortcut.check_clean":        {"zh": "未发现冲突",                     "en": "No conflicts found"},
 }
 # fmt: on

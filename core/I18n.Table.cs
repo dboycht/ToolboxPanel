@@ -14,7 +14,7 @@ namespace ToolboxPanel.Core;
 
 public static partial class I18n
 {
-    /// <summary>全部文案：key → (中文, 英文)。共 374 条。</summary>
+    /// <summary>全部文案：key → (中文, 英文)。共 391 条。</summary>
     internal static readonly Dictionary<string, (string Zh, string En)> Table = new(StringComparer.Ordinal)
     {
 
@@ -392,5 +392,22 @@ public static partial class I18n
         ["settings.ui_language"]            = ("界面语言", "Interface language"),
         ["settings.lang.zh"]                = ("中文", "Chinese"),
         ["settings.lang.en"]                = ("English", "English"),
+        ["shortcut.settings.title"]         = ("快捷键设置", "Shortcut Settings"),
+        ["shortcut.col.status"]             = ("状态", "Status"),
+        ["shortcut.hint"]                   = ("点「快捷键」那一列的按钮即可改键；改动立即生效并保存。", "Click a key to rebind it; changes apply and are saved immediately."),
+        ["shortcut.status.ok"]              = ("可用", "Available"),
+        ["shortcut.status.duplicate"]       = ("与「{name}」重复", "Duplicate of '{name}'"),
+        ["shortcut.status.text_editing"]    = ("输入文字时会先被输入框接管", "Taken by text boxes while typing"),
+        ["shortcut.status.reserved"]        = ("系统保留组合", "Reserved by Windows"),
+        ["shortcut.status.taken"]           = ("已被其他程序占用", "Taken by another app"),
+        ["shortcut.status.no_modifier"]     = ("必须包含 Ctrl 或 Alt", "Must include Ctrl or Alt"),
+        ["shortcut.recording"]              = ("请按下新的组合键…（Esc 取消）", "Press the new shortcut... (Esc to cancel)"),
+        ["shortcut.changed"]                = ("「{name}」已改为 {keys}", "'{name}' is now {keys}"),
+        ["shortcut.reset_one"]              = ("恢复这一条的默认键位", "Reset this shortcut"),
+        ["shortcut.reset_all"]              = ("全部恢复默认", "Reset all to defaults"),
+        ["shortcut.reset_done"]             = ("快捷键已全部恢复默认", "Shortcuts reset to defaults"),
+        ["shortcut.check"]                  = ("检测冲突", "Check conflicts"),
+        ["shortcut.check_done"]             = ("已检测 {total} 条：{issues} 条有问题", "Checked {total}: {issues} issue(s)"),
+        ["shortcut.check_clean"]            = ("未发现冲突", "No conflicts found"),
     };
 }

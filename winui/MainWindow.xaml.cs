@@ -83,10 +83,8 @@ public sealed partial class MainWindow : Window
 
         ApplyStartupArguments();
 
-        // 快捷键：照 Core 的 `ShortcutCatalog` 注册（必须在 LoadSettings 之前也行，
-        // 但放在这里是为了让 `_log` 里的"已注册 N 条"排在最前面，便于自检核对）
-        ApplyShortcuts();
-
+        // ⚠️ 快捷键的解析与注册在 `LoadSettings()` 内部 —— 必须**先读到用户的改键**再注册，
+        //    否则 config.json 里存的键位永远不生效（早先就是先注册后读设置）。
         LoadSettings();
 
         // 主题要早于其它界面套用：它决定"深色下的前景色"等基础观感，
@@ -188,6 +186,8 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// <summary>
+    /// <summary>
+
     /// <summary>自检：把"会随主题变"的各元素当前颜色打出来（漏网元素一眼可见）。</summary>
     private void LogThemeState(string tag)
     {
@@ -718,6 +718,12 @@ public sealed partial class MainWindow : Window
             // 语言要尽早生效：后面所有文案（含 XAML 上标了 ui:Tr.Key 的静态文字）都按它取
             I18n.SetLanguage(_settingsData.Language);
 
+            // 快捷键：用户可能改过键（`config.json` 的 `shortcut_bindings`，差分存储）
+            // ⚠️ 必须在**这里**（读完设置之后）解析并注册 —— 早先是在构造函数里先注册、后读设置，
+            //    那样用户的改键就永远不生效了。
+            _shortcutBindings = ShortcutBindings.Resolve(_settingsData.ShortcutBindings);
+            ApplyShortcuts();
+
             // 命令行临时覆盖（**不落盘**，只在本次运行生效）
             if (_tabIconOverride is { } iconMode)
             {
@@ -984,28 +990,43 @@ public sealed partial class MainWindow : Window
 
     private bool _shortcutsApplied;
 
-    /// <summary>照 Core 目录注册加速器（幂等）。</summary>
+    /// <summary>
+    /// 当前生效的快捷键绑定（默认值 + 用户在 `config.json` 里的覆盖）。
+    /// 启动时由 `LoadSettings()` 解析；用户在「快捷键设置」里改键后由宿主重设。
+    /// </summary>
+    private IReadOnlyList<ShortcutBinding> _shortcutBindings = ShortcutBindings.Resolve(null);
+
+    /// <summary>
+    /// 照**当前绑定**注册加速器。
+    ///
+    /// <para>⚠️ 这是**可重入**的：用户改键后要重新注册（先 `Clear()` 再铺），
+    /// 所以不能像早先那样用一个"只做一次"的闸门挡住第二次调用。</para>
+    /// </summary>
     private void ApplyShortcuts()
     {
-        if (_shortcutsApplied)
+        RootGrid.KeyboardAccelerators.Clear();
+
+        if (!_shortcutsApplied)
         {
-            return;
+            _shortcutsApplied = true;
+            _log.AppendLine("快捷键来自 Core 的 ShortcutCatalog / ShortcutBindings（可在「快捷键设置」里改键）");
         }
 
-        _shortcutsApplied = true;
         var registered = 0;
 
-        foreach (var entry in ShortcutCatalog.AppShortcuts)
+        foreach (var binding in _shortcutBindings)
         {
-            if (BuildAccelerator(entry.Gesture) is not { } accelerator)
+            if (BuildAccelerator(binding.Gesture) is not { } accelerator)
             {
                 // 目录里写了界面认不出的键名 ⇒ 明确记一笔，别静默少一条快捷键
-                _log.AppendLine($"[快捷键] 认不出的键位，已跳过：{entry.Action} = {entry.Gesture.Display}");
+                _log.AppendLine($"[快捷键] 认不出的键位，已跳过：{binding.Action} = {binding.Gesture.Display}");
                 continue;
             }
 
-            var action = entry.Action;
-            var safeWhileTyping = entry.SafeWhileTyping;
+            var action = binding.Action;
+            var entry = ShortcutCatalog.Find(action);
+            var safeWhileTyping = entry?.SafeWhileTyping ?? false;
+
             accelerator.Invoked += (_, args) => OnShortcutInvoked(action, safeWhileTyping, args);
             RootGrid.KeyboardAccelerators.Add(accelerator);
             registered++;
@@ -1017,7 +1038,7 @@ public sealed partial class MainWindow : Window
             .Select(entry => entry.Gesture.Display)
             .ToList();
 
-        _log.AppendLine($"快捷键已注册 {registered} 条（来自 Core 的 ShortcutCatalog）；"
+        _log.AppendLine($"快捷键已注册 {registered} 条；"
             + $"打字时放行：{(allowedWhileTyping.Count == 0 ? "（无）" : string.Join("、", allowedWhileTyping))}");
     }
 
@@ -1474,21 +1495,49 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 标题栏 ❓ —— 弹「快捷键参考」窗口。
-    /// 内容来自 Core 的 <see cref="ShortcutCatalog"/>（有单测），这里只负责弹窗。
+    /// 标题栏 ❓ —— 弹「快捷键设置」窗口（v2.0.6 起从只读参考升级为可改键 + 冲突管理）。
+    /// 规则全在 Core（`ShortcutCatalog` / `ShortcutBindings` / `HotkeyProbe`，都有单测），
+    /// 这里只负责弹窗、以及把改好的绑定**落盘 + 立刻重新注册**。
     /// </summary>
     private async void OnShortcutButtonClick(object sender, RoutedEventArgs e)
     {
         try
         {
-            var dialog = ShortcutDialog.Create();
+            var dialog = ShortcutDialog.Create(_shortcutBindings);
             dialog.XamlRoot = RootGrid.XamlRoot;
             dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18）
+            dialog.BindingsChanged += (_, bindings) => PersistShortcutBindings(bindings);
+
             await dialog.ShowAsync();
         }
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.OnShortcutButtonClick", ex);
+        }
+    }
+
+    /// <summary>
+    /// 改键之后：**立刻重新注册**（改完就能用）+ **落盘**（差分存储，只存与默认不同的那些）。
+    ///
+    /// <para>⚠️ 顺序：先让界面生效、再落盘 —— 落盘失败不该让"这次改动在本次运行里也无效"。</para>
+    /// </summary>
+    private void PersistShortcutBindings(IReadOnlyList<ShortcutBinding> bindings)
+    {
+        _shortcutBindings = bindings;
+        ApplyShortcuts();
+
+        try
+        {
+            var overrides = ShortcutBindings.ToOverrides(bindings);
+            _settings?.Update(settings => settings.ShortcutBindings = overrides.Count > 0 ? overrides : null);
+            _settingsData = _settings?.Current;
+            _log.AppendLine($"快捷键改动已落盘：{overrides.Count} 条与默认不同");
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.PersistShortcutBindings", ex);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.edit")), ("err", ex.Message)));
         }
     }
 

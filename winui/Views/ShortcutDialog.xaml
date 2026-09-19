@@ -1,15 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    ShortcutDialog.xaml —— 「快捷键参考」窗口（原版 帮助菜单 → 快捷键参考）
+    ShortcutDialog.xaml —— 「快捷键设置」窗口（v2.0.6 起从"只读参考"升级为**可改键 + 冲突管理**）
 
-    内容**完全来自 Core 的 `ShortcutCatalog`**（有单测钉住：功能名 key 都在文案表里、
-    键位不重复、键位串可往返）。这里只负责把它铺成"功能 × 快捷键"两列表格 ——
-    所以「目录里有的按键一定列得出来，列出来的按键一定接得上」，
-    不会出现原版那种"菜单里有 Ctrl+Shift+T、参考表里却漏了一行"的漂移。
+    三件事：
+      ① **改键**：点「快捷键」那一列的按钮 → 进入录制 → 按下新组合（Esc 取消）；改动立即生效并保存
+      ② **恢复默认**：每行一个小 ↻；底部「全部恢复默认」
+      ③ **冲突管理**：应用内四类（重复 / 输入框编辑键 / 系统保留 / 缺修饰键）**实时**标黄；
+         「检测冲突」再补上"是否已被其他程序的全局热键占用"（用 RegisterHotKey 实测，见 Core 的 HotkeyProbe）
+
+    内容来自 Core：功能名/键位/表头来自 `ShortcutCatalog`，绑定与判据来自 `ShortcutBindings`（都有单测）。
+    这里只负责采集按键、显示状态、把结果回给宿主窗口。
 
     主题纪律（与其它对话框一致，见 ERROR.md E18）：
-    · 文字颜色显式用框架主题资源（跟随元素主题）；
-    · RequestedTheme 由调用方（MainWindow）在 ShowAsync 前显式设置；
+    · 文字颜色显式用框架主题资源；`RequestedTheme` 由调用方在 ShowAsync 前设；
     · 标题与按钮文字在构造函数里设（ContentDialog 的 Title/按钮不是可视元素，Tr 管不到）。
 -->
 <ContentDialog
@@ -18,46 +21,86 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:views="using:ToolboxPanel.Views">
 
-    <Grid Width="420" RowSpacing="6">
+    <Grid Width="560" RowSpacing="6">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <!-- 表头（文字在构造函数里按当前语言设） -->
-        <Grid Grid.Row="0" ColumnSpacing="12">
+        <TextBlock x:Name="HintText" Grid.Row="0" FontSize="11" TextWrapping="Wrap"
+                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+
+        <!-- 列头（文字在构造函数里按当前语言设） -->
+        <Grid Grid.Row="1" ColumnSpacing="10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="110" />
+                <ColumnDefinition Width="190" />
+                <ColumnDefinition Width="28" />
             </Grid.ColumnDefinitions>
-            <TextBlock x:Name="ActionHeader" Grid.Column="0" FontWeight="SemiBold" FontSize="12"
+            <TextBlock x:Name="ActionHeader" Grid.Column="0" FontSize="11" FontWeight="SemiBold"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-            <TextBlock x:Name="KeyHeader" Grid.Column="1" FontWeight="SemiBold" FontSize="12"
+            <TextBlock x:Name="KeyHeader" Grid.Column="1" FontSize="11" FontWeight="SemiBold"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock x:Name="StatusHeader" Grid.Column="2" FontSize="11" FontWeight="SemiBold"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
         </Grid>
 
-        <Border Grid.Row="1" Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        <Border Grid.Row="2" Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
 
-        <ScrollViewer Grid.Row="2" MaxHeight="400" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="3" MaxHeight="380" VerticalScrollBarVisibility="Auto">
             <ItemsControl x:Name="RowsHost">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate x:DataType="views:ShortcutRow">
-                        <Grid ColumnSpacing="12" Margin="0,3">
+                        <Grid ColumnSpacing="10" Margin="0,2">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="110" />
+                                <ColumnDefinition Width="190" />
+                                <ColumnDefinition Width="28" />
                             </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="{x:Bind Action}" FontSize="12"
-                                       TextWrapping="Wrap"
+
+                            <TextBlock Grid.Column="0" Text="{x:Bind Label}" FontSize="12"
+                                       TextWrapping="Wrap" VerticalAlignment="Center"
                                        Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
-                            <TextBlock Grid.Column="1" Text="{x:Bind Keys}" FontSize="12"
-                                       FontFamily="Consolas"
-                                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+
+                            <Button Grid.Column="1" Content="{x:Bind Keys}" FontSize="12"
+                                    FontFamily="Consolas" Padding="6,2" HorizontalAlignment="Stretch"
+                                    Click="OnKeyButtonClick" Tag="{x:Bind Action}" />
+
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4"
+                                        VerticalAlignment="Center">
+                                <TextBlock Text="&#x26A0;" FontSize="11"
+                                           Foreground="{ThemeResource SystemFillColorCautionBrush}"
+                                           Visibility="{x:Bind WarningVisibility}" />
+                                <TextBlock Text="{x:Bind StatusText}" FontSize="11" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
+
+                            <Button Grid.Column="3" Content="&#xE72C;" FontFamily="Segoe MDL2 Assets"
+                                    FontSize="11" Padding="4,2" Background="Transparent"
+                                    BorderThickness="0" IsTabStop="False"
+                                    UseSystemFocusVisuals="False"
+                                    FocusVisualPrimaryThickness="0"
+                                    FocusVisualSecondaryThickness="0"
+                                    Visibility="{x:Bind ResetVisibility}"
+                                    Click="OnResetOneClick" Tag="{x:Bind Action}"
+                                    ToolTipService.ToolTip="{x:Bind ResetTip}" />
                         </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
+
+        <StackPanel Grid.Row="4" Orientation="Horizontal" Spacing="8">
+            <Button x:Name="CheckButton" Click="OnCheckClick" />
+            <Button x:Name="ResetAllButton" Click="OnResetAllClick" />
+            <TextBlock x:Name="MessageText" FontSize="11" VerticalAlignment="Center"
+                       TextWrapping="Wrap" MaxWidth="260"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </StackPanel>
     </Grid>
 </ContentDialog>
