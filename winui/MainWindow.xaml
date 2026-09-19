@@ -111,10 +111,22 @@
               · 关闭搜索栏 = 清空查询（否则会出现"看不见的过滤"，页面莫名其妙少一半图标）；
               · 底色用框架主题资源（与批量条同一套），不写死颜色 —— 浅深色自动跟。
         -->
-        <Border x:Name="SearchBar" Grid.Row="2" Visibility="Collapsed"
-                Margin="8,2,8,4" Padding="10,4" CornerRadius="6"
-                BorderThickness="1" BorderBrush="Transparent"
-                Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+        <!--
+            🔍 搜索栏的**宿主**：搜索栏在 Auto 行、内容区在下面的 `*` 行 ⇒ 一显示就会把内容区往下挤。
+            所以"弹出动画"要动的是**宿主的高度**（让内容跟着平滑下移），而不只是淡入。
+
+            ⚠️ 为什么外面还要套一层（而不是直接动画 `SearchBar.Height`）：
+            ① `SearchBar` 自己带 `Margin="8,2,8,4"` —— 高度归 0 时这 6px 外边距**还在**，
+               行高收不干净（会留一条缝）。宿主本身无外边距 ⇒ 归 0 就是真的 0；
+            ② 宿主带 `Clip`（见 `OnSearchHostSizeChanged`）：高度动画过程中内容会被裁掉，
+               不会把图标/文字"挤"到外面去（XAML 默认**不**裁剪子元素）。
+        -->
+        <Grid x:Name="SearchHost" Grid.Row="2" Visibility="Collapsed"
+              SizeChanged="OnSearchHostSizeChanged">
+            <Border x:Name="SearchBar"
+                    Margin="8,2,8,4" Padding="10,4" CornerRadius="6"
+                    BorderThickness="1" BorderBrush="Transparent"
+                    Background="{ThemeResource SubtleFillColorSecondaryBrush}">
             <!--
                 ⚠️ 干掉内层 TextBox 自带的装饰（2026-09-19 按用户截图修"不对称"）：
 
@@ -180,7 +192,8 @@
                     <FontIcon Glyph="&#xE711;" FontSize="11" />
                 </Button>
             </Grid>
-        </Border>
+            </Border>
+        </Grid>
 
         <!--
             ③ 内容区：网格页 / 列表页在这里切换。

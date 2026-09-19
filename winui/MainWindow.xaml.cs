@@ -188,6 +188,8 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// <summary>
 
+    /// <summary>
+
     /// <summary>自检：把"会随主题变"的各元素当前颜色打出来（漏网元素一眼可见）。</summary>
     private void LogThemeState(string tag)
     {
@@ -865,9 +867,22 @@ public sealed partial class MainWindow : Window
 
     private void OnSearchCloseClick(object sender, RoutedEventArgs e) => CloseSearch();
 
+    /// <summary>
+    /// 🔍 搜索栏的开合状态（**逻辑状态**，不受动画影响）。
+    /// <para>⚠️ 切换判据用它、不去读 `Visibility`：开合动画期间 `Visibility` 已经是终态，
+    /// 连按两下 `Ctrl+F` 会被判成"再关一次"而不是"关掉刚打开的那个"。</para>
+    /// </summary>
+    private bool _searchOpen;
+
+    /// <summary>开合动画（起新一轮前必须先停掉上一轮，否则旧的 HoldEnd 值会压住这次的起始值）。</summary>
+    private Storyboard? _searchAnimation;
+
+    /// <summary>宿主的裁剪矩形（高度动画时把内容裁掉，别让图标/文字挤到外面）。</summary>
+    private RectangleGeometry? _searchHostClip;
+
     private void ToggleSearch()
     {
-        if (SearchBar.Visibility == Visibility.Visible)
+        if (_searchOpen)
         {
             CloseSearch();
         }
@@ -879,7 +894,8 @@ public sealed partial class MainWindow : Window
 
     private void OpenSearch()
     {
-        SearchBar.Visibility = Visibility.Visible;
+        _searchOpen = true;
+        SetSearchBarOpen(open: true, animate: ShouldAnimateSearchBar());
         SearchBox.Focus(FocusState.Programmatic);   // 打开就能直接打字（原版也是 setFocus）
         UpdateSearchUi();
     }
@@ -887,15 +903,171 @@ public sealed partial class MainWindow : Window
     /// <summary>
     /// 关闭搜索栏。⚠️ 必须**同时清空查询**：否则会出现"看不见的过滤" ——
     /// 搜索栏没了、页面却还是少一半图标，用户只会觉得程序坏了。
+    ///
+    /// <para>⚠️ 清查询是**立即**做的（语义），界面收起的动画照跑（观感）——
+    /// 两者分开，不然"等动画跑完再清"会让看不见的过滤多存在 200ms。</para>
     /// </summary>
     private void CloseSearch()
     {
-        SearchBar.Visibility = Visibility.Collapsed;
+        _searchOpen = false;
+
         SearchBox.Text = string.Empty;   // 触发 OnSearchTextChanged → 自动清掉过滤
         ApplySearch(string.Empty);
 
+        SetSearchBarOpen(open: false, animate: ShouldAnimateSearchBar());
+
         _log.AppendLine("搜索：已关闭（查询清空）");
         FlushLog();
+    }
+
+    /// <summary>动效是否可用（用户在设置里关掉动效时直接切显隐，与其它动画同一判据）。</summary>
+    private bool ShouldAnimateSearchBar() => _settingsData?.AnimationsEnabled ?? true;
+
+    /// <summary>宿主尺寸变化时同步裁剪矩形（高度动画每一帧都会触发）。</summary>
+    private void OnSearchHostSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        _searchHostClip ??= new RectangleGeometry();
+        _searchHostClip.Rect = new Windows.Foundation.Rect(0, 0, e.NewSize.Width, e.NewSize.Height);
+        SearchHost.Clip = _searchHostClip;
+    }
+
+    /// <summary>
+    /// 打开 / 收起搜索栏。
+    ///
+    /// <para>只淡入是不够的：搜索栏在 **Auto 行**、内容区在下面的 `*` 行 ⇒ 一显示就把内容区往下挤，
+    /// 所以真正要动的是**宿主的高度**（内容才会跟着平滑下移）。</para>
+    /// </summary>
+    private void SetSearchBarOpen(bool open, bool animate)
+    {
+        StopSearchAnimation();
+
+        if (open)
+        {
+            SearchHost.Visibility = Visibility.Visible;
+
+            if (!animate)
+            {
+                SearchHost.Height = double.NaN;   // 交回 Auto（字体/语言变了也不会被写死的高度卡住）
+                SearchHost.Opacity = 1;
+                return;
+            }
+
+            // 先量"自然高度"：把高度交回 Auto、透明度置 0（同一帧内完成，不会闪一下最终态）
+            SearchHost.Height = double.NaN;
+            SearchHost.Opacity = 0;
+            SearchHost.UpdateLayout();
+            var target = SearchHost.ActualHeight;
+
+            if (target <= 0)
+            {
+                // 量不到（窗口还没布局完等）⇒ 别硬动画，直接显示
+                SearchHost.Opacity = 1;
+                return;
+            }
+
+            SearchHost.Height = 0;
+            _searchAnimation = BuildSearchBarAnimation(
+                fromHeight: 0, toHeight: target, toOpacity: 1,
+                duration: SearchBarDuration(),
+                onCompleted: () => SearchHost.Height = double.NaN);   // 动画结束交回 Auto
+            _searchAnimation.Begin();
+            _log.AppendLine($"搜索：展开动画 {target:0.#}px（{SearchBarDuration().TimeSpan.TotalMilliseconds:F0}ms）");
+            FlushLog();
+            return;
+        }
+
+        // ── 收起 ──
+        if (SearchHost.Visibility != Visibility.Visible)
+        {
+            return;   // 本来就没显示
+        }
+
+        if (!animate)
+        {
+            SearchHost.Visibility = Visibility.Collapsed;
+            SearchHost.Height = double.NaN;
+            SearchHost.Opacity = 1;
+            return;
+        }
+
+        // ⚠️ 从**当前实际高度**起步：可能上一轮动画还没跑完（用户连按 Ctrl+F）
+        var from = SearchHost.ActualHeight > 0 ? SearchHost.ActualHeight : SearchHost.Height;
+        if (double.IsNaN(from) || from <= 0)
+        {
+            SearchHost.Visibility = Visibility.Collapsed;
+            SearchHost.Opacity = 1;
+            return;
+        }
+
+        _searchAnimation = BuildSearchBarAnimation(
+            fromHeight: from, toHeight: 0, toOpacity: 0,
+            duration: SearchBarDuration(),
+            onCompleted: () =>
+            {
+                SearchHost.Visibility = Visibility.Collapsed;
+                SearchHost.Height = double.NaN;   // 收起后交回 Auto
+                SearchHost.Opacity = 1;           // 复位，下次打开才能从 0 淡入
+            });
+        _searchAnimation.Begin();
+        _log.AppendLine($"搜索：收起动画 {from:0.#}px（{SearchBarDuration().TimeSpan.TotalMilliseconds:F0}ms）");
+        FlushLog();
+    }
+
+    /// <summary>开合动画时长：与其它动效同源（设置里的时长令牌）。</summary>
+    private Duration SearchBarDuration()
+        => new(TimeSpan.FromMilliseconds(Math.Clamp(_settingsData?.AnimationDurationMs ?? 220, 80, 420)));
+
+    /// <summary>停掉正在跑的搜索栏动画并复位引用（起新一轮之前必须调）。</summary>
+    private void StopSearchAnimation()
+    {
+        if (_searchAnimation is null)
+        {
+            return;
+        }
+
+        _searchAnimation.Stop();
+        _searchAnimation = null;
+    }
+
+    /// <summary>
+    /// 高度 + 透明度一起动（两者用同一条缓动曲线，收缩时才不会"半透明的内容漏在外面"）。
+    /// </summary>
+    private Storyboard BuildSearchBarAnimation(
+        double fromHeight, double toHeight, double toOpacity, Duration duration, Action onCompleted)
+    {
+        var easing = EntranceAnimator.CreateEasing(_settingsData?.AnimationEasing ?? AnimationEasing.Standard);
+
+        var height = new DoubleAnimation
+        {
+            From = fromHeight,
+            To = toHeight,
+            Duration = duration,
+            EasingFunction = easing,
+            FillBehavior = FillBehavior.HoldEnd,
+
+            // ⚠️⚠️ **必须开**：`Height` 是布局属性，"依赖动画"默认被静默忽略 ——
+            //    不开这个开关，Storyboard 照样 Begin、也不报错，但**高度根本不动**。
+            EnableDependentAnimation = true,
+        };
+        Storyboard.SetTarget(height, SearchHost);
+        Storyboard.SetTargetProperty(height, "Height");
+
+        var opacity = new DoubleAnimation
+        {
+            From = SearchHost.Opacity,
+            To = toOpacity,
+            Duration = duration,
+            EasingFunction = easing,
+            FillBehavior = FillBehavior.HoldEnd,
+        };
+        Storyboard.SetTarget(opacity, SearchHost);
+        Storyboard.SetTargetProperty(opacity, "Opacity");
+
+        var storyboard = new Storyboard();
+        storyboard.Children.Add(height);
+        storyboard.Children.Add(opacity);
+        storyboard.Completed += (_, _) => onCompleted();
+        return storyboard;
     }
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e) => ApplySearch(SearchBox.Text);
@@ -3076,3 +3248,4 @@ public sealed partial class MainWindow : Window
         }
     }
 }
+
