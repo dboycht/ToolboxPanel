@@ -82,6 +82,22 @@ internal static class ShellApi
     [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool BringWindowToTop(IntPtr hWnd);
+
+    /// <summary>
+    /// 把"设置前台窗口"的权限让给别的进程（单实例守卫用）。
+    ///
+    /// <para>Windows 有**前台锁**：后台进程不能随便抢焦点（防"焦点窃取"），
+    /// 所以第二实例直接对主实例窗口调 <c>SetForegroundWindow</c> 经常返回 false。
+    /// 由**当前**进程显式让权（<paramref name="dwProcessId"/> = -1 表示任意进程），
+    /// 主实例那边再调就允许了 —— 这是微软给"单实例应用拉起已有窗口"的标准做法。</para>
+    /// </summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool AllowSetForegroundWindow(int dwProcessId);
 }
 
 /// <summary>

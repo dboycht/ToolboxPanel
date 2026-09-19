@@ -102,6 +102,9 @@ public sealed partial class MainWindow : Window
         // 记住窗口大小：用户拖完尺寸后（去抖）写进 config.json
         AppWindow.Changed += OnAppWindowChanged;
 
+        // 窗口关闭时收口单实例守卫的监听线程与内核句柄（见 App.Shutdown 的说明）
+        Closed += (_, _) => (Application.Current as App)?.Shutdown();
+
         if (_openSettingsAtStartup)
         {
             ShowSettings(true);
