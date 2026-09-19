@@ -21,13 +21,28 @@ public static class AppPaths
     /// <summary>向上查找的最大层数（exe 在 bin\x64\Debug\net9.0-...\win-x64\ 下约 6 层）。</summary>
     private const int MaxUpwardLevels = 12;
 
-    /// <summary>解析数据目录（不保证已存在；由 <see cref="DataStore"/> 负责创建）。</summary>
+    /// <summary>
+    /// 解析数据目录（不保证已存在；由 <see cref="DataStore"/> 负责创建）。
+    ///
+    /// <para>⚠️ 环境变量 <c>TOOLBOXPANEL_DATA_DIR</c> 的值是**外部输入**，可能含非法字符
+    /// （<c>&lt; &gt; | " :</c> 或老式 <c>C:xxx</c> 形式）。这类值必须**明确报错**而不是静默忽略：
+    /// 静默落下会变成"用户以为指定了数据目录、程序却写到了别处"，那是最难排查的一类问题。
+    /// 这里把底层异常换成一句能直接照做的提示（带上那个坏值），再由启动路径记进崩溃日志。</para>
+    /// </summary>
     public static string ResolveDataDirectory(string? startDirectory = null)
     {
         var env = Environment.GetEnvironmentVariable(DataDirEnvironmentVariable);
         if (!string.IsNullOrWhiteSpace(env))
         {
-            return Path.GetFullPath(env.Trim());
+            try
+            {
+                return Path.GetFullPath(env.Trim());
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                throw new ArgumentException(
+                    $"{DataDirEnvironmentVariable} 的值不是合法路径：'{env.Trim()}'（{ex.Message}）", nameof(env), ex);
+            }
         }
 
         var start = string.IsNullOrWhiteSpace(startDirectory) ? AppContext.BaseDirectory : startDirectory!;

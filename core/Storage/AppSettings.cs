@@ -343,8 +343,6 @@ public sealed class AppSettings
 /// <summary>config.json 的读写（原子写 + 容错 + 取值归一化）。</summary>
 public sealed class SettingsStore
 {
-    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
-
     public SettingsStore(string dataDirectory)
     {
         DataDirectory = Path.GetFullPath(dataDirectory);
@@ -394,7 +392,7 @@ public sealed class SettingsStore
         return settings;
     }
 
-    /// <summary>原子写回 config.json。</summary>
+    /// <summary>原子写回 config.json（串行化 + 失败不留临时文件，见 <see cref="AtomicFile"/>）。</summary>
     public void Save(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -403,8 +401,8 @@ public sealed class SettingsStore
         Directory.CreateDirectory(DataDirectory);
 
         var json = JsonSerializer.Serialize(settings, TabsJson.Options);
-        File.WriteAllText(SettingsTempFile, json, Utf8NoBom);
-        File.Move(SettingsTempFile, SettingsFile, overwrite: true);
+
+        AtomicFile.WriteAllText(SettingsFile, SettingsTempFile, json);
 
         Current = settings;
     }

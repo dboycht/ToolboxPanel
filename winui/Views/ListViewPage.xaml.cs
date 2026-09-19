@@ -163,17 +163,12 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
     /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽。</summary>
     public bool DragDropEnabled
     {
-        get => _dragDropEnabled;
         set
         {
-            _dragDropEnabled = value;
-
             // ⚠️ 同网格页：不设 Rows.CanDrag（那会让系统自己起拖，绕过长按门控）
             Rows.AllowDrop = value;
         }
     }
-
-    private bool _dragDropEnabled;
 
     public void ApplyAnimationSpec(AnimationSpec spec) => _entrance.ApplySpec(spec);
 
@@ -220,7 +215,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
 
     private bool _suppressNextClick;
     private int _lastTracedIndex = -1;
-    private int _lastDropIndex = -1;
     private bool _tracedDragOverEntry;
     private bool _dropSeen;                    // 本次拖动是否真的落在本页（Drop 事件到场）
 
@@ -288,7 +282,6 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         _suppressNextClick = true;
 
         var insertIndex = ComputeInsertIndex(e);
-        _lastDropIndex = insertIndex;
         DragSession.ReportTarget(_tab.Id, DragItemKind.ListItem, insertIndex);
 
         if (insertIndex != _lastTracedIndex)
@@ -311,10 +304,10 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
             _dropSeen = true;
-            _lastDropIndex = ComputeInsertIndex(e);
-            DragSession.ReportTarget(_tab.Id, DragItemKind.ListItem, _lastDropIndex);
+            var dropIndex = ComputeInsertIndex(e);
+            DragSession.ReportTarget(_tab.Id, DragItemKind.ListItem, dropIndex);
             HideDropIndicator();
-            DragTrace($"Drop（内部拖动）：落点={_lastDropIndex} ⇒ 留给 DragItemsCompleted 收口");
+            DragTrace($"Drop（内部拖动）：落点={dropIndex} ⇒ 留给 DragItemsCompleted 收口");
             return;
         }
 
@@ -331,12 +324,14 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         _lastTracedIndex = -1;
         _suppressNextClick = false;
 
+        // 复位"本次拖动是否已打过 DragOver 详情"（漏了它，诊断日志从第二次拖动起就废了，同网格页）
+        _tracedDragOverEntry = false;
+
         var target = DragSession.TakeTarget();
         var row = args.Items.Count > 0 ? args.Items[0] as ListRowViewModel : null;
         var dropResult = args.DropResult;
         var dropSeen = _dropSeen;
         _dropSeen = false;
-        _lastDropIndex = -1;
 
         DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
                   + $"被拖={row?.Description ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
@@ -353,11 +348,12 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
             return;
         }
 
-        // ⚠️ 结算延后一拍（Drop 与 DragItemsCompleted 先后顺序不保证，同网格页）
+        // ⚠️ 结算延后一拍（Drop 与 DragItemsCompleted 先后顺序不保证，同网格页）。
+        //    ⚠️ 只认上面那个 `dropSeen` 快照，**不再二次读字段 `_dropSeen`**：
+        //    那一读发生在下一拍，会把用户"紧接着开始的第二次拖动"留下的标记误当成本轮落下。
         DispatcherQueue.TryEnqueue(() =>
         {
-            var landed = dropResult == DataPackageOperation.Move || dropSeen || _dropSeen;
-            _dropSeen = false;
+            var landed = dropResult == DataPackageOperation.Move || dropSeen;
 
             if (!landed)
             {

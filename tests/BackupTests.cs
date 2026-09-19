@@ -76,7 +76,7 @@ public class BackupTests
         File.WriteAllText(Path.Combine(temp.Path, "config.json"), "{}", new UTF8Encoding(false));
         temp.TouchIconCache("a.png");
 
-        var zip = Path.Combine(temp.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = temp.NewSiblingPath();
         var result = BackupManager.Export(temp.Path, zip, "2.0.2");
 
         Assert.True(result.Success, result.Message);
@@ -92,7 +92,6 @@ public class BackupTests
             Assert.DoesNotContain(names, n => n.Contains('\\'));   // ★ 兼容性关键：绝不写反斜杠
         }
 
-        TryDelete(zip);
     }
 
     [Fact]
@@ -101,7 +100,7 @@ public class BackupTests
         using var temp = new TempDataDirectory();
         WriteTabsJson(temp.Path, """{"version":1,"tabs":[{"id":"t","name":"中文页","icons":[]}]}""");
 
-        var zip = Path.Combine(temp.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = temp.NewSiblingPath();
         BackupManager.Export(temp.Path, zip, "2.0.2");
 
         using (var archive = ZipFile.OpenRead(zip))
@@ -114,7 +113,6 @@ public class BackupTests
             Assert.Contains("\"tab_count\": 1", json);
         }
 
-        TryDelete(zip);
     }
 
     [Fact]
@@ -125,7 +123,7 @@ public class BackupTests
         using var temp = new TempDataDirectory();
         WriteTabsJson(temp.Path, """{"version":1,"tabs":[]}""");
 
-        var zip = Path.Combine(temp.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = temp.NewSiblingPath();
         File.WriteAllText(zip, "我是上一次留下的同名文件");
 
         var result = BackupManager.Export(temp.Path, zip, "2.0.2");
@@ -137,7 +135,6 @@ public class BackupTests
             Assert.Contains("metadata.json", archive.Entries.Select(e => e.FullName));   // 已是合法包
         }
 
-        TryDelete(zip);
     }
 
     // ────────────────────────────── 往返 ──────────────────────────────
@@ -150,7 +147,7 @@ public class BackupTests
         File.WriteAllText(Path.Combine(source.Path, "config.json"), """{"language":"zh"}""", new UTF8Encoding(false));
         source.TouchIconCache("icon-1.png");
 
-        var zip = Path.Combine(source.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = source.NewSiblingPath();
         Assert.True(BackupManager.Export(source.Path, zip, "2.0.2").Success);
 
         // 目标目录先放一些"要被清掉"的脏数据
@@ -168,7 +165,6 @@ public class BackupTests
         Assert.NotNull(result.Metadata);
         Assert.Equal("2.0.2", result.Metadata!.Version);
 
-        File.Delete(zip);
     }
 
     // ────────────────────────────── 兼容旧包 ──────────────────────────────
@@ -179,7 +175,7 @@ public class BackupTests
         using var target = new TempDataDirectory();
 
         // 手工构造"原版在 Windows 上导出"的包：arcname 是 data\tabs.json（反斜杠）
-        var zip = Path.Combine(target.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = target.NewSiblingPath();
         using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
         {
             WriteEntry(archive, "metadata.json", """{"version":"1.11.6","exported_at":"2026-01-01T00:00:00","tab_count":1,"icon_count":0}""");
@@ -194,7 +190,6 @@ public class BackupTests
         Assert.True(File.Exists(Path.Combine(target.IconsDirectory, "old.png")));
         Assert.False(Directory.Exists(Path.Combine(target.Path, "data")));   // ⚠️ 绝不能多出一层 data/
 
-        File.Delete(zip);
     }
 
     [Fact]
@@ -202,7 +197,7 @@ public class BackupTests
     {
         using var target = new TempDataDirectory();
 
-        var zip = Path.Combine(target.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = target.NewSiblingPath();
         using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
         {
             WriteEntry(archive, "metadata.json", "{}");
@@ -214,7 +209,6 @@ public class BackupTests
         Assert.True(result.Success, result.Message);
         Assert.Contains("裸文件", File.ReadAllText(target.TabsFile));
 
-        File.Delete(zip);
     }
 
     [Fact]
@@ -224,7 +218,7 @@ public class BackupTests
         WriteTabsJson(target.Path, """{"version":1,"tabs":[{"id":"keep"}]}""");
         var before = File.ReadAllText(target.TabsFile);
 
-        var zip = Path.Combine(target.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = target.NewSiblingPath();
         using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
         {
             WriteEntry(archive, "data/tabs.json", """{"version":1,"tabs":[]}""");
@@ -236,7 +230,6 @@ public class BackupTests
         Assert.Contains("metadata.json", result.Message);
         Assert.Equal(before, File.ReadAllText(target.TabsFile));   // 失败时一个字节都没动
 
-        File.Delete(zip);
     }
 
     [Fact]
@@ -244,7 +237,7 @@ public class BackupTests
     {
         using var target = new TempDataDirectory();
 
-        var zip = Path.Combine(target.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = target.NewSiblingPath();
         using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
         {
             WriteEntry(archive, "metadata.json", """{"version":"1.0.0"}""");   // 缺 exported_at / tab_count / icon_count
@@ -258,14 +251,16 @@ public class BackupTests
         Assert.Equal("1.0.0", result.Metadata!.Version);
         Assert.Equal(0, result.Metadata.TabCount);
 
-        File.Delete(zip);
     }
 
     [Fact]
     public void 导入_拒绝越界条目_不影响合法条目()
     {
         using var target = new TempDataDirectory();
-        var zip = Path.Combine(target.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = target.NewSiblingPath();
+
+        // 越界条目的落点：明确写死一个同级文件名，才查得出"它到底有没有被写出来"
+        var escaped = target.NamedSiblingPath("escaped.txt");
 
         using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
         {
@@ -277,10 +272,8 @@ public class BackupTests
         var result = BackupManager.Import(zip, target.Path);
 
         Assert.True(result.Success, result.Message);
-        Assert.True(File.Exists(target.TabsFile));                                   // 合法条目照常
-        Assert.False(File.Exists(Path.Combine(target.Path, "..", "escaped.txt")));  // 越界条目被拒
-
-        File.Delete(zip);
+        Assert.True(File.Exists(target.TabsFile));   // 合法条目照常
+        Assert.False(File.Exists(escaped));          // 越界条目被拒
     }
 
     [Fact]
@@ -290,6 +283,41 @@ public class BackupTests
         var result = BackupManager.Import(Path.Combine(target.Path, "不存在.zip"), target.Path);
 
         Assert.False(result.Success);
+    }
+
+    [Fact]
+    public void 导入_解压中途失败时_既有数据一个字节都不改()
+    {
+        // ⚠️ 这条钉住的是"先清空再解压"那个真缺陷：
+        //    旧实现里 `ClearCurrentData()` 跑在解压**之前**，于是包只要在第 k 条上出问题
+        //    （坏包 / 路径过长 / 磁盘满 / 文件被占用），异常就被 catch 吞成一句 Fail ——
+        //    此刻 icons/ 已空、tabs.json 已不在，**没有任何回滚**，
+        //    用户看到"导入失败"外加"图标全没了"。
+        //    现在解压先落到暂存区，暂存区落定之后才清空并搬入 ⇒ 失败 = 原样。
+        using var target = new TempDataDirectory();
+        var originalTabs = """{"version":1,"tabs":[{"id":"keep","name":"我的页"}]}""";
+        WriteTabsJson(target.Path, originalTabs);
+        target.TouchIconCache("keep.png");
+
+        var zip = target.NewSiblingPath();
+        using (var archive = ZipFile.Open(zip, ZipArchiveMode.Create))
+        {
+            WriteEntry(archive, "metadata.json", """{"version":"2.0.4"}""");
+            WriteEntry(archive, "data/tabs.json", """{"version":1,"tabs":[{"id":"new"}]}""");
+
+            // 一条必然解压失败的条目：路径长到超过 Windows 的路径上限
+            WriteEntry(archive, "data/" + new string('x', 400) + "/bad.txt", "boom");
+        }
+
+        var result = BackupManager.Import(zip, target.Path);
+
+        // ⚠️ 这条断言本身也是"测试有效性"的保险：如果哪天本机开了长路径支持、
+        //    这条坏条目居然解成功了，这里会立刻变红 —— 而不是让下面几条断言"空过"。
+        Assert.False(result.Success);
+
+        Assert.Equal(originalTabs, File.ReadAllText(target.TabsFile));                 // tabs.json 原样
+        Assert.True(File.Exists(Path.Combine(target.IconsDirectory, "keep.png")));      // 图标缓存原样
+        Assert.DoesNotContain("new", File.ReadAllText(target.TabsFile));                // 半成品没被搬进来
     }
 
     // ────────────────────────────── 与原版 Python 的双向兼容（条件式） ──────────────────────────────
@@ -310,7 +338,7 @@ public class BackupTests
         File.WriteAllText(Path.Combine(source.Path, "config.json"), """{"language":"en"}""", new UTF8Encoding(false));
         source.TouchIconCache("py.png");
 
-        var zip = Path.Combine(source.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = source.NewSiblingPath();
         var (exitCode, stdout, stderr) = RunPythonScript(repoRoot!, "export", source.Path, zip);
         Assert.True(exitCode == 0, $"原版 Python 导出失败：{stderr}");
 
@@ -330,7 +358,6 @@ public class BackupTests
         Assert.True(File.Exists(Path.Combine(target.IconsDirectory, "py.png")));
         Assert.Equal(pythonVersion, result.Metadata!.Version);
 
-        TryDelete(zip);
     }
 
     [Fact]
@@ -348,7 +375,7 @@ public class BackupTests
             """);
         source.TouchIconCache("cs.png");
 
-        var zip = Path.Combine(source.Path, "..", $"{Guid.NewGuid():N}.zip");
+        var zip = source.NewSiblingPath();
         Assert.True(BackupManager.Export(source.Path, zip, "2.0.2").Success);
 
         // 原版导入到另一个目录（它会清空目标目录里的 tabs.json/config.json/icons）
@@ -363,7 +390,6 @@ public class BackupTests
         Assert.True(File.Exists(Path.Combine(target.IconsDirectory, "cs.png")));
         Assert.False(Directory.Exists(Path.Combine(target.Path, "data")));
 
-        File.Delete(zip);
     }
 
     // ────────────────────────────── 工具 ──────────────────────────────
@@ -374,18 +400,6 @@ public class BackupTests
         using var stream = entry.Open();
         using var writer = new StreamWriter(stream, new UTF8Encoding(false));
         writer.Write(content);
-    }
-
-    /// <summary>删临时 zip（删不掉不影响测试结论 —— 留着也会被系统清理）。</summary>
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            if (File.Exists(path)) { File.Delete(path); }
-        }
-        catch (IOException)
-        {
-        }
     }
 
     /// <summary>把 tabs.json 写成 DataStore 认可的格式（直接写文本即可，导入导出只按字节搬运）。</summary>

@@ -82,13 +82,32 @@ public static class SampleIcons
                 Type = spec.Type,
                 DisplayName = I18n.T(spec.NameKey),   // 名字跟随"创建这一刻"的界面语言
                 SourcePath = spec.SourcePath,
-                TargetPath = spec.TargetPath,
+                TargetPath = ResolveTargetPath(spec),
                 Arguments = spec.Arguments,
                 WorkingDir = spec.WorkingDir,
             });
         }
 
         return icons;
+    }
+
+    /// <summary>
+    /// 目标路径：**文件/文件夹/快捷方式与「新建图标」保持同一套字段口径**（两条路径都填同一个值）。
+    ///
+    /// <para>⚠️ 示例清单里 <c>TargetPath</c> 是可缺省的，而 <c>IconEditor.Create</c>（FILE/FOLDER 分支）
+    /// 与 <c>DropImporter</c> 都是 `source_path` 与 `target_path` 一起填。只填一个虽然靠
+    /// "读取侧优先 target、空了退回 source"侥幸不出错，但那是**两套字段口径躺着等下次改读取侧**。
+    /// URL / COMMAND 是特殊语义（URL 两边都是网址；COMMAND 的 <c>source_path</c> 是"命令 + 参数"整串），
+    /// 保持原样。</para>
+    /// </summary>
+    private static string ResolveTargetPath(Spec spec)
+    {
+        if (!string.IsNullOrWhiteSpace(spec.TargetPath))
+        {
+            return spec.TargetPath;
+        }
+
+        return spec.Type is IconType.Url or IconType.Command ? spec.TargetPath : spec.SourcePath;
     }
 
     /// <summary>URL / COMMAND 不依赖本地文件，一律保留；其余要求路径真实存在。</summary>
@@ -140,10 +159,10 @@ public static class SampleIcons
         }
 
         var tab = store.AddTab(SampleTabName, TabModel.TypeGrid);
-        foreach (var icon in icons)
-        {
-            store.AddIcon(tab.Id, icon);
-        }
+
+        // ⚠️ 用批量入口：`AddIcon` 每加一个就整份重写 tabs.json，
+        //    示例清单有 20 个图标 ⇒ 逐个加就是 20 次全量落盘（慢盘上肉眼可见地卡）。
+        store.AddIcons(tab.Id, icons);
 
         return true;
     }

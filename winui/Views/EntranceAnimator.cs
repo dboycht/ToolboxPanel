@@ -44,6 +44,13 @@ internal sealed class EntranceAnimator
     /// <summary>本轮起过的 Storyboard —— 下次播放前必须 Stop，否则它 HoldEnd 的值会压住我们设的起始态。</summary>
     private readonly List<Storyboard> _running = new();
 
+    /// <summary>
+    /// 超时兜底定时器。**复用一个实例，不要每次播放都新建**：
+    /// 原来每次 `Play()` 都 `CreateTimer()`，定时器由 DispatcherQueue 持有到点为止，
+    /// 快速连点标签时会短时堆积一堆；复用它同时也让"下一轮开始"能主动取消上一轮的兜底。
+    /// </summary>
+    private DispatcherQueueTimer? _watchdog;
+
     private AnimationSpec _spec = AnimationSpec.Disabled;
 
     /// <summary>诊断：用于给日志加上"距本次切页多少毫秒"。</summary>
@@ -189,8 +196,11 @@ internal sealed class EntranceAnimator
         }
         catch (Exception ex)
         {
-            // 外观类失败必须是"软"的：出错也绝不能把界面留在不可见状态
+            // 外观类失败必须是"软"的：出错也绝不能把界面留在不可见状态。
+            // ⚠️ 这里直接 return ⇒ **不挂兜底**（动画都没起，兜底没有意义），
+            //    同时也不能留着上一轮那个还没到点的兜底（它会在错误状态下乱改不透明度）。
             App.WriteCrash("EntranceAnimator.Play", ex);
+            StopWatchdog();
             ResetAll();
             return;
         }
@@ -208,23 +218,41 @@ internal sealed class EntranceAnimator
     /// </summary>
     private void StartSafetyWatchdog()
     {
-        var timer = _list.DispatcherQueue.CreateTimer();
+        // 复用同一个定时器：先把上一轮还没到点的那个停掉（否则快速连点标签会同时挂着好几个）
+        var timer = _watchdog ??= _list.DispatcherQueue.CreateTimer();
+
+        timer.Stop();
         timer.Interval = TimeSpan.FromMilliseconds(_spec.DurationMs + 700);
         timer.IsRepeating = false;
 
-        timer.Tick += (_, _) =>
+        // ⚠️ 事件只在第一次创建时挂一次，别每次 Start 都 `+=`（那会同一轮触发 N 次）
+        if (!_watchdogHooked)
         {
-            if (_list.Opacity >= 0.999)
-            {
-                return;   // 正常结束，什么都不用做
-            }
-
-            Diag($"兜底触发：动画时间已过但列表仍不可见（Opacity={_list.Opacity:0.00}）→ 强制显示");
-            ResetAll();
-        };
+            timer.Tick += OnWatchdogTick;
+            _watchdogHooked = true;
+        }
 
         timer.Start();
     }
+
+    /// <summary>`_watchdog` 的 Tick 是否已挂过（避免每次 StartSafetyWatchdog 都 `+=` 一遍）。</summary>
+    private bool _watchdogHooked;
+
+    private void OnWatchdogTick(DispatcherQueueTimer sender, object args)
+    {
+        sender.Stop();
+
+        if (_list.Opacity >= 0.999)
+        {
+            return;   // 正常结束，什么都不用做
+        }
+
+        Diag($"兜底触发：动画时间已过但列表仍不可见（Opacity={_list.Opacity:0.00}）→ 强制显示");
+        ResetAll();
+    }
+
+    /// <summary>取消还没到点的兜底（正常收尾/出错收尾都要调）。</summary>
+    private void StopWatchdog() => _watchdog?.Stop();
 
     private void StopRunning()
     {
@@ -242,6 +270,10 @@ internal sealed class EntranceAnimator
     private void ResetAll()
     {
         StopRunning();
+
+        // 已经"放行"了，兜底就没事可做了 —— 顺手取消，别让它到点再动一次不透明度
+        // （`--probe-switch` 之类的快速连播场景下，留着上一轮的兜底是多余的干扰源）
+        StopWatchdog();
 
         // 恢复常态：整片可见。这是唯一"放行"的地方 —— 只要它跑到，界面就一定是可见的。
         _list.Opacity = 1;

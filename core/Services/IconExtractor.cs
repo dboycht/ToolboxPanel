@@ -148,7 +148,13 @@ public sealed class IconExtractor
         }
     }
 
-    /// <summary>从 exe/dll/ico 的指定索引取大图标；取不到返回 <see cref="IntPtr.Zero"/>。</summary>
+    /// <summary>
+    /// 从 exe/dll/ico 的指定索引取图标；取不到返回 <see cref="IntPtr.Zero"/>。
+    ///
+    /// <para>先请求**大图标**，拿不到再请求**小图标** —— 只试大图标时，
+    /// 那些"只有 16×16 资源"的 .ico / dll 会直接失败，调用方随即退化成
+    /// "按文件类型给的通用图标"，用户会以为自定义图标生效了，其实没有（静默错图）。</para>
+    /// </summary>
     private static IntPtr ExtractIconHandleFromFile(string? filePath, int index)
     {
         if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
@@ -156,11 +162,41 @@ public sealed class IconExtractor
             return IntPtr.Zero;
         }
 
-        var large = new IntPtr[1];
+        // 两条路各拿一次；**拿到的句柄不用的那些必须销毁**，否则每次提取漏一个 GDI 对象。
+        var large = ExtractOne(filePath, index, wantLarge: true);
+        if (large != IntPtr.Zero)
+        {
+            return large;
+        }
+
+        return ExtractOne(filePath, index, wantLarge: false);
+    }
+
+    /// <summary>取「大图标」或「小图标」其中一种；取不到返回 <see cref="IntPtr.Zero"/>。</summary>
+    private static IntPtr ExtractOne(string filePath, int index, bool wantLarge)
+    {
+        var buffer = new IntPtr[1];
+
         try
         {
-            uint extracted = ExtractIconEx(filePath, index, large, null, 1);
-            return extracted > 0 ? large[0] : IntPtr.Zero;
+            // ⚠️ 判据必须是"恰好取到 1 个 **且** 句柄非空"：
+            //    `ExtractIconEx` 失败时可能返回 0，也可能返回 `UINT_MAX`（索引超范围），
+            //    写成 `count > 0` 会把 UINT_MAX 当成功。
+            uint count = wantLarge
+                ? ExtractIconEx(filePath, index, buffer, null, 1)
+                : ExtractIconEx(filePath, index, null, buffer, 1);
+
+            if (count == 1 && buffer[0] != IntPtr.Zero)
+            {
+                return buffer[0];
+            }
+
+            if (buffer[0] != IntPtr.Zero)
+            {
+                DestroyIcon(buffer[0]);   // 拿到了但整体判定失败 ⇒ 就地销毁，不漏句柄
+            }
+
+            return IntPtr.Zero;
         }
         catch (Exception ex) when (ex is ArgumentException or IOException)
         {
@@ -173,46 +209,72 @@ public sealed class IconExtractor
 
     // ────────────────────────────── 保存 ──────────────────────────────
 
-    /// <summary>把 HICON 写进缓存目录（hIcon 为 0 时写该类型的兜底图标）；返回缓存文件名。</summary>
+    /// <summary>
+    /// 把 HICON 写进缓存目录（hIcon 为 0 时写该类型的兜底图标）；返回缓存文件名。
+    ///
+    /// <para>⚠️ 本方法**接管 <paramref name="hIcon"/> 的所有权**：无论成功、失败、还是中途抛异常，
+    /// 它都保证把句柄销毁掉（见下面的 finally）。</para>
+    /// </summary>
     private string SaveIconToCache(IntPtr hIcon, IconType type)
     {
         var cacheName = $"{Guid.NewGuid()}.png";
         var cachePath = Path.Combine(CacheDirectory, cacheName);
 
-        try
+        // ── 第一步：把原生 HICON 换成托管 Bitmap，**换完立刻销毁句柄** ──
+        //
+        // ⚠️ 为什么销毁要贴着 `FromHicon` 写、而不是放在方法末尾的 finally：
+        //    `Bitmap.FromHicon` **会复制像素**，托管 Bitmap 一旦拿到手，HICON 就可以立刻释放；
+        //    而"把 DestroyIcon 留到最后"的写法太脆 —— 中间任何一条 `return`（例如
+        //    "写不出缓存就返回空串"那条）都会把句柄漏掉，正是本文件开头警告的那种
+        //    "每次提取都漏一个 GDI 对象"。现在顺序写死：**拿到托管对象 → 立刻销毁原生句柄**。
+        Bitmap? source = null;
+        if (hIcon != IntPtr.Zero)
         {
-            if (hIcon != IntPtr.Zero)
+            try
             {
-                using var iconBitmap = Bitmap.FromHicon(hIcon);
-                SaveScaled(iconBitmap, cachePath);
+                source = Bitmap.FromHicon(hIcon);
             }
-            else
+            catch (Exception ex) when (ex is ExternalException or ArgumentException or OutOfMemoryException)
             {
-                using var stock = CreateStockIcon(type);
-                if (stock is not null)
-                {
-                    SaveScaled(stock, cachePath);
-                }
-                else
-                {
-                    using var placeholder = CreatePlaceholder(type);
-                    SaveScaled(placeholder, cachePath);
-                }
+                source = null;   // 换不出托管图 ⇒ 下面走兜底图标
             }
-        }
-        catch (Exception ex) when (ex is ExternalException or ArgumentException or IOException or OutOfMemoryException)
-        {
-            return string.Empty;
-        }
-        finally
-        {
-            if (hIcon != IntPtr.Zero)
+            finally
             {
                 DestroyIcon(hIcon);
             }
         }
 
-        return cacheName;
+        try
+        {
+            if (source is not null)
+            {
+                using (source)
+                {
+                    SaveScaled(source, cachePath);
+                }
+
+                return cacheName;
+            }
+
+            // ── 兜底图 ──
+            using var stock = CreateStockIcon(type);
+            if (stock is not null)
+            {
+                SaveScaled(stock, cachePath);
+            }
+            else
+            {
+                using var placeholder = CreatePlaceholder(type);
+                SaveScaled(placeholder, cachePath);
+            }
+
+            return cacheName;
+        }
+        catch (Exception ex) when (ex is ExternalException or ArgumentException or IOException or OutOfMemoryException)
+        {
+            // 写不出缓存：返回空串（调用方据此知道"这张图没成"），与原版一致
+            return string.Empty;
+        }
     }
 
     /// <summary>统一到 <see cref="IconSize"/> 见方并写成 PNG（保留 alpha）。</summary>

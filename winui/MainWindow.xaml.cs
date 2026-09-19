@@ -93,6 +93,12 @@ public sealed partial class MainWindow : Window
         LoadData();
         ApplyAllSettings();
 
+        // ⚠️ 这里必须再写一次自检日志：`LoadData()` 内部会 `FlushLog()`，而那一刻
+        //    `_backdropLine` 还是初值「未初始化」（材质要到 `ApplyAllSettings()` 里才真正挂上）
+        //    ⇒ 只写那一次的话，`%TEMP%\toolboxpanel-verify.txt` 会永远停在"未初始化"这一行，
+        //    明明同一份日志里已经写着"材质=mica"，读起来像材质没生效。
+        FlushLog();
+
         // 记住窗口大小：用户拖完尺寸后（去抖）写进 config.json
         AppWindow.Changed += OnAppWindowChanged;
 
@@ -992,7 +998,10 @@ public sealed partial class MainWindow : Window
 
     /// <summary>
     /// 导入备份：选 ZIP → **二次确认**（会清空当前数据）→ 落盘 → 重载界面。
-    /// ⚠️ 失败时 Core 保证**一个字节都不改**（metadata 校验在所有清理动作之前）。
+    ///
+    /// <para>⚠️ 失败时 Core 保证**一个字节都不改** —— 而且这句话对**所有**失败路径都成立：
+    /// 包内容先解到暂存区，确认可用之后才清空当前数据并搬进来（见 <see cref="BackupManager.Import"/>）。
+    /// 早期版本只做到"metadata 校验在清理之前"，解压中途失败仍会把数据删干净，别退回去。</para>
     /// </summary>
     private async Task ImportBackupAsync()
     {
@@ -1471,8 +1480,11 @@ public sealed partial class MainWindow : Window
             }
 
             TabStrip.ItemsSource = _viewModel.Tabs;
+
+            // ⚠️ 事件只订阅一次：`LoadData` 只在构造函数里调一次，
+            //    但**别在这里重复写 `+=`** —— 曾经把 `TabDraggedOver` 写了两遍，
+            //    跨页拖动时 `OnTabDraggedOver` 会被调用两次（多出来的那次是空转，但语义已经错了）。
             TabStrip.TabSelected += OnTabSelected;
-            TabStrip.TabDraggedOver += OnTabDraggedOver;
             TabStrip.TabDraggedOver += OnTabDraggedOver;
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");

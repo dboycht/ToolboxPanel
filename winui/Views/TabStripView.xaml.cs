@@ -107,7 +107,20 @@ public sealed partial class TabStripView : UserControl
     public object? ItemsSource
     {
         get => Tabs.ItemsSource;
-        set => Tabs.ItemsSource = value;
+        set
+        {
+            // ⚠️ 换数据源 = 上一代标签视图模型全部作废（导入备份后 `MainViewModel.Load()`
+            //    会 `Tabs.Clear()` 并重建每一个 `TabItemViewModel`）。
+            //    `_slots` 是**强引用**字典，而它的写入点是模板的 `Loaded` —— 旧一代的
+            //    TabItemViewModel（连同它持有的 Icons 集合与图标位图引用）只能被这张表钉住。
+            //    不清就是"每导入一次备份泄漏一整代"，而且 `_expandedTab` / `_pendingHoverTab`
+            //    还会指着已经不在列表里的旧对象。
+            _slots.Clear();
+            _expandedTab = null;
+            _pendingHoverTab = null;
+
+            Tabs.ItemsSource = value;
+        }
     }
 
     public IReadOnlyList<TabItemViewModel> Tabs_Items =>
@@ -267,6 +280,19 @@ public sealed partial class TabStripView : UserControl
 
         slot.DurationMs = _spec.DurationMs;
         _slots[tab] = slot;
+
+        // 成对登记：容器被回收/换数据源时要把它从表里摘掉，否则这张强引用表只增不减
+        // （条目本身不会重复 Loaded，但**同一个插槽控件**可能被复用给另一个标签，
+        //   所以这里按"控件自己卸载"来摘，而不是按索引猜）。
+        slot.Unloaded += (s, _) =>
+        {
+            if (s is TabHiddenSlotView self
+                && _slots.TryGetValue(tab, out var registered)
+                && ReferenceEquals(registered, self))
+            {
+                _slots.Remove(tab);
+            }
+        };
 
         // 初始态：按当前形态（text = 收起；always = 展开）就位，不做动画。
         // ⚠️ 用 CurrentIconMode（静态）而不是 _iconMode（实例）：模板加载可能早于/晚于设置下发。

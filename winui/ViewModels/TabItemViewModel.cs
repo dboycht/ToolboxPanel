@@ -21,12 +21,13 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 {
     private bool _isSelected;
     private bool _showCount = true;
+    private string _name = string.Empty;
 
     public TabItemViewModel(TabModel model)
     {
         Model = model;
         Id = model.Id;
-        Name = string.IsNullOrEmpty(model.Name) ? I18n.T("tab.unnamed") : model.Name;
+        _name = string.IsNullOrEmpty(model.Name) ? I18n.T("tab.unnamed") : model.Name;
         IsList = model.IsListTab;
 
         // 集合一变（新建 / 删除 / 拖拽重排 / 导入后重建）可见视图跟着重算 ——
@@ -42,7 +43,24 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     public string Id { get; }
 
-    public string Name { get; }
+    /// <summary>
+    /// 标签页显示名（空模型名回落成「(未命名标签页)」）。
+    ///
+    /// <para>⚠️ 必须是**可写 + 会通知**的属性：标签栏模板里绑的是 `TabName="{x:Bind Name, Mode=OneWay}"`，
+    /// 只读属性（或漏写 OneWay）会让重命名之后标签栏永远显示旧名字 —— 前端的 `x:Bind` 默认是 `OneTime`。</para>
+    /// </summary>
+    public string Name
+    {
+        get => _name;
+        private set => SetField(ref _name, value, nameof(Name));
+    }
+
+    /// <summary>
+    /// 重命名之后同步显示名（模型那边由 <see cref="DataStore.RenameTab"/> 负责落库）。
+    /// 空名字按「未命名」显示，与构造时同一口径。
+    /// </summary>
+    public void ApplyRename(string? newName)
+        => Name = string.IsNullOrEmpty(newName) ? I18n.T("tab.unnamed") : newName;
 
     public bool IsList { get; }
 
@@ -138,7 +156,19 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     /// 模型字段被改过（重命名 / 改路径 / 编辑属性）之后重新判定一次 —— 命中与否可能变了
     /// （集合本身没动，所以订阅 CollectionChanged 收不到这种变化）。
     /// </summary>
-    public void ReapplyFilter() => RebuildVisible();
+    public void ReapplyFilter()
+    {
+        // ⚠️ 与 SetFilter 同口径：可见集合会因这次重判而**增删**，
+        //    带着旧勾选重新命中过滤的项会"看起来勾着、计数却是 0"
+        //    （批量条按可见项计数）—— 点批量删除时会删掉一个"看不出勾选来源"的项。
+        //    所以每次重判过滤都先把勾选清掉。
+        foreach (var tile in Icons)
+        {
+            tile.IsChecked = false;
+        }
+
+        RebuildVisible();
+    }
 
     /// <summary>按当前查询重算两个可见集合（不做过滤时 = 全量，与完整集合逐项一致）。</summary>
     private void RebuildVisible()
@@ -186,46 +216,65 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     /// </summary>
     public void SyncIconsFromModel()
     {
-        var existing = Icons.ToDictionary(tile => tile.Model.Id, tile => tile);
+        // ⚠️ 用**按 id 去重**的映射，而不是 `ToDictionary(tile => tile.Model.Id, ...)`：
+        //    tabs.json 里一旦出现两条同 id（手改 JSON / 并发写盘 / 旧版本写坏），
+        //    ToDictionary 会抛 ArgumentException，而拖动链路以前没有兜底 ⇒ 直接崩。
+        //    去重后"同 id 只认第一个"，最坏也只是少显示一项，不会再让整条链路炸掉。
+        var viewById = ToFirstById(Icons, tile => tile.Model.Id);
         var ordered = new List<IconTileViewModel>(Model.Icons.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var icon in Model.Icons)
         {
-            if (existing.TryGetValue(icon.Id, out var tile))
+            if (!seen.Add(icon.Id))
             {
-                ordered.Add(tile);
+                continue;   // 模型里的重复 id：只处理第一个
             }
-        }
 
-        // Core 里新出现、界面还没建的图标（理论上不会有）补建，绝不静默丢项
-        foreach (var icon in Model.Icons)
-        {
-            if (!existing.ContainsKey(icon.Id))
-            {
-                ordered.Add(new IconTileViewModel(icon, null));
-            }
+            // 复用已有的实例（连同已提取好的图标位图）；没有就补建，绝不静默丢项
+            ordered.Add(viewById.TryGetValue(icon.Id, out var tile)
+                ? tile
+                : new IconTileViewModel(icon, null));
         }
 
         ReorderObservable(Icons, ordered);
         NotifyCountLabel();
     }
 
-    /// <summary>同上，列表页版本。</summary>
+    /// <summary>同上，列表页版本（补建逻辑与图标版对称，两条路不会各自长歪）。</summary>
     public void SyncListItemsFromModel()
     {
-        var existing = ListItems.ToDictionary(row => row.Model.Id, row => row);
+        var viewById = ToFirstById(ListItems, row => row.Model.Id);
         var ordered = new List<ListRowViewModel>(Model.ListItems.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var item in Model.ListItems)
         {
-            if (existing.TryGetValue(item.Id, out var row))
+            if (!seen.Add(item.Id))
             {
-                ordered.Add(row);
+                continue;
             }
+
+            ordered.Add(viewById.TryGetValue(item.Id, out var row)
+                ? row
+                : new ListRowViewModel(item));
         }
 
         ReorderObservable(ListItems, ordered);
         NotifyCountLabel();
+    }
+
+    /// <summary>按 id 建"第一个为准"的索引（容忍重复 id，绝不抛异常）。</summary>
+    private static Dictionary<string, TView> ToFirstById<TView>(IEnumerable<TView> source, Func<TView, string> idOf)
+    {
+        var map = new Dictionary<string, TView>(StringComparer.Ordinal);
+
+        foreach (var item in source)
+        {
+            map.TryAdd(idOf(item), item);
+        }
+
+        return map;
     }
 
     /// <summary>

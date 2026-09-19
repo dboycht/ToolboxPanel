@@ -67,7 +67,7 @@
                            Visibility="{x:Bind HasIcon, Mode=OneWay}" />
 
                     <!-- 拿不到图标时的字形兜底 -->
-                    <FontIcon Glyph="{x:Bind Glyph}" FontSize="{x:Bind GlyphPixels, Mode=OneWay}"
+                    <FontIcon Glyph="{x:Bind Glyph, Mode=OneWay}" FontSize="{x:Bind GlyphPixels, Mode=OneWay}"
                               HorizontalAlignment="Center"
                               Visibility="{x:Bind HasNoIcon, Mode=OneWay}" />
 
@@ -104,7 +104,9 @@
                 <FontIcon Glyph="&#xE762;" FontSize="14" VerticalAlignment="Center" />
                 <TextBlock x:Name="BulkTitle" ui:Tr.Key="app.menu.batch" FontSize="12" FontWeight="SemiBold"
                            VerticalAlignment="Center" />
-                <TextBlock x:Name="BulkCount" Text="已选 0 个" FontSize="12" Opacity="0.75"
+                <!-- ⚠️ 刻意**不写** Text=：文案由构造时的 UpdateBulkBar() 按当前语言算
+                     （写死中文的话，代码没跑到的路径会在英文界面下露出中文）。 -->
+                <TextBlock x:Name="BulkCount" FontSize="12" Opacity="0.75"
                            VerticalAlignment="Center" />
                 <Button x:Name="BulkSelectAllButton" ui:Tr.Key="bulk.select_all" Padding="8,2" FontSize="12"
                         Click="OnBulkSelectAllClick" />

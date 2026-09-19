@@ -25,9 +25,6 @@ public sealed class DataStore
     /// <summary>兜底默认页名 —— 与原版一致是英文的 "Home"（不是 <see cref="TabModel.DefaultName"/>）。</summary>
     public const string FallbackTabName = "Home";
 
-    /// <summary>UTF-8 且**不带 BOM**（Python 侧写出的文件就是无 BOM 的）。</summary>
-    private static readonly UTF8Encoding Utf8NoBom = new(encoderShouldEmitUTF8Identifier: false);
-
     public DataStore(string dataDirectory)
     {
         DataDirectory = Path.GetFullPath(dataDirectory);
@@ -114,7 +111,12 @@ public sealed class DataStore
         return Tabs;
     }
 
-    /// <summary>把当前状态原子写回 tabs.json。</summary>
+    /// <summary>
+    /// 把当前状态原子写回 tabs.json。
+    ///
+    /// <para>串行化与"失败不留临时文件"都交给 <see cref="AtomicFile"/>（同一目标的并发保存会排队，
+    /// 否则后一次会因为"临时文件已被前一次改名搬走"抛 FileNotFoundException）。</para>
+    /// </summary>
     public void Save()
     {
         var document = new TabsDocument
@@ -126,9 +128,7 @@ public sealed class DataStore
 
         var json = TabsJson.Serialize(document);
 
-        // 原子写：先写临时文件，再整体 rename 覆盖（Python 是 tmp.replace(file)）
-        File.WriteAllText(TabsTempFile, json, Utf8NoBom);
-        File.Move(TabsTempFile, TabsFile, overwrite: true);
+        AtomicFile.WriteAllText(TabsFile, TabsTempFile, json);
     }
 
     /// <summary>整体替换内存中的标签页（<paramref name="save"/> 为 true 时立刻落盘）。</summary>
@@ -275,6 +275,43 @@ public sealed class DataStore
         Save();
     }
 
+    /// <summary>
+    /// 一次性给某页放一整批图标（**只落盘一次**）。
+    ///
+    /// <para>为什么需要它：`AddIcon` 每加一个就整份重写 tabs.json，批量创建 N 个图标
+    /// 就是 N 次全量落盘（示例图标那条路是 20 个 ⇒ 20 次写整个文件）。批量入口把
+    /// "N 次"压成"1 次"，慢盘上差别很明显。</para>
+    ///
+    /// <para>语义与逐个 `AddIcon` 完全一致：<c>sort_order</c> 从当前末尾开始连续编号；
+    /// 页不存在时什么都不做（不落盘）。</para>
+    /// </summary>
+    /// <returns>实际加入的个数。</returns>
+    public int AddIcons(string tabId, IEnumerable<IconModel> icons)
+    {
+        ArgumentNullException.ThrowIfNull(icons);
+
+        var tab = FindTab(tabId);
+        if (tab is null)
+        {
+            return 0;
+        }
+
+        var added = 0;
+        foreach (var icon in icons)
+        {
+            icon.SortOrder = tab.Icons.Count;
+            tab.Icons.Add(icon);
+            added++;
+        }
+
+        if (added > 0)
+        {
+            Save();   // ★ 只写一次盘
+        }
+
+        return added;
+    }
+
     public void RemoveIcon(string iconId)
     {
         var found = FindIcon(iconId);
@@ -360,9 +397,22 @@ public sealed class DataStore
         Save();
     }
 
-    /// <summary>把图标移动到另一个标签页的指定位置（目标页不存在时放回原处，与原版一致）。</summary>
+    /// <summary>
+    /// 把图标移动到另一个标签页的指定位置。
+    ///
+    /// <para>⚠️ **目标页不存在时一个字节都不改**（直接返回）。原来的写法是"先把图标从源页摘掉、
+    /// 再发现目标页不存在、于是用**调用方给的索引**重新插回源页、然后 return（没有 <c>Save()</c>）" ——
+    /// 结果是内存里的顺序变了、磁盘没变，等下一次任何不相关操作触发 <c>Save()</c> 时，
+    /// 这个没人要求过的重排就被持久化了。判据前置到最前面，"半途而废的修改"就不可能出现。</para>
+    /// </summary>
     public void MoveIcon(string iconId, string targetTabId, int newSortOrder)
     {
+        var targetTab = FindTab(targetTabId);
+        if (targetTab is null)
+        {
+            return;   // ★ 目标页不存在 ⇒ 什么都不动（不摘、不插、不落盘）
+        }
+
         var found = FindIcon(iconId);
         if (found is null)
         {
@@ -371,14 +421,6 @@ public sealed class DataStore
 
         var (sourceTab, icon) = found.Value;
         sourceTab.Icons.Remove(icon);
-
-        var targetTab = FindTab(targetTabId);
-        if (targetTab is null)
-        {
-            sourceTab.Icons.Insert(Math.Clamp(newSortOrder, 0, sourceTab.Icons.Count), icon);
-            return;
-        }
-
         targetTab.Icons.Insert(Math.Clamp(newSortOrder, 0, targetTab.Icons.Count), icon);
 
         RenumberIcons(sourceTab);
@@ -420,21 +462,7 @@ public sealed class DataStore
             return false;
         }
 
-        var byId = tab.Icons.ToDictionary(icon => icon.Id, icon => icon);
-        var seen = new HashSet<string>(orderedIconIds);
-        var reordered = new List<IconModel>(tab.Icons.Count);
-
-        foreach (var id in orderedIconIds)
-        {
-            if (byId.TryGetValue(id, out var icon))
-            {
-                reordered.Add(icon);
-            }
-        }
-
-        reordered.AddRange(tab.Icons.Where(icon => !seen.Contains(icon.Id)));
-
-        tab.Icons = reordered;
+        tab.Icons = ReorderById(tab.Icons, orderedIconIds, icon => icon.Id);
         RenumberIcons(tab);
         Save();
         return true;
@@ -539,27 +567,45 @@ public sealed class DataStore
             return;
         }
 
-        var byId = tab.ListItems.ToDictionary(it => it.Id, it => it);
-        var seen = new HashSet<string>(orderedItemIds);
-        var reordered = new List<ListItemModel>(tab.ListItems.Count);
-
-        foreach (var id in orderedItemIds)
-        {
-            if (byId.TryGetValue(id, out var item))
-            {
-                reordered.Add(item);
-            }
-        }
-
-        reordered.AddRange(tab.ListItems.Where(it => !seen.Contains(it.Id)));
-
-        tab.ListItems = reordered;
+        tab.ListItems = ReorderById(tab.ListItems, orderedItemIds, item => item.Id);
         for (int i = 0; i < tab.ListItems.Count; i++)
         {
             tab.ListItems[i].SortOrder = i;
         }
 
         Save();
+    }
+
+    /// <summary>
+    /// 「按给定 id 顺序重排一个列表，没提到的项一律追加到末尾」—— 图标与列表项共用这一份实现。
+    ///
+    /// <para>⚠️ 这里曾经有一个真 bug（图标/列表项两处各写了一遍同样的错）：判据用的是**循环之前**
+    /// 一次性构造的 <c>HashSet(orderedIds)</c>，而收项是按**位置**收的 —— 于是入参里同一个 id
+    /// 出现两次时，对应的模型实例会被 <c>Add</c> 两次（列表长度虚增、<c>sort_order</c> 出现重复值，
+    /// 后续按 id 删除只摘掉一格，界面与数据从此分叉）。</para>
+    ///
+    /// <para>现在改为「收下即标记」：<c>taken.Add(id)</c> 返回 false 就是重复，直接跳过；
+    /// 末尾补齐的判据也用同一个 <c>taken</c> —— 两个集合的口径不可能再分叉。</para>
+    /// </summary>
+    private static List<T> ReorderById<T>(List<T> current, IReadOnlyList<string> orderedIds, Func<T, string> idOf)
+    {
+        var byId = current.ToDictionary(idOf, item => item);
+        var taken = new HashSet<string>(StringComparer.Ordinal);
+        var reordered = new List<T>(current.Count);
+
+        foreach (var id in orderedIds)
+        {
+            // taken.Add 返回 false = 这个 id 已经收过了（重复入参）⇒ 跳过，绝不重复收同一个实例
+            if (taken.Add(id) && byId.TryGetValue(id, out var item))
+            {
+                reordered.Add(item);
+            }
+        }
+
+        // 清单里没提到的项一律追加到末尾（防御：绝不静默丢项）
+        reordered.AddRange(current.Where(item => !taken.Contains(idOf(item))));
+
+        return reordered;
     }
 
     // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
@@ -682,7 +728,10 @@ public sealed class DataStore
 
         var moved = items[fromIndex];
         items.RemoveAt(fromIndex);
-        items.Insert(Math.Clamp(adjusted, 0, items.Count), moved);
+
+        // 摘掉自己之后再夹取：此刻合法的下标区间是 [0, Count]
+        var insertedAt = Math.Clamp(adjusted, 0, items.Count);
+        items.Insert(insertedAt, moved);
 
         // 即使"原地落下"（顺序没变）也照样重排序号：序号必须是 0..N-1 的连续值
         for (int i = 0; i < items.Count; i++)
@@ -699,7 +748,11 @@ public sealed class DataStore
         }
 
         Save();
-        return DragDropResult.Ok(new DragDropRequest(request.Payload, request.TargetTabId, toIndex));
+
+        // ⚠️ 回传的是**实际插入下标**（夹取 + 往后移 -1 之后的），不是入参：
+        //    `DragDropResult.Request.TargetIndex` 的契约就是"落库后的实际索引"，
+        //    原来这里透传入参，于是"拖到末尾"会回一个比列表长度还大的值（夹取也没做）。
+        return DragDropResult.Ok(new DragDropRequest(request.Payload, request.TargetTabId, insertedAt));
     }
 
     private static void RenumberListItems(TabModel tab)
@@ -742,18 +795,27 @@ public sealed class DataStore
     {
         foreach (var orphan in OrphanCacheFiles())
         {
-            DeleteFileQuietly(Path.Combine(IconsDirectory, orphan));
+            if (CacheFileName.Combine(IconsDirectory, orphan) is { } path)
+            {
+                DeleteFileQuietly(path);
+            }
         }
     }
 
+    /// <summary>
+    /// 删掉某个图标的缓存文件。
+    ///
+    /// <para>⚠️ <paramref name="cacheFileName"/> 是**磁盘上 JSON 里的字符串**，必须当不可信输入：
+    /// 只有裸文件名才拼路径（判据见 <see cref="CacheFileName"/>）。
+    /// 否则 `"..\config.json"` 这种值会让"清理图标缓存"删到数据目录里的设置文件，
+    /// `"..\..\..\Windows\..."` 更是完全离开数据目录。</para>
+    /// </summary>
     private void DeleteCacheFile(string cacheFileName)
     {
-        if (string.IsNullOrEmpty(cacheFileName))
+        if (CacheFileName.Combine(IconsDirectory, cacheFileName) is { } path)
         {
-            return;
+            DeleteFileQuietly(path);
         }
-
-        DeleteFileQuietly(Path.Combine(IconsDirectory, cacheFileName));
     }
 
     private static void DeleteFileQuietly(string path)

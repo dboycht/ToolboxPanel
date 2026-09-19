@@ -55,7 +55,7 @@
             <Grid>
                 <views:TabHiddenSlotView
                     x:Name="HiddenSlotView"
-                    TabName="{x:Bind Name}"
+                    TabName="{x:Bind Name, Mode=OneWay}"
                     Glyph="{x:Bind Glyph}"
                     CountLabel="{x:Bind CountLabel, Mode=OneWay}"
                     ShowCount="{x:Bind ShowCount, Mode=OneWay}"

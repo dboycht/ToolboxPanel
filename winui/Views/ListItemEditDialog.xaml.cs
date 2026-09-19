@@ -34,8 +34,11 @@ public sealed partial class ListItemEditDialog : ContentDialog
         DescriptionBox.Header = ListItemEditor.DescriptionLabel;
         DescriptionBox.PlaceholderText = ListItemEditor.DescriptionPlaceholder;
         PathBox.Header = ListItemEditor.PathLabel;
-        PickFileButton.Content = ListItemEditor.SelectFileLabel;
-        PickFolderButton.Content = ListItemEditor.SelectFolderLabel;
+
+        // ⚠️ 两个按钮的文案**不在这里设**：XAML 上已经写了 `ui:Tr.Key="list.select_file"` /
+        //    "list.select_folder"，`Tr` 会登记它们并在切换语言时刷新。
+        //    在这里再赋一次值等于同一段文案两个来源，一旦 Core 常量与文案表漂移，
+        //    就会在"构造时的值"与"下次 RefreshAll 后的值"之间来回跳。
 
         DescriptionBox.Text = description;
         PathBox.Text = path;

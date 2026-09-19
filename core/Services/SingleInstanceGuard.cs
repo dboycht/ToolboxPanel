@@ -54,11 +54,20 @@ public sealed class SingleInstanceGuard : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        // ⚠️ 幂等：已经拿到主实例就**直接返回**，别再去建一次句柄。
+        //    否则第二次调用会 `new Mutex(同名)` 拿到 createdNew=false ⇒ 把 IsPrimary 改成 false，
+        //    但 `_existenceFlag` 还握着 —— 状态自相矛盾（`IsPrimary==false` 却仍占着互斥体）。
+        if (IsPrimary)
+        {
+            return true;
+        }
+
+        Mutex? candidate;
         bool createdNew;
         try
         {
             // createdNew = true 表示这个命名对象是我们创建出来的 → 之前没有实例
-            _existenceFlag = new Mutex(initiallyOwned: false, name: $"{_key}_Mutex", out createdNew);
+            candidate = new Mutex(initiallyOwned: false, name: $"{_key}_Mutex", out createdNew);
         }
         catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
         {
@@ -69,9 +78,21 @@ public sealed class SingleInstanceGuard : IDisposable
 
         if (!createdNew)
         {
+            // ⚠️ 「已有实例」这条路**也必须释放刚建出来的句柄**：
+            //    `new Mutex(...)` 每次都会开一个句柄，不 Dispose 就一直挂着
+            //    （虽然本进程随后就退出、由内核回收，但同一进程里反复 TryAcquire 会持续泄漏）。
+            candidate.Dispose();
+
+            // 兜一层：万一 `_existenceFlag` 里还留着上一轮拿到的句柄（同一实例被复用时），
+            // 一并释放 —— 让「IsPrimary=false ⇒ 不持有任何句柄」这个不变量永远成立。
+            _existenceFlag?.Dispose();
+            _existenceFlag = null;
+
             IsPrimary = false;
             return false;
         }
+
+        _existenceFlag = candidate;
 
         _handleSlot = MemoryMappedFile.CreateOrOpen($"{_key}_Hwnd", HandleSlotSize);
         IsPrimary = true;

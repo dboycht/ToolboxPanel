@@ -173,8 +173,13 @@ public static class BackupManager
         {
             log?.Invoke(I18n.T("backup.log.collect"));
 
+            // ⚠️ 排除原子写盘用的临时文件（`tabs.tmp` / `config.tmp`）：
+            //    它们只是保存过程中的中转产物，打进包里既是垃圾、又会让"包里没有的文件就是没有"
+            //    这条导入语义变得含糊。
             var files = Directory.Exists(dataDirectory)
                 ? Directory.GetFiles(dataDirectory, "*", SearchOption.AllDirectories)
+                    .Where(file => !file.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                    .ToArray()
                 : Array.Empty<string>();
 
             var total = files.Length + 1;   // 元数据占一项（与原版 total = len(files) + 1 一致）
@@ -187,36 +192,52 @@ public static class BackupManager
                 Directory.CreateDirectory(directory);
             }
 
-            // ⚠️ 用 FileStream(FileMode.Create) 而不是 `ZipFile.Open(path, Create)`：
-            //    后者内部是 **FileMode.CreateNew**，目标文件已存在会抛
-            //    "The file '...' already exists."（实测踩到）；原版 Python 的
-            //    `zipfile.ZipFile(path, "w")` 是**覆盖**语义，这里必须对齐。
-            using (var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
-            using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
+            // ★ 先写 `<zip>.part`、全部成功后再改名成最终 zip：
+            //   否则中途失败会**留下一个半截 zip**，而用户会以为"我导出过了" ——
+            //   那个半截包正是导入时最危险的输入（解压到一半就坏）。
+            var partPath = zipPath + ".part";
+            TryDeleteFile(partPath);
+
+            try
             {
-                // ① 元数据
-                log?.Invoke(I18n.T("backup.log.write_metadata"));
-                var metadataEntry = archive.CreateEntry(MetadataEntryName, CompressionLevel.Optimal);
-                using (var stream = metadataEntry.Open())
-                using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false)))
+                // ⚠️ 用 FileStream(FileMode.Create) 而不是 `ZipFile.Open(path, Create)`：
+                //    后者内部是 **FileMode.CreateNew**，目标文件已存在会抛
+                //    "The file '...' already exists."（实测踩到）；原版 Python 的
+                //    `zipfile.ZipFile(path, "w")` 是**覆盖**语义，这里必须对齐。
+                using (var fileStream = new FileStream(partPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None))
+                using (var archive = new ZipArchive(fileStream, ZipArchiveMode.Create))
                 {
-                    writer.Write(BuildMetadata(dataDirectory, version).ToJson());
+                    // ① 元数据
+                    log?.Invoke(I18n.T("backup.log.write_metadata"));
+                    var metadataEntry = archive.CreateEntry(MetadataEntryName, CompressionLevel.Optimal);
+                    using (var stream = metadataEntry.Open())
+                    using (var writer = new StreamWriter(stream, new System.Text.UTF8Encoding(false)))
+                    {
+                        writer.Write(BuildMetadata(dataDirectory, version).ToJson());
+                    }
+
+                    progress?.Invoke(new BackupProgress(1, total));
+
+                    // ② 数据文件（**正斜杠**前缀，见文件头兼容性 ①）
+                    var index = 1;
+                    foreach (var file in files)
+                    {
+                        var relative = Path.GetRelativePath(dataDirectory, file).Replace('\\', '/');
+                        log?.Invoke(I18n.T("backup.log.compress", ("name", relative)));
+
+                        archive.CreateEntryFromFile(file, DataEntryPrefix + relative, CompressionLevel.Optimal);
+
+                        index++;
+                        progress?.Invoke(new BackupProgress(index, total));
+                    }
                 }
 
-                progress?.Invoke(new BackupProgress(1, total));
-
-                // ② 数据文件（**正斜杠**前缀，见文件头兼容性 ①）
-                var index = 1;
-                foreach (var file in files)
-                {
-                    var relative = Path.GetRelativePath(dataDirectory, file).Replace('\\', '/');
-                    log?.Invoke(I18n.T("backup.log.compress", ("name", relative)));
-
-                    archive.CreateEntryFromFile(file, DataEntryPrefix + relative, CompressionLevel.Optimal);
-
-                    index++;
-                    progress?.Invoke(new BackupProgress(index, total));
-                }
+                File.Move(partPath, zipPath, overwrite: true);
+            }
+            catch
+            {
+                TryDeleteFile(partPath);   // 失败不留半截包
+                throw;
             }
 
             var sizeKb = new FileInfo(zipPath).Length / 1024.0;
@@ -231,9 +252,32 @@ public static class BackupManager
         }
     }
 
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 删不掉不影响导出结论
+        }
+    }
+
     /// <summary>
-    /// 导入：**先清空当前数据**（icons 目录内容 + tabs.json + config.json），再按包内容落盘。
-    /// ⚠️ 与导入前一致的地方：原版也是"先删这三个、再解压"，所以**包里没有的文件就是没有**。
+    /// 导入：把包内容**先解到暂存区**，全部落定、确认可用之后，才清空当前数据并搬进来。
+    ///
+    /// <para>⚠️ 为什么不是"先清空再解压"（原版 Python 的顺序）：那样只要解压中途出一点问题
+    /// （坏包 / 某条目标文件被占用 / 磁盘满 / 路径过长），异常就被下面的 catch 吞成一句
+    /// `Fail(ex.Message)` —— 而此刻 `icons/` 已经空了、`tabs.json` 也不在了，**没有任何回滚**，
+    /// 用户看到的是"导入失败"外加"图标全没了"。`MainWindow` 那边的注释把
+    /// "失败时 Core 保证一个字节都不改"写成了承诺，那就得真的做到。</para>
+    ///
+    /// <para>与原版一致的语义**没有变**：包里没有的文件，导入后就是没有（既不保留旧的，
+    /// 也不会凭空补出来）—— 变的只是"什么时候动手删"，而不是删什么。</para>
     /// </summary>
     public static BackupResult Import(
         string zipPath,
@@ -281,60 +325,122 @@ public static class BackupManager
             log?.Invoke("  " + I18n.T("backup.log.meta_counts",
                 ("tabs", metadata.TabCount), ("icons", metadata.IconCount)));
 
-            // ② 清空当前数据（与原版同一套：icons 目录内容 + tabs.json + config.json）
-            log?.Invoke(I18n.T("backup.log.clear"));
-            ClearCurrentData(dataDirectory);
-
-            // ③ 解压（跳过 metadata.json）
-            var total = archive.Entries.Count;
-            var root = Path.GetFullPath(dataDirectory);
-            var index = 0;
-
-            foreach (var entry in archive.Entries)
+            // ② 解压到**暂存目录**（★ 关键：这一步在清空数据**之前**，见方法头注释）
+            var staging = CreateStagingDirectory();
+            try
             {
-                index++;
+                var total = archive.Entries.Count;
+                var index = 0;
 
-                if (string.Equals(entry.FullName, MetadataEntryName, StringComparison.Ordinal))
+                foreach (var entry in archive.Entries)
                 {
+                    index++;
+
+                    if (string.Equals(entry.FullName, MetadataEntryName, StringComparison.Ordinal))
+                    {
+                        progress?.Invoke(new BackupProgress(index, total));
+                        continue;
+                    }
+
+                    var relative = NormalizeEntryName(entry.FullName);
+                    if (relative.Length == 0)
+                    {
+                        progress?.Invoke(new BackupProgress(index, total));
+                        continue;
+                    }
+
+                    var destination = Path.GetFullPath(Path.Combine(staging, relative));
+
+                    // ⚠️ 安全线（原版没有）：拒绝写到暂存目录之外（zip-slip）
+                    if (!IsInside(staging, destination))
+                    {
+                        log?.Invoke(I18n.T("backup.log.skip_unsafe", ("name", entry.FullName)));
+                        progress?.Invoke(new BackupProgress(index, total));
+                        continue;
+                    }
+
+                    var parent = Path.GetDirectoryName(destination);
+                    if (!string.IsNullOrEmpty(parent))
+                    {
+                        Directory.CreateDirectory(parent);
+                    }
+
+                    log?.Invoke(I18n.T("backup.log.extract", ("name", relative)));
+                    entry.ExtractToFile(destination, overwrite: true);
+
                     progress?.Invoke(new BackupProgress(index, total));
-                    continue;
                 }
 
-                var relative = NormalizeEntryName(entry.FullName);
-                if (relative.Length == 0)
-                {
-                    progress?.Invoke(new BackupProgress(index, total));
-                    continue;
-                }
+                // ③ 暂存区落定之后，才动用户的数据：清空 → 搬进来
+                log?.Invoke(I18n.T("backup.log.clear"));
+                ClearCurrentData(dataDirectory);
 
-                var destination = Path.GetFullPath(Path.Combine(root, relative));
+                Directory.CreateDirectory(Path.GetFullPath(dataDirectory));
+                MoveDirectoryContents(staging, Path.GetFullPath(dataDirectory));
 
-                // ⚠️ 安全线（原版没有）：拒绝写到数据目录之外（zip-slip）
-                if (!IsInside(root, destination))
-                {
-                    log?.Invoke(I18n.T("backup.log.skip_unsafe", ("name", entry.FullName)));
-                    progress?.Invoke(new BackupProgress(index, total));
-                    continue;
-                }
-
-                var parent = Path.GetDirectoryName(destination);
-                if (!string.IsNullOrEmpty(parent))
-                {
-                    Directory.CreateDirectory(parent);
-                }
-
-                log?.Invoke(I18n.T("backup.log.extract", ("name", relative)));
-                entry.ExtractToFile(destination, overwrite: true);
-
-                progress?.Invoke(new BackupProgress(index, total));
+                log?.Invoke(I18n.T("backup.log.imported"));
+                return BackupResult.Ok(Path.GetFullPath(zipPath), metadata);
             }
-
-            log?.Invoke(I18n.T("backup.log.imported"));
-            return BackupResult.Ok(Path.GetFullPath(zipPath), metadata);
+            finally
+            {
+                // 暂存目录一定要清掉（成功时它已经被搬空，失败时里面是半成品）
+                DeleteDirectoryQuietly(staging);
+            }
         }
         catch (Exception ex)
         {
             return BackupResult.Fail(ex.Message);
+        }
+    }
+
+    // ────────────────────────────── 导入的暂存区 ──────────────────────────────
+
+    /// <summary>
+    /// 造一个全新的暂存目录。
+    ///
+    /// <para>放在 `%TEMP%` 下而不是数据目录里：数据目录里多一个子目录会被
+    /// <see cref="Export"/> 的"整目录打包"顺手收进去（变成包里的垃圾条目）。
+    /// 跨卷时 <see cref="File.Move(string, string, bool)"/> 会自己退化成"复制 + 删除"，
+    /// 所以放哪里都正确，只是同卷更快。</para>
+    /// </summary>
+    private static string CreateStagingDirectory()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "toolboxpanel-import", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    /// <summary>把 <paramref name="source"/> 下的内容逐个搬进 <paramref name="destination"/>（保留子目录结构）。</summary>
+    private static void MoveDirectoryContents(string source, string destination)
+    {
+        foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+        {
+            var relative = Path.GetRelativePath(source, file);
+            var target = Path.Combine(destination, relative);
+
+            var parent = Path.GetDirectoryName(target);
+            if (!string.IsNullOrEmpty(parent))
+            {
+                Directory.CreateDirectory(parent);
+            }
+
+            // 同卷时这是改名（原子）；跨卷时 .NET 会自己退化成"复制 + 删除"
+            File.Move(file, target, overwrite: true);
+        }
+    }
+
+    private static void DeleteDirectoryQuietly(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path))
+            {
+                Directory.Delete(path, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 删不掉不影响导入结论
         }
     }
 

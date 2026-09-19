@@ -143,6 +143,15 @@ public sealed class MainViewModel
             _store.Save();
         }
 
+        // 顺手回收 `icons/` 里已经没人引用的缓存文件。
+        //
+        // ⚠️ 为什么必须在这里调：`DataStore.CleanOrphanCache()` 此前**只有单测在调** ——
+        //    生产路径上一次都没调过，于是"改图标属性 → 提取新缓存"在中断/异常路径上留下的旧 PNG、
+        //    以及"导入备份整体替换 tabs.json"之后对不上的旧缓存，会一直堆在 data/icons/ 里。
+        //    判定集是**拿当前 Tabs 现算**的（`OrphanCacheFiles()`），所以这里不会误删还在用的图。
+        //    每次载入只多一次目录枚举，代价可以忽略。
+        _store.CleanOrphanCache();
+
         _statusIsDemoSummary = false;
         _statusTabCount = tabs.Count;
         _statusIconCount = iconCount;
@@ -418,24 +427,38 @@ public sealed class MainViewModel
             return DragDropResult.Fail(I18n.T("demo.no_save"), request);
         }
 
-        var result = _store.ApplyDragDrop(MapDropIndexToCore(request));
-        if (!result.Success)
+        try
         {
+            var result = _store.ApplyDragDrop(MapDropIndexToCore(request));
+            if (!result.Success)
+            {
+                return result;
+            }
+
+            if (request.Payload.Kind == DragItemKind.Icon)
+            {
+                FindTab(request.Payload.SourceTabId)?.SyncIconsFromModel();
+                FindTab(request.TargetTabId)?.SyncIconsFromModel();
+            }
+            else
+            {
+                FindTab(request.Payload.SourceTabId)?.SyncListItemsFromModel();
+                FindTab(request.TargetTabId)?.SyncListItemsFromModel();
+            }
+
             return result;
         }
-
-        if (request.Payload.Kind == DragItemKind.Icon)
+        catch (Exception ex)
         {
-            FindTab(request.Payload.SourceTabId)?.SyncIconsFromModel();
-            FindTab(request.TargetTabId)?.SyncIconsFromModel();
+            // ⚠️ 拖动链路以前**整条都没有兜底**：`SyncIconsFromModel` 内部的 `ToDictionary(id)`
+            //    遇到"tabs.json 里有两条同 id"会抛 ArgumentException，异常一路穿到 WinUI 的事件回调
+            //    ⇒ 进程直接崩。落库其实已经成功、只是界面同步失败，这类"外观类失败"必须软着陆。
+            App.WriteCrash("MainViewModel.ApplyDrop", ex);
+            return DragDropResult.Fail(
+                I18n.T("status.action_failed_detail",
+                    ("action", I18n.T("action.move")), ("err", ex.Message)),
+                request);
         }
-        else
-        {
-            FindTab(request.Payload.SourceTabId)?.SyncListItemsFromModel();
-            FindTab(request.TargetTabId)?.SyncListItemsFromModel();
-        }
-
-        return result;
     }
 
     /// <summary>

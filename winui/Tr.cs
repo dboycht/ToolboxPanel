@@ -186,9 +186,20 @@ public static class Tr
 
     private static void Track(DependencyObject element)
     {
-        foreach (var reference in Tracked)
+        // ⚠️ 顺序遍历时**顺路清掉已经死掉的弱引用**。
+        //    登记对象里有大量一次性对话框（每次打开「新建图标」都是新的实例），
+        //    而这张表原本只在 `RefreshAll()`（= 切换语言）时才清理 ——
+        //    用户不切语言却反复开关对话框，表就会一直涨，且每次 Track 都要线性扫全表。
+        //    在这里惰性清理既顺手又不改变语义（死条目本来就永远匹配不上）。
+        for (int i = Tracked.Count - 1; i >= 0; i--)
         {
-            if (reference.TryGetTarget(out var existing) && ReferenceEquals(existing, element))
+            if (!Tracked[i].TryGetTarget(out var existing))
+            {
+                Tracked.RemoveAt(i);
+                continue;
+            }
+
+            if (ReferenceEquals(existing, element))
             {
                 return;     // 已经登记过（同一个元素同时设了 Key 与 Tip 时会走两次）
             }

@@ -275,19 +275,14 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     /// </summary>
     public bool DragDropEnabled
     {
-        get => _dragDropEnabled;
         set
         {
-            _dragDropEnabled = value;
-
             // ⚠️ 刻意**不设** TileGrid.CanDrag：ListViewBase 的 CanDrag=true 会让系统
             // "按下 + 移动"就自己起拖，绕过我们的长按门控（两条路打架）。
             // 起拖只由长按驱动：长按到点才把**容器**的 CanDrag 临时打开并调 StartDragAsync。
             TileGrid.AllowDrop = value;
         }
     }
-
-    private bool _dragDropEnabled;
 
     /// <summary>
     /// 演示模式下同样关掉「新建 / 编辑属性」菜单：假数据不会落库，菜单点了只会误导用户。
@@ -354,7 +349,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
     private bool _suppressNextClick;
     private int _lastTracedIndex = -1;         // 拖动中只在落点变化时打一条日志，别刷屏
-    private int _lastDropIndex = -1;           // 本次拖动最后登记的落点（日志/自检用）
     private bool _tracedDragOverEntry;         // 本次拖动是否已打过"首次进入 DragOver"的详情
     private bool _dropSeen;                    // 本次拖动是否真的落在本页（Drop 事件到场）
 
@@ -485,32 +479,8 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     }
 
     /// <summary>右键点在哪 —— 往上找到承载图块的 GridViewItem；点在空白处返回 null。</summary>
-    private static GridViewItem? FindContainerFromSource(object? source)
+    private static IconTileViewModel? FindTileFromSource(object? source)
     {
-        var current = source as DependencyObject;
-
-        while (current is not null)
-        {
-            if (current is GridViewItem item)
-            {
-                return item;
-            }
-
-            try
-            {
-                current = VisualTreeHelper.GetParent(current);
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>右键点在哪 —— 往上找到承载图块的 GridViewItem；点在空白处返回 null。</summary>
-    private static IconTileViewModel? FindTileFromSource(object? source)    {
         var current = source as DependencyObject;
 
         while (current is not null)
@@ -566,7 +536,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
             _suppressNextClick = true;   // 起拖之后系统补的那次 ItemClick 不能当"打开"
 
             var insertIndex = ComputeInsertIndex(e);
-            _lastDropIndex = insertIndex;
             DragSession.ReportTarget(_tab.Id, DragItemKind.Icon, insertIndex);
 
             if (insertIndex != _lastTracedIndex)
@@ -612,10 +581,10 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
             _dropSeen = true;
-            _lastDropIndex = ComputeInsertIndex(e);
-            DragSession.ReportTarget(_tab.Id, DragItemKind.Icon, _lastDropIndex);
+            var dropIndex = ComputeInsertIndex(e);
+            DragSession.ReportTarget(_tab.Id, DragItemKind.Icon, dropIndex);
             HideDropIndicator();
-            DragTrace($"Drop（内部拖动）：落点={_lastDropIndex} ⇒ 留给 DragItemsCompleted 收口");
+            DragTrace($"Drop（内部拖动）：落点={dropIndex} ⇒ 留给 DragItemsCompleted 收口");
             return;
         }
 
@@ -675,12 +644,16 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         _lastTracedIndex = -1;
         _suppressNextClick = false;
 
+        // ⚠️ 复位"本次拖动是否已打过 DragOver 详情"。**漏了这一行，诊断日志从第二次拖动起就废了**：
+        //    `_tracedDragOverEntry` 只写不复位 ⇒ `DragOver 首次：…` 那条从此再也不出现，
+        //    而 HANDOVER 把 %TEMP%\toolboxpanel-probe.log 当常驻诊断资产（"拖放手感先看它"）。
+        _tracedDragOverEntry = false;
+
         var target = DragSession.TakeTarget();
         var tile = args.Items.Count > 0 ? args.Items[0] as IconTileViewModel : null;
         var dropResult = args.DropResult;
         var dropSeen = _dropSeen;
         _dropSeen = false;
-        _lastDropIndex = -1;
 
         DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
                   + $"被拖={tile?.DisplayName ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
@@ -699,10 +672,14 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
         // ⚠️ 结算**延后一拍**：`Drop` 与 `DragItemsCompleted` 的先后顺序在本项目实测不保证，
         //    先让可能到来的 Drop 把 `_dropSeen` 置上，再决定"到底算不算落下"。
+        //
+        // ⚠️ 这里**只认上面那个 `dropSeen` 快照**，绝不能再读一次字段 `_dropSeen`：
+        //    那一次读发生在"下一拍"，此时如果用户已经开始**第二次拖动**，
+        //    新拖动刚置上的 `_dropSeen=true` 会被当成本轮的"落下"证据 ⇒
+        //    本该丢弃的取消拖动被落库（顺序被改）。同理也不再无条件把字段清零。
         DispatcherQueue.TryEnqueue(() =>
         {
-            var landed = dropResult == DataPackageOperation.Move || dropSeen || _dropSeen;
-            _dropSeen = false;
+            var landed = dropResult == DataPackageOperation.Move || dropSeen;
 
             if (!landed)
             {
@@ -789,10 +766,6 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     }
 
     private void HideDropIndicator() => DropIndicator.Visibility = Visibility.Collapsed;
-
-    /// <summary>从 DragStarting 的事件源拿到承载图块的展示模型（容器的 DataContext）。</summary>
-    private static IconTileViewModel? FindTileFromArgs(DragStartingEventArgs args)
-        => (args.OriginalSource as FrameworkElement)?.DataContext as IconTileViewModel;
 }
 
 /// <summary>

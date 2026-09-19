@@ -134,4 +134,28 @@ public class SingleInstanceGuardTests
 
         Assert.Throws<ObjectDisposedException>(() => guard.TryAcquire());
     }
+
+    [Fact]
+    public void 重复TryAcquire是幂等的_不会把主实例状态改坏()
+    {
+        // ⚠️ 曾经的缺陷：第二次 `new Mutex(同名)` 拿到 createdNew=false ⇒ 把 IsPrimary 改成 false，
+        //    但互斥体句柄还握着（状态自相矛盾：IsPrimary==false 却仍占着锁）。
+        using var guard = new SingleInstanceGuard(NewKey());
+
+        Assert.True(guard.TryAcquire());
+        Assert.True(guard.TryAcquire());          // 第二次也返回 true（幂等）
+        Assert.True(guard.IsPrimary);             // 且仍然认为自己持有
+    }
+
+    [Fact]
+    public void 重复TryAcquire后_别的实例依然进不来()
+    {
+        var key = NewKey();
+        using var first = new SingleInstanceGuard(key);
+        first.TryAcquire();
+        first.TryAcquire();     // 幂等，不该把锁丢掉
+
+        using var second = new SingleInstanceGuard(key);
+        Assert.False(second.TryAcquire());
+    }
 }
