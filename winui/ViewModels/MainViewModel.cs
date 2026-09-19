@@ -91,6 +91,111 @@ public sealed class MainViewModel
               + (_statusDirectory.Length > 0 ? " · " + _statusDirectory : string.Empty);
     }
 
+    // ────────────────────────────── 标签页管理（批次 1）──────────────────────────────
+    //
+    // 在此之前 WinUI 线**完全没有**标签页管理入口（`AddTab` / 标签右键菜单引用数 = 0）——
+    // 数据层 `DataStore.AddTab/RemoveTab/RenameTab` 早就写好且有单测，只是没人接线。
+    //
+    // 分工与图标那几个方法完全一致：
+    //   ① Core 先落库（它是唯一事实源）；
+    //   ② 再把界面的 `Tabs` 集合跟着改（新建加一项 / 删除减一项 / 改名就地刷新）；
+    //   ③ 最后重算状态栏计数。
+    // 校验（名字必填、至少留一页）由 Core 的 `TabEditor` 负责，这里不重复写一遍判据。
+
+    /// <summary>
+    /// 新建标签页（名字与类型由 <see cref="TabEditor.Create"/> 归一化后传进来）。
+    /// 返回新页的界面模型；演示模式或没有数据层时返回 null。
+    /// </summary>
+    public TabItemViewModel? AddTab(string name, string tabType)
+    {
+        if (_store is null)
+        {
+            return null;
+        }
+
+        var model = _store.AddTab(name, tabType);
+        var viewModel = new TabItemViewModel(model);
+        Tabs.Add(viewModel);
+        RefreshStatusCounts();
+        return viewModel;
+    }
+
+    /// <summary>
+    /// 重命名标签页。调用方应先用 <see cref="TabEditor.Rename"/> 校验；
+    /// 这里落到 Core 并让界面模型就地刷新（`TabItemViewModel.Name` 会通知 → 标签栏跟着变）。
+    /// </summary>
+    public bool RenameTab(TabItemViewModel tab, string newName)
+    {
+        if (_store is null || FindTab(tab.Id) is null)
+        {
+            return false;
+        }
+
+        _store.RenameTab(tab.Id, newName);
+        tab.ApplyRename(newName);
+        RebuildStatusText();
+        return true;
+    }
+
+    /// <summary>
+    /// 删除标签页：**至少保留一个**由 Core 判（<see cref="DataStore.TryRemoveTab"/>，防御式）。
+    /// 返回 false 时 <paramref name="blockedReason"/> 是给用户看的拒绝原因。
+    ///
+    /// <para>⚠️ 这里只改 ViewModel 的集合；**页面缓存与 `PageHost` 由宿主窗口清理**
+    /// （页面是常驻的，不清会驻留旧页并让 `ShowTab` 拿着已删的 tab id）。</para>
+    /// </summary>
+    public bool TryRemoveTab(TabItemViewModel tab, out string? blockedReason)
+    {
+        blockedReason = null;
+
+        if (_store is null)
+        {
+            blockedReason = DemoNoSave;
+            return false;
+        }
+
+        if (!_store.TryRemoveTab(tab.Id, out blockedReason))
+        {
+            return false;
+        }
+
+        Tabs.Remove(tab);
+        RefreshStatusCounts();
+        return true;
+    }
+
+    /// <summary>
+    /// **重置数据**（原版 文件菜单 →「重置数据」）：清空所有标签页与图标缓存、重建默认页，
+    /// 然后重新装配界面模型。
+    /// </summary>
+    /// <returns>实际删掉的图标缓存文件个数（给状态栏用）。</returns>
+    public int ResetAll()
+    {
+        if (_store is null)
+        {
+            return 0;
+        }
+
+        var deletedCacheFiles = _store.ResetAll();
+
+        // 重新读盘装配：Tabs / 页面模型 / 计数 / 状态栏文案全部重建
+        // （Load 内部还会顺手 CleanOrphanCache，把残留的缓存文件收干净）
+        Load();
+        return deletedCacheFiles;
+    }
+
+    /// <summary>
+    /// 按**当前** `Tabs` 重算状态栏计数并重排文案（增删标签页后调用；不读盘）。
+    /// 语言切换那条路仍然走 <see cref="RebuildStatusText"/>（只重排文案、不动计数）。
+    /// </summary>
+    private void RefreshStatusCounts()
+    {
+        _statusTabCount = Tabs.Count;
+        _statusIconCount = Tabs.Where(t => !t.IsList).Sum(t => t.Icons.Count);
+        _statusListItemCount = Tabs.Where(t => t.IsList).Sum(t => t.ListItems.Count);
+        RebuildStatusText();
+    }
+
     /// <summary>读数据并把界面模型建好。</summary>
     public void Load()
     {

@@ -180,6 +180,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
     /// <summary>自检：把"会随主题变"的各元素当前颜色打出来（漏网元素一眼可见）。</summary>
     private void LogThemeState(string tag)
     {
@@ -747,6 +748,7 @@ public sealed partial class MainWindow : Window
                 Settings.CloseRequested += (_, _) => ShowSettings(false);
                 Settings.ExportBackupRequested += async (_, _) => await ExportBackupAsync();
                 Settings.ImportBackupRequested += async (_, _) => await ImportBackupAsync();
+                Settings.ResetDataRequested += async (_, _) => await ResetDataAsync();
             }
 
             _log.AppendLine($"设置文件 = {_settings.SettingsFile}");
@@ -1094,6 +1096,40 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
+    /// **数据被整体换掉之后重建界面**（导入备份、重置数据都走这里）：
+    /// 丢弃全部常驻页面 → 重新绑数据源 → 显示第一页。
+    ///
+    /// <para>为什么必须丢弃页面缓存：页面持有**旧的 tab 视图模型实例**，不丢就会继续显示旧内容
+    /// （见 <see cref="ShowTab"/> 的"页面常驻"说明）。</para>
+    ///
+    /// <para>⚠️ 调用前请先让 <see cref="MainViewModel.Load"/> 跑过（`Tabs` 已是新的）。</para>
+    /// </summary>
+    private void RebuildAfterDataReload(string logLine)
+    {
+        PageHost.Children.Clear();
+        _pages.Clear();
+        _pageWrappers.Clear();
+        _currentPageId = null;
+
+        // ⚠️ 这一赋值还有第二个作用：`TabStripView.ItemsSource` 的 setter 会清掉
+        //    内部那张 `_slots` 强引用表（否则上一代标签视图模型会被钉住，见该 setter 的注释）。
+        TabStrip.ItemsSource = _viewModel?.Tabs;
+        TabStrip.SyncSelection();
+
+        _log.AppendLine(logLine);
+
+        if (_viewModel is { Tabs.Count: > 0 })
+        {
+            TabStrip.SelectedTab = _viewModel.Tabs[0];
+            ShowTab(_viewModel.Tabs[0]);
+        }
+        else
+        {
+            UpdateStatusBar();
+        }
+    }
+
+    /// <summary>
     /// 导入成功后重载 —— **tabs.json 与 config.json 都可能被整包替换**，所以三步都要做：
     /// ① 重新读设置并整份套用（主题 / 材质 / 动效都可能变了）；
     /// ② 重建数据模型（<see cref="MainViewModel.Load"/> 重建 Tabs 与图标缓存引用）；
@@ -1108,25 +1144,9 @@ public sealed partial class MainWindow : Window
 
             _viewModel?.Load();
 
-            PageHost.Children.Clear();
-            _pages.Clear();
-            _pageWrappers.Clear();
-            _currentPageId = null;
-
-            TabStrip.ItemsSource = _viewModel?.Tabs;
             Settings.SetDataDirectory(_viewModel?.DataDirectory);
 
-            _log.AppendLine("导入后重载 = 设置 + 数据 + 页面缓存全部重建");
-
-            if (_viewModel is { Tabs.Count: > 0 })
-            {
-                TabStrip.SelectedTab = _viewModel.Tabs[0];
-                ShowTab(_viewModel.Tabs[0]);
-            }
-            else
-            {
-                UpdateStatusBar();
-            }
+            RebuildAfterDataReload("导入后重载 = 设置 + 数据 + 页面缓存全部重建");
 
             // 导入后标签页与页面都是新建的（过滤状态是空的）⇒ 把当前查询重新下发一遍
             ApplySearch(_searchQuery);
@@ -1489,6 +1509,7 @@ public sealed partial class MainWindow : Window
             //    跨页拖动时 `OnTabDraggedOver` 会被调用两次（多出来的那次是空转，但语义已经错了）。
             TabStrip.TabSelected += OnTabSelected;
             TabStrip.TabDraggedOver += OnTabDraggedOver;
+            TabStrip.TabMenuActionRequested += OnTabMenuActionRequested;
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");
             _log.AppendLine(_viewModel.StatusText);
@@ -1516,6 +1537,207 @@ public sealed partial class MainWindow : Window
     }
 
     private void OnTabSelected(object? sender, TabItemViewModel tab) => ShowTab(tab);
+
+    // ────────────────────────────── 标签页管理（批次 1）──────────────────────────────
+    //
+    // 分工与图块 / 列表行菜单完全一致：**页面只发事件**，弹对话框、落库、重建页面都在这里。
+    // 菜单规格（顺序 / 分隔线 / 文案 / 空白处的取舍）在 Core 的 `TabContextMenu`（有单测）；
+    // 字段校验（名字必填、同名不动）在 Core 的 `TabEditor`（有单测）。
+    // 本层只负责"问用户 → 调 Core → 刷新界面"。
+
+    private async void OnTabMenuActionRequested(object? sender, TabMenuRequest request)
+    {
+        try
+        {
+            switch (request.Action)
+            {
+                case TabMenuAction.NewTab:
+                    await ShowCreateTabAsync(isList: false);
+                    break;
+
+                case TabMenuAction.NewListTab:
+                    await ShowCreateTabAsync(isList: true);
+                    break;
+
+                case TabMenuAction.Rename when request.Tab is { } renameTarget:
+                    await ShowRenameTabAsync(renameTarget);
+                    break;
+
+                case TabMenuAction.Remove when request.Tab is { } removeTarget:
+                    await ConfirmRemoveTabAsync(removeTarget);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnTabMenuActionRequested", ex);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.edit")), ("err", ex.Message)));
+        }
+    }
+
+    /// <summary>新建标签页（原版 文件菜单「新建标签页」/「新建列表标签页」，预填默认页名）。</summary>
+    private async Task ShowCreateTabAsync(bool isList)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        var dialog = TabNameDialog.CreateForNew(isList);
+        dialog.XamlRoot = RootGrid.XamlRoot;
+        dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18）
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.NewName is not { } typed)
+        {
+            return;   // 取消 ⇒ 什么都不做（与原版 `_on_new_tab` 一致）
+        }
+
+        var edit = TabEditor.Create(typed, isList);
+        if (!edit.Success)
+        {
+            ReportTransient(edit.ErrorMessage ?? I18n.T("status.action_failed", ("action", I18n.T("action.create"))));
+            return;
+        }
+
+        var created = _viewModel?.AddTab(edit.Name, edit.TabType);
+        if (created is null)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        _log.AppendLine($"新建标签页：{edit.Name}（{(isList ? "列表" : "网格")}）");
+        ReportTransient(TabContextMenu.CreatedStatus(edit.Name));
+
+        // 新建后直接切过去（原版 `add_tab_page` 也是立刻选中新页）
+        TabStrip.SelectedTab = created;
+        ShowTab(created);
+    }
+
+    /// <summary>重命名标签页（原版 标签栏右键 →「重命名」，用同一个"名字输入框"）。</summary>
+    private async Task ShowRenameTabAsync(TabItemViewModel tab)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        var oldName = tab.Name;
+
+        var dialog = TabNameDialog.CreateForRename(oldName);
+        dialog.XamlRoot = RootGrid.XamlRoot;
+        dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 同 E18
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.NewName is not { } typed)
+        {
+            return;
+        }
+
+        var edit = TabEditor.Rename(oldName, typed);
+        if (!edit.Success)
+        {
+            ReportTransient(edit.ErrorMessage ?? I18n.T("status.action_failed", ("action", I18n.T("action.rename"))));
+            return;
+        }
+
+        // 原版 `if new_name != current_name`：同名什么都不做（不落库、不提示）
+        if (edit.Unchanged || !(_viewModel?.RenameTab(tab, edit.Name) ?? false))
+        {
+            return;
+        }
+
+        _log.AppendLine($"重命名标签页：{oldName} → {edit.Name}");
+        ReportTransient(TabContextMenu.RenamedStatus(edit.Name));
+    }
+
+    /// <summary>删除标签页（先确认；**至少保留一个**由 Core 判，界面也先问一次）。</summary>
+    private async Task ConfirmRemoveTabAsync(TabItemViewModel tab)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        // ① 至少保留一个标签页 —— 界面先拦一次（Core 里还有一道防御式拦截）
+        if (_viewModel is null || !TabEditor.CanRemove(_viewModel.Tabs.Count))
+        {
+            await ConfirmAsync(TabContextMenu.CannotRemoveTitle, TabContextMenu.CannotRemoveText, I18n.T("btn.ok"));
+            return;
+        }
+
+        // ② 二次确认：删这一页会**连带删掉它的所有图标与缓存文件**
+        var confirmed = await ConfirmAsync(
+            TabContextMenu.RemoveTitle,
+            TabContextMenu.ConfirmRemoveText(tab.Name),
+            TabContextMenu.LabelRemove);
+
+        if (!confirmed)
+        {
+            return;
+        }
+
+        var removedName = tab.Name;
+        var index = _viewModel.Tabs.IndexOf(tab);
+
+        if (!_viewModel.TryRemoveTab(tab, out var blockedReason))
+        {
+            if (!string.IsNullOrEmpty(blockedReason))
+            {
+                ReportTransient(blockedReason);
+            }
+
+            return;
+        }
+
+        // ③ 页面是**常驻**的：必须把它从 PageHost 与两张缓存表里摘掉（否则驻留旧页）
+        DiscardPage(tab.Id);
+
+        _log.AppendLine($"删除标签页：{removedName}（连带其图标缓存）");
+        ReportTransient(TabContextMenu.RemovedStatus(removedName));
+
+        // ④ 切到"原来那个位置、或最后一页"（删的是当前页时 SelectedItem 会变 null）
+        if (_viewModel.Tabs.Count > 0)
+        {
+            var next = _viewModel.Tabs[Math.Clamp(index, 0, _viewModel.Tabs.Count - 1)];
+            TabStrip.SelectedTab = next;
+            ShowTab(next);
+        }
+        else
+        {
+            UpdateStatusBar();
+        }
+    }
+
+    /// <summary>
+    /// 重置数据（原版 文件菜单 →「重置数据」Ctrl+Shift+R）：清空所有标签页与图标缓存、重建默认页。
+    /// ⚠️ 与设置面板底部那个 `settings.reset_all`（**恢复默认设置**）不是一回事。
+    /// </summary>
+    private async Task ResetDataAsync()
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        // 二次确认（`ConfirmAsync` 把默认按钮设成"取消"，回车不会误删）
+        if (!await ConfirmAsync(TabContextMenu.ResetTitle, TabContextMenu.ResetConfirm, TabContextMenu.ResetTitle))
+        {
+            return;
+        }
+
+        var deletedCacheFiles = _viewModel?.ResetAll() ?? 0;
+
+        // 搜索栏先关掉：换了一批全新的页，留着旧查询只会让人看到"什么都没匹配"
+        CloseSearch();
+
+        RebuildAfterDataReload("重置数据 = 标签页与图标缓存全部清空，重建默认页");
+
+        _log.AppendLine($"重置数据：清掉 {deletedCacheFiles} 个图标缓存文件");
+        ReportTransient(TabContextMenu.ResetDone);
+    }
 
     /// <summary>
     /// 切换内容区：**页面只建一次并常驻**（切页只切 <c>Visibility</c>），每次切页重放一次入场动效。
@@ -1612,6 +1834,29 @@ public sealed partial class MainWindow : Window
         if (tabId is not null && _pageWrappers.TryGetValue(tabId, out var wrapper))
         {
             wrapper.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// 丢弃某一页的**常驻页面**（删除标签页时必须调）。
+    ///
+    /// <para>⚠️ 页面是常驻的（建一次不销毁、切页只切 `Visibility`，见 <see cref="ShowTab"/> 的说明），
+    /// 所以删标签页时如果不把它从 `PageHost` 里摘掉、不从两张表里删掉，
+    /// 那一页会一直挂在可视树上、`ShowTab` 也可能拿着一个已经不在 `Tabs` 里的 id。</para>
+    /// </summary>
+    private void DiscardPage(string tabId)
+    {
+        if (_pageWrappers.TryGetValue(tabId, out var wrapper))
+        {
+            PageHost.Children.Remove(wrapper);
+            _pageWrappers.Remove(tabId);
+        }
+
+        _pages.Remove(tabId);
+
+        if (string.Equals(_currentPageId, tabId, StringComparison.Ordinal))
+        {
+            _currentPageId = null;
         }
     }
 

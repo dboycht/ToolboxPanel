@@ -25,6 +25,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
+using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
@@ -99,6 +100,13 @@ public sealed partial class TabStripView : UserControl
 
     /// <summary>拖拽悬停到某个标签上（主窗口据此切页）。</summary>
     public event EventHandler<TabItemViewModel>? TabDraggedOver;
+
+    /// <summary>
+    /// 标签页右键菜单选了某一项（批次 1）。
+    /// <para>页面**只发事件**：弹对话框、落库、刷新页面都在宿主窗口（MainWindow）里做 ——
+    /// 与图块菜单 / 列表行菜单同一分工（页面拿不到 DataStore）。</para>
+    /// </summary>
+    public event EventHandler<TabMenuRequest>? TabMenuActionRequested;
 
     // ⚠️ 2026-09-16：原来还有一个 `ItemDroppedOnTab`（松手在标签上直接落库）。
     //    现在"松手在标签上"由 `DragSession.ReportTarget` 登记落点、源端 `DragItemsCompleted` 统一收口，
@@ -565,4 +573,76 @@ public sealed partial class TabStripView : UserControl
             TabSelected?.Invoke(this, tab);
         }
     }
+
+    // ────────────────────────────── 标签页右键菜单（批次 1）──────────────────────────────
+    //
+    // 菜单规格（顺序 / 分隔线 / 文案 / 按位置的取舍）全在 Core 的 `TabContextMenu`（有单测），
+    // 这里只负责按规格铺控件 + 把动作转成事件。
+    //
+    // 两种位置两种菜单（与规格一一对应）：
+    //   · 标签上右键   → 五项：新建 / 新建列表页 / 重命名 / ─── / 删除
+    //   · 标签栏空白处 → 只出两个「新建」（"管理"类动作没有作用对象）
+    //
+    // ⚠️ 用 `ContextRequested` 而不是 `RightTapped`：右键与键盘「菜单键 / Shift+F10」都能触发
+    //    （与 GridPage / ListViewPage 同一做法，见 memory/03 §25）。
+
+    private void OnTabsContextRequested(UIElement sender, ContextRequestedEventArgs args)
+    {
+        // 键盘菜单键时拿不到坐标，退回左上角；右键时就是鼠标位置
+        var position = args.TryGetPosition(Tabs, out var point)
+            ? point
+            : new Windows.Foundation.Point(0, 0);
+
+        var tab = FindTabFromSource(args.OriginalSource);
+        var spec = tab is null ? TabContextMenu.BuildForEmptyArea() : TabContextMenu.BuildForTab();
+
+        var menu = new MenuFlyout();
+
+        foreach (var item in spec)
+        {
+            if (item.SeparatorBefore)
+            {
+                menu.Items.Add(new MenuFlyoutSeparator());
+            }
+
+            var action = item.Action;
+            var menuItem = new MenuFlyoutItem { Text = item.Label };
+            menuItem.Click += (_, _) => TabMenuActionRequested?.Invoke(this, new TabMenuRequest(tab, action));
+            menu.Items.Add(menuItem);
+        }
+
+        menu.ShowAt(Tabs, position);
+        args.Handled = true;
+    }
+
+    /// <summary>右键点在哪 —— 往上找到承载标签的 `ListViewItem`；点在空白处返回 null。</summary>
+    private static TabItemViewModel? FindTabFromSource(object? source)
+    {
+        var current = source as DependencyObject;
+
+        while (current is not null)
+        {
+            if (current is ListViewItem { DataContext: TabItemViewModel tab })
+            {
+                return tab;
+            }
+
+            try
+            {
+                current = VisualTreeHelper.GetParent(current);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
 }
+
+/// <summary>
+/// 一次标签页菜单动作请求（页面 → 宿主窗口）。
+/// <see cref="Tab"/> 为 null = 点在标签栏空白处（此时只可能是两个「新建」动作）。
+/// </summary>
+public sealed record TabMenuRequest(TabItemViewModel? Tab, TabMenuAction Action);

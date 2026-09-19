@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    TabNameDialog.xaml —— 标签页「新建 / 重命名」共用的名字输入框
+
+    为什么两个动作共用一个对话框：原版就是这样的 —— 新建标签页时弹的正是
+    `tab.rename.title` + `tab.rename.prompt`（标题、标签都一样，只是预填值不同：
+    新建填默认页名、重命名填当前页名），所以没必要做两个。
+
+    主题纪律（与其它对话框一致，见 ERROR.md E18）：
+    · 文字颜色显式用框架主题资源（跟随元素主题）；
+    · RequestedTheme 由调用方（MainWindow）在 ShowAsync 前显式设置。
+-->
+<ContentDialog
+    x:Class="ToolboxPanel.Views.TabNameDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:ToolboxPanel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryButtonClick">
+
+    <StackPanel Width="340" Spacing="8">
+        <TextBlock x:Name="PromptText"
+                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+        <TextBox x:Name="NameBox" MaxLength="120" />
+        <TextBlock x:Name="ErrorText"
+                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                   FontSize="11" Visibility="Collapsed" TextWrapping="Wrap" />
+    </StackPanel>
+</ContentDialog>

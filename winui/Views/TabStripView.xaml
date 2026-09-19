@@ -100,6 +100,7 @@
                       ItemContainerStyle="{StaticResource CompactTabItemStyle}"
                       SelectionMode="Single"
                       SelectionChanged="OnSelectionChanged"
+                      ContextRequested="OnTabsContextRequested"
                       AllowDrop="True"
                       DragOver="OnTabsDragOver"
                       DragLeave="OnTabsDragLeave"

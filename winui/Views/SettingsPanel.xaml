@@ -145,6 +145,16 @@
                 </StackPanel>
                 <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.data.hint" />
 
+                <!--
+                    重置数据（原版 文件菜单 →「重置数据」Ctrl+Shift+R）：清空所有标签页与图标缓存。
+                    ⚠️ 与面板底部的 `settings.reset_all`（**恢复默认设置**）是两件事，别混：
+                    这个是删内容，那个是把 config.json 恢复默认值。所以按钮放在「数据」这一节里，
+                    并把后果用 reset.confirm 的原文写在旁边 —— 点之前就知道会发生什么。
+                -->
+                <Button x:Name="ResetDataButton" ui:Tr.Key="reset.title" Margin="0,6,0,0"
+                        Click="OnResetDataClick" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="reset.confirm" />
+
                 <!-- ── 底部 ── -->
                 <Button x:Name="ResetButton" ui:Tr.Key="settings.reset_all" Margin="0,12,0,0" Click="OnResetClick" />
             </StackPanel>

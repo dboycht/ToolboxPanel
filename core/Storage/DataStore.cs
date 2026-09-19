@@ -13,6 +13,7 @@
 using System.Text;
 using System.Text.Json;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Services;
 
 namespace ToolboxPanel.Core.Storage;
 
@@ -206,13 +207,39 @@ public sealed class DataStore
         return tab;
     }
 
-    /// <summary>删除标签页（连同它的图标缓存文件），并重排 order。</summary>
-    public void RemoveTab(string tabId)
+    /// <summary>
+    /// 删除标签页（连同它的图标缓存文件），并重排 order。
+    ///
+    /// <para>⚠️ **至少保留一个标签页**：只剩一页时这里什么都不做（判据与文案见
+    /// <see cref="TabEditor.CannotRemoveReason"/>，界面上会先弹「无法删除」）。
+    /// 需要知道"到底删没删、为什么没删"就调 <see cref="TryRemoveTab"/>。</para>
+    /// </summary>
+    public void RemoveTab(string tabId) => TryRemoveTab(tabId, out _);
+
+    /// <summary>
+    /// 删除标签页，并回答"删没删成、没删成是因为什么"。
+    ///
+    /// <para>这是**防御式**的：即便界面忘了先问 <see cref="TabEditor.CanRemove"/>，
+    /// 数据层也不会把最后一页删掉 —— "一页都不剩"的 tabs.json 下次启动会被当成损坏文件
+    /// 而走"备份 + 重建默认页"的容错路径，用户会莫名看到一个 `.bak`。</para>
+    /// </summary>
+    /// <param name="blockedReason">没删成的原因（走 i18n，可直接显示）；删成了为 null。</param>
+    /// <returns>真的删掉了返回 true。</returns>
+    public bool TryRemoveTab(string tabId, out string? blockedReason)
     {
+        blockedReason = null;
+
+        if (Tabs.Count <= 1)
+        {
+            blockedReason = TabEditor.CannotRemoveReason(Tabs.Count);
+            return false;
+        }
+
         var tab = FindTab(tabId);
         if (tab is null)
         {
-            return;
+            blockedReason = null;   // 找不到就当"已经没了"，不算用户可见的失败
+            return false;
         }
 
         foreach (var icon in tab.Icons)
@@ -223,6 +250,75 @@ public sealed class DataStore
         Tabs.Remove(tab);
         RenumberTabOrder();
         Save();
+        return true;
+    }
+
+    /// <summary>
+    /// **重置数据**（原版 文件菜单 →「重置数据」`Ctrl+Shift+R`）：清空所有标签页与图标缓存，
+    /// 重建一个默认页。
+    ///
+    /// <para>⚠️ 顺序是刻意的（见工作区 `memory/22` §1 的判据："删除/覆盖类操作要问
+    /// '这一步失败之后用户手上还剩什么'"）：</para>
+    /// <list type="number">
+    /// <item><b>先</b>把内存数据换成"一个默认页"并落盘；</item>
+    /// <item><b>再</b>删 <c>icons/</c> 里的缓存文件。</item>
+    /// </list>
+    /// <para>反过来（原版 Python 就是先删目录）一旦在中间中断，磁盘上会留下
+    /// "tabs.json 里还列着一堆图标、文件却已经没了" 的**坏图标**；
+    /// 按现在这个顺序，最坏也只是剩下一堆**没人引用的孤儿缓存**——
+    /// 而 `MainViewModel.Load()` 每次载入都会 `CleanOrphanCache()` 把它们收掉（上一轮已接上）。</para>
+    ///
+    /// <para>默认页名用 <see cref="TabModel.DefaultName"/>（原版重置时用的就是 <c>tab.default_name</c>，
+    /// 跟随当前语言）；注意这与"tabs.json 读不出来时的兜底页名"不同 —— 那个是英文 "Home"，
+    /// 属于**损坏容错**，不是用户主动重置。</para>
+    /// </summary>
+    /// <returns>实际删掉的缓存文件个数（给状态栏用）。</returns>
+    public int ResetAll()
+    {
+        // ① 先换内存数据 + 落盘（此刻起 tabs.json 已经是干净的默认页）
+        Tabs = new List<TabModel> { new() { Name = TabModel.DefaultName, Order = 0 } };
+        _documentExtraFields = null;   // 重置就是回到初始状态，不再保留旧的顶层未知字段
+        Save();
+
+        // ② 再删图标缓存（删不掉的跳过，与 CleanOrphanCache 同策略）
+        var deleted = 0;
+        if (Directory.Exists(IconsDirectory))
+        {
+            foreach (var file in Directory.EnumerateFiles(IconsDirectory))
+            {
+                var name = Path.GetFileName(file);
+                if (!CacheFileName.IsPlain(name))
+                {
+                    continue;
+                }
+
+                if (TryDeleteFileCounting(Path.Combine(IconsDirectory, name)))
+                {
+                    deleted++;
+                }
+            }
+        }
+
+        return deleted;
+    }
+
+    /// <summary>删一个文件，成功返回 true（失败跳过，不抛）。</summary>
+    private static bool TryDeleteFileCounting(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            File.Delete(path);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     public void RenameTab(string tabId, string newName)

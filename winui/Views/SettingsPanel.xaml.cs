@@ -42,6 +42,13 @@ public sealed partial class SettingsPanel : UserControl
     /// <summary>点「导入备份…」—— 宿主负责选文件、二次确认、跑进度、重载。</summary>
     public event EventHandler? ImportBackupRequested;
 
+    /// <summary>
+    /// 点「重置数据」—— 宿主负责二次确认、清空数据、重建界面。
+    /// <para>⚠️ 与 <see cref="ResetToDefaultsRequested"/>（恢复默认**设置**）是两件事：
+    /// 这个删的是**内容**（所有标签页与图标缓存）。</para>
+    /// </summary>
+    public event EventHandler? ResetDataRequested;
+
     /// <summary>绑定设置与存储（面板只读这两者的引用，不接管生命周期）。</summary>
     public void Bind(SettingsStore store, AppSettings settings)
     {
@@ -80,6 +87,9 @@ public sealed partial class SettingsPanel : UserControl
 
     private void OnImportBackupClick(object sender, RoutedEventArgs e)
         => ImportBackupRequested?.Invoke(this, EventArgs.Empty);
+
+    private void OnResetDataClick(object sender, RoutedEventArgs e)
+        => ResetDataRequested?.Invoke(this, EventArgs.Empty);
 
     /// <summary>外部（如命令行的临时覆盖）改了模型后，让面板重新显示一次。</summary>
     public void Refresh() => SyncUiFromModel();
