@@ -1,4 +1,4 @@
-# publish-release.ps1 -- create the GitHub Release for ToolboxPanel 2.0.2
+# publish-release.ps1 -- create the GitHub Release for ToolboxPanel 2.0.3
 # ASCII-only script (PS 5.1 reads BOM-less files as ANSI; Chinese would break quoting).
 # Rule: release NAME = version number, release BODY = changelog (UTF-8 read from a file).
 # Usage: powershell -NoProfile -File pack\publish-release.ps1
@@ -7,9 +7,9 @@ $log = New-Object System.Collections.Generic.List[string]
 function Log($m) { $log.Add([string]$m) }
 
 $repo = 'dboycht/ToolboxPanel'
-$tag = '2.0.2'
-$zip = 'D:\code\github_repository\ToolboxPanel\dist\ToolboxPanel-2.0.2-win-x64.zip'
-$bodyFile = 'D:\code\github_repository\ToolboxPanel\pack\release-body-2.0.2.md'
+$tag = '2.0.3'
+$zip = 'D:\code\github_repository\ToolboxPanel\dist\ToolboxPanel-2.0.3-win-x64.zip'
+$bodyFile = 'D:\code\github_repository\ToolboxPanel\pack\release-body-2.0.3.md'
 $out = 'D:\code\github_repository\ToolboxPanel\pack\release-result.txt'
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
