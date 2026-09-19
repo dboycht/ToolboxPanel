@@ -133,6 +133,7 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(async () => await RunThemeSwitchProbeAsync());
         }
 
+
     }
 
     /// <summary>
@@ -443,6 +444,10 @@ public sealed partial class MainWindow : Window
         // ④ 系统绘制的窗口按钮（— □ ✕）：颜色是我们通过 AppWindow.TitleBar 设的，
         //    **不会**随 RequestedTheme 自动变 —— 不在切主题时重设，浅色主题下就是白字白底（看不见）
         CustomizeCaptionButtons();
+
+        // ⑤ 搜索框的聚焦描边：内层 TextBox 自带的下划线已被消掉，聚焦提示改由**外层圆角容器**承担
+        //    （用户截图实测"线只在文字下面、左右不等"）⇒ 它的颜色也必须跟着主题走
+        RefreshSearchFocusAffordance();
     }
 
     /// <summary>
@@ -897,6 +902,30 @@ public sealed partial class MainWindow : Window
             e.Handled = true;
             CloseSearch();
         }
+    }
+
+    /// <summary>
+    /// 搜索框获得焦点 → 聚焦提示画在**外层容器**上。
+    ///
+    /// <para>⚠️ 内层 `TextBox` 的装饰已在本作用域被清掉（见 `MainWindow.xaml` 里 SearchBar 的注释）：
+    /// 它模板里那条聚焦下划线只覆盖文字区 ⇒ 用户截图实测"左端空 44px、右端顶到边"，
+    /// 视觉上就是不对称。现在**同一份外观只有一个来源**：整块圆角容器（天然左右对称）。</para>
+    /// </summary>
+    private void OnSearchBoxGotFocus(object sender, RoutedEventArgs e) => RefreshSearchFocusAffordance();
+
+    private void OnSearchBoxLostFocus(object sender, RoutedEventArgs e) => RefreshSearchFocusAffordance();
+
+    /// <summary>按当前焦点与当前主题令牌刷新搜索框容器的描边（切主题时也要重算，见调用点）。</summary>
+    private void RefreshSearchFocusAffordance()
+    {
+        if (SearchBar is null || SearchBox is null)
+        {
+            return;
+        }
+
+        SearchBar.BorderBrush = SearchBox.FocusState == FocusState.Unfocused
+            ? new SolidColorBrush(Colors.Transparent)
+            : new SolidColorBrush(ToColor(_themePalette.Accent));
     }
 
     /// <summary>

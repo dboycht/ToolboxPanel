@@ -112,8 +112,37 @@
               · 底色用框架主题资源（与批量条同一套），不写死颜色 —— 浅深色自动跟。
         -->
         <Border x:Name="SearchBar" Grid.Row="2" Visibility="Collapsed"
-                Margin="8,2,8,4" Padding="8,3" CornerRadius="6"
+                Margin="8,2,8,4" Padding="10,4" CornerRadius="6"
+                BorderThickness="1" BorderBrush="Transparent"
                 Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+            <!--
+                ⚠️ 干掉内层 TextBox 自带的装饰（2026-09-19 按用户截图修"不对称"）：
+
+                用户截图实测：容器底宽 246px，而那条**蓝线**从 x=53 才开始（左侧图标那 44px 没有线）、
+                一直顶到容器右缘，而且浮在容器底上方 4px —— 看着就是"线只在文字下面、左右不等"。
+
+                根因：那条线是 **TextBox 模板自己画的聚焦下划线**（模板里 `BorderElement` 的
+                `BorderThickness` 在 Focused 状态下被轻量样式键 `TextControlBorderThemeThicknessFocused`
+                覆盖成 `0,0,0,2`）—— **光在控件上写 `BorderThickness="0"` 不生效**（状态动画会盖掉它），
+                所以必须把**那几个键**在本作用域里改成 0 / 透明。
+
+                修法（"同一份外观只能有一个来源"，与 memory/07 的换主题纪律同一条）：
+                · 内层 TextBox 只留文字，**不画任何边框/底色/下划线**；
+                · 聚焦提示改由**外层容器**承担（1px 描边 + GotFocus/LostFocus 换色）
+                  —— 容器是整块圆角，天然左右对称。
+            -->
+            <Border.Resources>
+                <Thickness x:Key="TextControlBorderThemeThickness">0</Thickness>
+                <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+                <Thickness x:Key="TextControlBorderThemeThicknessPointerOver">0</Thickness>
+                <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+            </Border.Resources>
+
             <Grid ColumnSpacing="8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
@@ -124,12 +153,19 @@
 
                 <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="12" VerticalAlignment="Center" />
 
+                <!--
+                    `Padding="0"` + `MinHeight="0"`：让文字区的高度与左右间距都由**容器**的
+                    `Padding="10,4"` 与 `ColumnSpacing="8"` 决定 —— 内层不再有自己的
+                    内边距与最小高度（TextBox 模板默认 MinHeight=32，会让这个 12px 字的搜索条显得很"高"）。
+                -->
                 <TextBox x:Name="SearchBox" Grid.Column="1"
-                         BorderThickness="0" Background="Transparent" Padding="2,0"
+                         BorderThickness="0" Background="Transparent" Padding="0" MinHeight="0"
                          FontSize="12" VerticalAlignment="Center"
                          ui:Tr.Key="search.placeholder"
                          TextChanged="OnSearchTextChanged"
-                         KeyDown="OnSearchBoxKeyDown" />
+                         KeyDown="OnSearchBoxKeyDown"
+                         GotFocus="OnSearchBoxGotFocus"
+                         LostFocus="OnSearchBoxLostFocus" />
 
                 <TextBlock x:Name="SearchCount" Grid.Column="2" FontSize="11" Opacity="0.7"
                            VerticalAlignment="Center" />
