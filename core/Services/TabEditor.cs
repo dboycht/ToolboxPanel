@@ -39,7 +39,11 @@ public sealed class TabEditResult
     /// </summary>
     public string Name { get; }
 
-    /// <summary>成功时该用哪个页类型（<see cref="Models.TabModel.TypeGrid"/> / <see cref="Models.TabModel.TypeList"/>）。</summary>
+    /// <summary>
+    /// 成功时该用哪个页类型（<see cref="Models.TabModel.TypeGrid"/> / <see cref="Models.TabModel.TypeList"/>）。
+    /// <para>⚠️ **只在"新建"时有意义**：重命名不涉及页类型（原名那页是什么类型就还是什么类型），
+    /// 所以 <see cref="Rename"/> 的结果里这个字段是占位值，调用方**不要读它**。</para>
+    /// </summary>
     public string TabType { get; }
 
     /// <summary>重命名时"新名与旧名相同"（原版这种情况下什么都不做、也不提示）。</summary>
@@ -107,6 +111,36 @@ public static class TabEditor
     /// <summary>不能删时给用户看的消息（null = 可以删）。</summary>
     public static string? CannotRemoveReason(int tabCount)
         => CanRemove(tabCount) ? null : TabContextMenu.CannotRemoveText;
+
+    /// <summary>
+    /// **删掉某一页之后该选中哪一页**（界面的换页决策；纯函数，可单测）。
+    ///
+    /// <para>⚠️ 判据是"**删的是不是当前页**" —— 这是 2026-09-19 自查抓出来的一个真滑落：
+    /// 一开始写成了"删完总是选中原位置那一页"，于是**右键删掉一个"非当前页"时，
+    /// 用户正在看的那一页会被莫名其妙切走**（右键菜单可以在任意一页上弹出）。</para>
+    /// </summary>
+    /// <param name="removedIndex">被删页的下标（**删除之前**的）。</param>
+    /// <param name="remainingCount">删除**之后**剩下的页数。</param>
+    /// <param name="wasCurrent">被删的是不是当前正在看的那一页。
+    /// ⚠️ 必须在删除**之前**判断：从集合移除后框架会清空选中项。</param>
+    /// <param name="selectionLost">删除后选中项是否已被清空（框架行为；true 时也要补一个有效页）。</param>
+    /// <returns>该选中的下标；<c>null</c> = **不用换页**（当前的页没被删，保持原样）。</returns>
+    public static int? ResolveSelectionAfterRemove(
+        int removedIndex, int remainingCount, bool wasCurrent, bool selectionLost)
+    {
+        if (remainingCount <= 0)
+        {
+            return null;   // 一页都不剩（正常路径不会发生：CanRemove 已经拦住了）
+        }
+
+        if (!wasCurrent && !selectionLost)
+        {
+            return null;   // ★ 删的不是当前页 ⇒ 什么都不动，用户在看哪页就还在哪页
+        }
+
+        // 原位优先；删的是最后一页时退到"新的最后一页"
+        return Math.Clamp(removedIndex, 0, remainingCount - 1);
+    }
 
     private static string Trim(string? value) => (value ?? string.Empty).Trim();
 }

@@ -1944,6 +1944,12 @@ public sealed partial class MainWindow : Window
         var removedName = tab.Name;
         var index = _viewModel.Tabs.IndexOf(tab);
 
+        // ⚠️ "删的是不是当前页"必须在**删除之前**判断 —— 之后两处都会被清掉：
+        //    ① 从 `Tabs` 集合移除后，ListView 的 `SelectedItem` 会被框架清空；
+        //    ② `DiscardPage` 会把 `_currentPageId` 置 null。
+        var wasCurrent = string.Equals(_currentPageId, tab.Id, StringComparison.Ordinal)
+                         || ReferenceEquals(TabStrip.SelectedTab, tab);
+
         if (!_viewModel.TryRemoveTab(tab, out var blockedReason))
         {
             if (!string.IsNullOrEmpty(blockedReason))
@@ -1960,10 +1966,18 @@ public sealed partial class MainWindow : Window
         _log.AppendLine($"删除标签页：{removedName}（连带其图标缓存）");
         ReportTransient(TabContextMenu.RemovedStatus(removedName));
 
-        // ④ 切到"原来那个位置、或最后一页"（删的是当前页时 SelectedItem 会变 null）
-        if (_viewModel.Tabs.Count > 0)
+        // ④ 只有删掉的正是当前页时才换页 —— 删别的页不该把用户正在看的那一页切走。
+        //    判据（含"原位优先/越界退到最后一页"）在 Core 的 `TabEditor.ResolveSelectionAfterRemove`（有单测），
+        //    因为它正是 2026-09-19 自查抓到的一个真滑落：早先写成"删完总是选中原位置那一页"。
+        var nextIndex = TabEditor.ResolveSelectionAfterRemove(
+            removedIndex: index,
+            remainingCount: _viewModel.Tabs.Count,
+            wasCurrent: wasCurrent,
+            selectionLost: TabStrip.SelectedTab is null);
+
+        if (nextIndex is { } target)
         {
-            var next = _viewModel.Tabs[Math.Clamp(index, 0, _viewModel.Tabs.Count - 1)];
+            var next = _viewModel.Tabs[target];
             TabStrip.SelectedTab = next;
             ShowTab(next);
         }
@@ -1991,10 +2005,12 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var deletedCacheFiles = _viewModel?.ResetAll() ?? 0;
-
-        // 搜索栏先关掉：换了一批全新的页，留着旧查询只会让人看到"什么都没匹配"
+        // 搜索栏先关掉：换了一批全新的页，留着旧查询只会让人看到"什么都没匹配"。
+        // ⚠️ 顺序：必须放在 ResetAll/RebuildAfterDataReload **之前** —— 那两步会丢弃并重建全部页面，
+        //    之后再 CloseSearch 就只是在一批"马上要被扔掉"的页上空跑一遍过滤。
         CloseSearch();
+
+        var deletedCacheFiles = _viewModel?.ResetAll() ?? 0;
 
         RebuildAfterDataReload("重置数据 = 标签页与图标缓存全部清空，重建默认页");
 

@@ -119,6 +119,61 @@ public class TabEditorTests
         Assert.Null(TabEditor.CannotRemoveReason(2));
     }
 
+    // ────────────────────────────── 删完该选中哪一页 ──────────────────────────────
+    //
+    // ⚠️ 这一族钉的是 2026-09-19 自查抓到的**真滑落**：早先写成"删完总是选中原位置那一页"，
+    //    于是右键删掉一个"非当前页"时，用户正在看的那一页会被莫名其妙切走。
+
+    [Fact]
+    public void 删完选页_删的不是当前页时_不动当前页()
+    {
+        // 3 页里删第 0 页（用户正在看第 2 页）⇒ 返回 null = 不用换页
+        Assert.Null(TabEditor.ResolveSelectionAfterRemove(
+            removedIndex: 0, remainingCount: 2, wasCurrent: false, selectionLost: false));
+    }
+
+    [Fact]
+    public void 删完选页_删的是当前页时_优先选原位()
+    {
+        // 删掉第 1 页（当前页）⇒ 选新的第 1 页（原来的第 2 页）
+        Assert.Equal(1, TabEditor.ResolveSelectionAfterRemove(
+            removedIndex: 1, remainingCount: 3, wasCurrent: true, selectionLost: true));
+    }
+
+    [Fact]
+    public void 删完选页_删的是最后一页时_退到新的最后一页()
+    {
+        // 4 页里删第 3 页 ⇒ 剩下 3 页，取 2
+        Assert.Equal(2, TabEditor.ResolveSelectionAfterRemove(
+            removedIndex: 3, remainingCount: 3, wasCurrent: true, selectionLost: true));
+    }
+
+    [Fact]
+    public void 删完选页_只剩一页时选中第0页()
+    {
+        Assert.Equal(0, TabEditor.ResolveSelectionAfterRemove(
+            removedIndex: 0, remainingCount: 1, wasCurrent: true, selectionLost: true));
+    }
+
+    [Fact]
+    public void 删完选页_一页都不剩时不换页()
+    {
+        // 正常路径不会发生（CanRemove 会拦），但函数不该给出越界下标
+        Assert.Null(TabEditor.ResolveSelectionAfterRemove(
+            removedIndex: 0, remainingCount: 0, wasCurrent: true, selectionLost: true));
+    }
+
+    [Fact]
+    public void 删完选页_选中项被框架清空时_即使删的不是当前页也要补一个有效页()
+    {
+        // 防御：万一框架把选中项清成 null（且我们没能提前判断），至少要落到一个合法下标上
+        var result = TabEditor.ResolveSelectionAfterRemove(
+            removedIndex: 0, remainingCount: 2, wasCurrent: false, selectionLost: true);
+
+        Assert.NotNull(result);
+        Assert.InRange(result!.Value, 0, 1);
+    }
+
     // ────────────────────────────── 菜单规格 ──────────────────────────────
 
     [Fact]
