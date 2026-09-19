@@ -82,6 +82,11 @@ public sealed partial class MainWindow : Window
         SetTitleBar(AppTitleBar);
 
         ApplyStartupArguments();
+
+        // 快捷键：照 Core 的 `ShortcutCatalog` 注册（必须在 LoadSettings 之前也行，
+        // 但放在这里是为了让 `_log` 里的"已注册 N 条"排在最前面，便于自检核对）
+        ApplyShortcuts();
+
         LoadSettings();
 
         // 主题要早于其它界面套用：它决定"深色下的前景色"等基础观感，
@@ -180,6 +185,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    /// <summary>
     /// <summary>
     /// <summary>自检：把"会随主题变"的各元素当前颜色打出来（漏网元素一眼可见）。</summary>
     private void LogThemeState(string tag)
@@ -844,12 +850,6 @@ public sealed partial class MainWindow : Window
     /// <summary>当前查询（与搜索框内容一致；空 = 不过滤）。</summary>
     private string _searchQuery = string.Empty;
 
-    private void OnSearchAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
-    {
-        args.Handled = true;
-        ToggleSearch();
-    }
-
     private void OnSearchButtonClick(object sender, RoutedEventArgs e) => ToggleSearch();
 
     private void OnSearchCloseClick(object sender, RoutedEventArgs e) => CloseSearch();
@@ -939,16 +939,260 @@ public sealed partial class MainWindow : Window
     // 这里只负责：选路径 → 二次确认 → 起进度对话框 → 后台线程跑 → 收尾反馈。
     // ⚠️ 文件 IO 一律放后台线程；进度与日志用 DispatcherQueue 切回 UI 线程（UI 线程纪律）。
 
-    private async void OnExportBackupAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    // ────────────────────────────── 快捷键（批次 2）──────────────────────────────
+    //
+    // 注册与分派**全部照着 Core 的 `ShortcutCatalog` 走**，这里不手写列表：
+    //   · 注册：`ApplyShortcuts()` 给目录里每个 App 行建一个 KeyboardAccelerator；
+    //   · 分派：`OnShortcutInvoked` 按 `ShortcutAction` 转到具体处理函数；
+    //   · 守卫：**焦点在文本框里、或焦点在弹层（对话框开着）时一律不接管**。
+    //
+    // ⚠️ 为什么要有守卫（两条都是实测会出问题的路）：
+    //   ① 焦点在搜索框里按 `Shift+Delete` —— 那是文本框的「剪切」，被我们抢走就变成删图标；
+    //      `Ctrl+B`/`Ctrl+T` 之类同理，不该越过用户正在输入的地方去操作面板。
+    //   ② 对话框开着时按 `Ctrl+T` —— 会去开第二个 ContentDialog，
+    //      而 WinUI 同一 XamlRoot **只允许一个**（抛 "Only a single ContentDialog can be open"）。
+    //      判据：焦点还能不能沿可视树走回 `RootGrid`（弹层是它的兄弟，走不回去）。
+
+    private bool _shortcutsApplied;
+
+    /// <summary>照 Core 目录注册加速器（幂等）。</summary>
+    private void ApplyShortcuts()
     {
-        args.Handled = true;
-        await ExportBackupAsync();
+        if (_shortcutsApplied)
+        {
+            return;
+        }
+
+        _shortcutsApplied = true;
+        var registered = 0;
+
+        foreach (var entry in ShortcutCatalog.AppShortcuts)
+        {
+            if (BuildAccelerator(entry.Gesture) is not { } accelerator)
+            {
+                // 目录里写了界面认不出的键名 ⇒ 明确记一笔，别静默少一条快捷键
+                _log.AppendLine($"[快捷键] 认不出的键位，已跳过：{entry.Action} = {entry.Gesture.Display}");
+                continue;
+            }
+
+            var action = entry.Action;
+            accelerator.Invoked += (_, args) => OnShortcutInvoked(action, args);
+            RootGrid.KeyboardAccelerators.Add(accelerator);
+            registered++;
+        }
+
+        _log.AppendLine($"快捷键已注册 {registered} 条（来自 Core 的 ShortcutCatalog）");
     }
 
-    private async void OnImportBackupAccelerator(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    /// <summary>Core 的键位描述 → WinUI 的加速器。</summary>
+    private static KeyboardAccelerator? BuildAccelerator(ShortcutGesture gesture)
     {
+        if (!Enum.TryParse<Windows.System.VirtualKey>(gesture.Key, ignoreCase: true, out var key))
+        {
+            return null;
+        }
+
+        var modifiers = Windows.System.VirtualKeyModifiers.None;
+        if (gesture.Ctrl)
+        {
+            modifiers |= Windows.System.VirtualKeyModifiers.Control;
+        }
+
+        if (gesture.Shift)
+        {
+            modifiers |= Windows.System.VirtualKeyModifiers.Shift;
+        }
+
+        if (gesture.Alt)
+        {
+            modifiers |= Windows.System.VirtualKeyModifiers.Menu;
+        }
+
+        return new KeyboardAccelerator { Key = key, Modifiers = modifiers };
+    }
+
+    private void OnShortcutInvoked(ShortcutAction action, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        if (IsTextInputFocused() || !IsFocusInsideMainContent())
+        {
+            // 不接管：让文本框/对话框自己处理（`args.Handled` 保持 false）
+            return;
+        }
+
         args.Handled = true;
-        await ImportBackupAsync();
+
+        try
+        {
+            DispatchShortcut(action);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash($"MainWindow.Shortcut/{action}", ex);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.edit")), ("err", ex.Message)));
+        }
+    }
+
+    /// <summary>按动作分派（异步那些用 <c>_ =</c> 丢掉：它们内部各自 try/catch）。</summary>
+    private void DispatchShortcut(ShortcutAction action)
+    {
+        switch (action)
+        {
+            case ShortcutAction.NewTab:
+                _ = ShowCreateTabAsync(isList: false);
+                break;
+
+            case ShortcutAction.NewListTab:
+                _ = ShowCreateTabAsync(isList: true);
+                break;
+
+            case ShortcutAction.RenameTab:
+                if (TabStrip.SelectedTab is { } renameTarget)
+                {
+                    _ = ShowRenameTabAsync(renameTarget);
+                }
+
+                break;
+
+            case ShortcutAction.CloseTab:
+                if (TabStrip.SelectedTab is { } closeTarget)
+                {
+                    _ = ConfirmRemoveTabAsync(closeTarget);
+                }
+
+                break;
+
+            case ShortcutAction.PrevTab:
+                StepTab(-1);
+                break;
+
+            case ShortcutAction.NextTab:
+                StepTab(+1);
+                break;
+
+            case ShortcutAction.Find:
+                ToggleSearch();
+                break;
+
+            case ShortcutAction.BatchMode:
+                if (CurrentPage() is GridPage bulkPage)
+                {
+                    bulkPage.SetBulkMode(!bulkPage.IsBulkMode);
+                }
+
+                // 列表页没有批量模式（行只有"打开"）⇒ 什么都不做
+                break;
+
+            case ShortcutAction.BatchDelete:
+                if (CurrentPage() is GridPage deletePage)
+                {
+                    deletePage.RequestBulkDelete();
+                }
+
+                break;
+
+            case ShortcutAction.NewFile:
+                OnNewIconRequested(CurrentPage(), IconType.File);
+                break;
+
+            case ShortcutAction.NewFolder:
+                OnNewIconRequested(CurrentPage(), IconType.Folder);
+                break;
+
+            case ShortcutAction.NewShortcut:
+                OnNewIconRequested(CurrentPage(), IconType.Shortcut);
+                break;
+
+            case ShortcutAction.NewUrl:
+                OnNewIconRequested(CurrentPage(), IconType.Url);
+                break;
+
+            case ShortcutAction.NewCommand:
+                OnNewIconRequested(CurrentPage(), IconType.Command);
+                break;
+
+            case ShortcutAction.ResetData:
+                _ = ResetDataAsync();
+                break;
+
+            case ShortcutAction.Export:
+                _ = ExportBackupAsync();
+                break;
+
+            case ShortcutAction.Import:
+                _ = ImportBackupAsync();
+                break;
+
+            // Alt+F4 是系统级的（目录里标了 System，不会走到这里）
+            case ShortcutAction.ExitApp:
+            default:
+                break;
+        }
+    }
+
+    /// <summary>前后切页（环形；只有一页时什么都不做）。</summary>
+    private void StepTab(int delta)
+    {
+        var count = TabStrip.ItemCount;
+        if (count <= 1)
+        {
+            return;
+        }
+
+        var index = TabStrip.SelectedIndex;
+        if (index < 0)
+        {
+            index = 0;
+        }
+
+        // 环形：((-1) % n + n) % n ⇒ n-1
+        TabStrip.SelectedIndex = ((index + delta) % count + count) % count;
+    }
+
+    /// <summary>焦点是不是在文本框里（搜索框 / 对话框的输入框）。</summary>
+    private bool IsTextInputFocused()
+    {
+        try
+        {
+            return FocusManager.GetFocusedElement(RootGrid.XamlRoot)
+                is TextBox or RichEditBox or PasswordBox;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 焦点是不是还在**主窗口内容**里 —— 沿可视树走得到 `RootGrid` 才算。
+    /// 走不到 = 焦点在 `ContentDialog` 那种**弹层**里（它是 XamlRoot 下与内容并列的一层）。
+    /// </summary>
+    private bool IsFocusInsideMainContent()
+    {
+        try
+        {
+            var node = FocusManager.GetFocusedElement(RootGrid.XamlRoot) as DependencyObject;
+            if (node is null)
+            {
+                return true;   // 没有焦点（例如刚切回来）⇒ 当作在主窗口，快捷键照常
+            }
+
+            while (node is not null)
+            {
+                if (ReferenceEquals(node, RootGrid))
+                {
+                    return true;
+                }
+
+                node = VisualTreeHelper.GetParent(node);
+            }
+
+            return false;
+        }
+        catch (Exception)
+        {
+            return true;   // 树走不动（元素还没进可视树）⇒ 不因此禁用快捷键
+        }
     }
 
     /// <summary>导出备份：选目录 → 写 ZIP（metadata.json 在根 + 数据在 <c>data/</c> 前缀下）→ 进度反馈。</summary>
@@ -1180,6 +1424,25 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.OnAboutButtonClick", ex);
+        }
+    }
+
+    /// <summary>
+    /// 标题栏 ❓ —— 弹「快捷键参考」窗口。
+    /// 内容来自 Core 的 <see cref="ShortcutCatalog"/>（有单测），这里只负责弹窗。
+    /// </summary>
+    private async void OnShortcutButtonClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var dialog = ShortcutDialog.Create();
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18）
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnShortcutButtonClick", ex);
         }
     }
 

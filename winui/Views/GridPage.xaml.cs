@@ -243,6 +243,26 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     private void OnBulkDeleteClick(object sender, RoutedEventArgs e)
         => BulkDeleteRequested?.Invoke(this, SelectedIconIds());
 
+    /// <summary>
+    /// **宿主窗口用**（快捷键 `Shift+Delete`）：按当前勾选发起批量删除。
+    ///
+    /// <para>为什么不让宿主自己去数勾选：勾选状态（`IconTileViewModel.IsChecked`）与"只算可见项"
+    /// 这条口径都是**页面自己的事**，宿主看不到（`VisibleIcons` 也是页面的视图模型）。
+    /// 走这个方法 = 与点「批量删除」按钮**完全同一条路**。</para>
+    ///
+    /// <para>不在批量模式时什么都不做：没有批量模式就没有"勾选清单"可言
+    /// （列表页也没有批量模式 —— 它的行只有"打开"）。</para>
+    /// </summary>
+    public void RequestBulkDelete()
+    {
+        if (!IsBulkMode)
+        {
+            return;
+        }
+
+        BulkDeleteRequested?.Invoke(this, SelectedIconIds());
+    }
+
     private void OnBulkExitClick(object sender, RoutedEventArgs e) => SetBulkMode(false);
 
     /// <summary>批量删除完成后由宿主窗口调用：退出模式并收起勾选。</summary>

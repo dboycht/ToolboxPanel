@@ -21,15 +21,11 @@
 
     <Grid x:Name="RootGrid" Background="Transparent">
         <!--
-            快捷键：与原版 v1.11.6 的「文件」菜单一致（Ctrl+Shift+E 导出 / Ctrl+Shift+I 导入）；
-            外加 Ctrl+F 开关搜索栏（原版 `app_window._toggle_search` 的快捷键）。
-            挂在根 Grid 上 ⇒ 焦点在窗口内任意位置都生效。
+            ⚠️ 快捷键**不在这里手写**：加速器由 `MainWindow.ApplyShortcuts()` 照着
+            Core 的 `ShortcutCatalog` 逐个注册（有单测钉住"键位不重复、功能名 key 都在"）。
+            手写一份 XAML 列表的坏处是"加了功能忘了接线 / 改了键位只改一处"——
+            本项目已被这类漂移咬过（标签栏右键菜单、`AddTab` 长期没有入口）。
         -->
-        <Grid.KeyboardAccelerators>
-            <KeyboardAccelerator Key="E" Modifiers="Control,Shift" Invoked="OnExportBackupAccelerator" />
-            <KeyboardAccelerator Key="I" Modifiers="Control,Shift" Invoked="OnImportBackupAccelerator" />
-            <KeyboardAccelerator Key="F" Modifiers="Control" Invoked="OnSearchAccelerator" />
-        </Grid.KeyboardAccelerators>
 
         <Grid.RowDefinitions>
             <RowDefinition Height="34" />
@@ -76,6 +72,19 @@
                         FocusVisualSecondaryThickness="0"
                         Click="OnAboutButtonClick" ui:Tr.Tip="titlebar.about">
                     <FontIcon Glyph="&#xE946;" FontSize="12" />
+                </Button>
+                <!--
+                    「快捷键参考」按钮：原版在**帮助菜单**里；本实现没有菜单栏，
+                    所以按"标题栏按钮 = 原来菜单项"的既有做法放在「关于」旁边（同一套 E15 纪律）。
+                -->
+                <Button x:Name="ShortcutButton" Padding="6,2" Margin="2,0,0,0"
+                        Background="Transparent" BorderThickness="0"
+                        IsTabStop="False"
+                        UseSystemFocusVisuals="False"
+                        FocusVisualPrimaryThickness="0"
+                        FocusVisualSecondaryThickness="0"
+                        Click="OnShortcutButtonClick" ui:Tr.Tip="shortcut.dialog.title">
+                    <FontIcon Glyph="&#xE897;" FontSize="12" />
                 </Button>
                 <!--
                     搜索按钮：与设置/关于同一套写法（同一套 E15 纪律：关掉焦点视觉）。

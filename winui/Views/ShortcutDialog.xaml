@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    ShortcutDialog.xaml —— 「快捷键参考」窗口（原版 帮助菜单 → 快捷键参考）
+
+    内容**完全来自 Core 的 `ShortcutCatalog`**（有单测钉住：功能名 key 都在文案表里、
+    键位不重复、键位串可往返）。这里只负责把它铺成"功能 × 快捷键"两列表格 ——
+    所以「目录里有的按键一定列得出来，列出来的按键一定接得上」，
+    不会出现原版那种"菜单里有 Ctrl+Shift+T、参考表里却漏了一行"的漂移。
+
+    主题纪律（与其它对话框一致，见 ERROR.md E18）：
+    · 文字颜色显式用框架主题资源（跟随元素主题）；
+    · RequestedTheme 由调用方（MainWindow）在 ShowAsync 前显式设置；
+    · 标题与按钮文字在构造函数里设（ContentDialog 的 Title/按钮不是可视元素，Tr 管不到）。
+-->
+<ContentDialog
+    x:Class="ToolboxPanel.Views.ShortcutDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:views="using:ToolboxPanel.Views">
+
+    <Grid Width="420" RowSpacing="6">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- 表头（文字在构造函数里按当前语言设） -->
+        <Grid Grid.Row="0" ColumnSpacing="12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="ActionHeader" Grid.Column="0" FontWeight="SemiBold" FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+            <TextBlock x:Name="KeyHeader" Grid.Column="1" FontWeight="SemiBold" FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        </Grid>
+
+        <Border Grid.Row="1" Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+        <ScrollViewer Grid.Row="2" MaxHeight="400" VerticalScrollBarVisibility="Auto">
+            <ItemsControl x:Name="RowsHost">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="views:ShortcutRow">
+                        <Grid ColumnSpacing="12" Margin="0,3">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="{x:Bind Action}" FontSize="12"
+                                       TextWrapping="Wrap"
+                                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind Keys}" FontSize="12"
+                                       FontFamily="Consolas"
+                                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</ContentDialog>
