@@ -200,6 +200,11 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
+### v2.0.4 (开发中)
+
+> v2.0.3（WinUI 3）定版后的下一轮开发：继续补齐原版功能基线。
+> 剩余计划：主题剩余（5 预置 + 8 参数细调 + 逐令牌覆盖）、标签页拖动重排。
+
 ### v2.0.3 (2026-09-19) — 中英双语（i18n）
 
 > 功能补齐版：整个界面支持**中文 / English**，可在设置里**即时切换、无需重启**。

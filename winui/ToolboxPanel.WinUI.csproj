@@ -28,13 +28,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
 
     <!--
-      版本号（2.0.1 定版时补上；tag=2.0.2 后的下一轮开发自动升为 2.0.3）。
+      版本号（2.0.1 定版时补上；tag=2.0.3 后的下一轮开发自动升为 2.0.4）。
       ⚠️ 必须与 Python 侧的 `src/toolbox/__init__.py::__version__` **保持一致** ——
       两处各自是本实现的"版本号单一来源"（关于对话框 / EXE 文件属性 / 发布包命名都读它）。
     -->
-    <Version>2.0.3</Version>
-    <AssemblyVersion>2.0.3.0</AssemblyVersion>
-    <FileVersion>2.0.3.0</FileVersion>
+    <Version>2.0.4</Version>
+    <AssemblyVersion>2.0.4.0</AssemblyVersion>
+    <FileVersion>2.0.4.0</FileVersion>
     <Product>ToolboxPanel</Product>
     <AssemblyTitle>ToolboxPanel</AssemblyTitle>
     <Company>dboycht</Company>
