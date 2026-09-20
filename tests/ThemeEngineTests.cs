@@ -174,13 +174,46 @@ public class ThemeEngineTests
     }
 
     [Fact]
-    public void 锁定明暗时用用户选的预置且明暗由预置决定()
+    public void 锁定明暗时用用户选的预置_但预置必须与明暗一致()
     {
         var resolution = ThemeResolver.Resolve(new ThemeRequest(ThemeMode.Dark, "grape"), systemIsDark: false);
 
         Assert.Equal("grape", resolution.PresetId);
         Assert.True(resolution.IsDark);
         Assert.True(resolution.Palette.IsDark);
+    }
+
+    [Fact]
+    public void 预置与锁定的明暗冲突时以明暗为准()
+    {
+        // ⚠️ 这是**兼容性**要求：`theme` 以前是老线/QML 线的主题名，
+        //    老配置里完全可能是 "ui_theme=light + theme=dark"（那时以 ui_theme 为准）。
+        //    升级到本版后必须还是浅色，不能被预置翻掉 —— 2.0.6 的常驻探针抓出来的真问题。
+        var light = ThemeResolver.Resolve(new ThemeRequest(ThemeMode.Light, "dark"), systemIsDark: false);
+        Assert.Equal("light", light.PresetId);
+        Assert.False(light.IsDark);
+
+        var lightWithColored = ThemeResolver.Resolve(new ThemeRequest(ThemeMode.Light, "grape"), systemIsDark: true);
+        Assert.Equal("light", lightWithColored.PresetId);
+        Assert.False(lightWithColored.IsDark);
+
+        var darkWithLightPreset = ThemeResolver.Resolve(new ThemeRequest(ThemeMode.Dark, "light"), systemIsDark: false);
+        Assert.Equal("dark", darkWithLightPreset.PresetId);
+        Assert.True(darkWithLightPreset.IsDark);
+    }
+
+    [Fact]
+    public void 面板上的选择项与真正生效的预置一致()
+    {
+        var settings = new AppSettings();
+
+        // 手改出来的冲突组合：面板要显示"深色"（真正生效的那个），而不是"浅色"
+        settings.UiTheme = ThemeMode.Light;
+        settings.Theme = "dark";
+        Assert.Equal("light", settings.ThemeChoice);
+
+        settings.SelectPreset("grape");
+        Assert.Equal("grape", settings.ThemeChoice);
     }
 
     [Fact]

@@ -238,9 +238,14 @@ public sealed class AppSettings
     /// <summary>
     /// 界面上「预置主题」一节的选择：`system`（跟随系统）或某个预置 id。
     /// <para>它就是"当前选中项"，不是新的存储字段 —— 跟随系统看 <c>ui_theme</c>，预置看 <c>theme</c>。</para>
+    /// <para>⚠️ 锁定明暗时返回的是**真正生效**的预置（预置与明暗冲突会退回中性预置，见
+    /// <see cref="ThemeResolver.ResolvePreset(ThemeMode, string?, bool)"/>）——
+    /// 面板上高亮的那一项必须与用户看到的一致，不能"选着葡萄紫、渲染的是浅色"。</para>
     /// </summary>
     [JsonIgnore]
-    public string ThemeChoice => UiTheme == ThemeMode.System ? ThemePresets.SystemId : ThemePresetId;
+    public string ThemeChoice => UiTheme == ThemeMode.System
+        ? ThemePresets.SystemId
+        : ThemeResolver.ResolvePreset(UiTheme, Theme, systemIsDark: false).Id;
 
     /// <summary>
     /// 选中一个预置：**同时**把明暗锁定成该预置的归属（深色系预置 ⇒ 锁定深色）。

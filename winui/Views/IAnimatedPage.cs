@@ -19,7 +19,11 @@ public interface IAnimatedPage
     /// 拖放落点指示线）不会随主题自动换色 —— 必须由代码直接赋值（memory/07 §4 的"表面按名字"）。
     /// 主题切换与页面创建时都会调用。</para>
     /// </summary>
-    void ApplyTheme(ThemePalette palette);
+    /// <param name="radiusScale">
+    /// 主题里 `radius` 参数的**倍率**（默认 1.0 ⇒ 界面设计圆角不变）。
+    /// 页面按自己的设计圆角（图块 6 / 列表行 4）乘这个倍率 —— 见 <see cref="ThemeScale"/>。
+    /// </param>
+    void ApplyTheme(ThemePalette palette, double radiusScale);
 
     /// <summary>
     /// 第一步：把页面置于"入场起始态"（**整页**不透明度 = 0，各容器也置起始态）。

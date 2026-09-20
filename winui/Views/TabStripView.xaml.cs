@@ -169,8 +169,12 @@ public sealed partial class TabStripView : UserControl
     /// <para>为什么标签栏要单独处理：WinUI 的**轻量样式覆盖**（同名资源键）**不会**跟着
     /// <c>RequestedTheme</c> 自动变色 —— 我们覆盖的那几个键是本控件的资源，
     /// 浅色主题下不换就会"选中标签白字白底"看不见。</para>
+    ///
+    /// <para>参数里还带两个主题度量：<paramref name="radiusScale"/>（`radius` 参数倍率，
+    /// 落到标签栏外框与标签项的圆角）与 <paramref name="hoverScale"/>（`hover_ms` 参数倍率，
+    /// 只用在"图标槽展开/收起"这个悬停动画上；默认都是 1.0 ⇒ 与现在一模一样）。</para>
     /// </summary>
-    public void ApplyTheme(ThemePalette palette)
+    public void ApplyTheme(ThemePalette palette, double radiusScale = 1, double hoverScale = 1)
     {
         void Set(string key, (byte A, byte R, byte G, byte B) value)
             => Resources[key] = new SolidColorBrush(
@@ -201,6 +205,48 @@ public sealed partial class TabStripView : UserControl
             Windows.UI.Color.FromArgb(palette.Accent.A, palette.Accent.R, palette.Accent.G, palette.Accent.B));
         Resources["AccentBrushDark"] = accent;
         ApplyAccentToRealizedSelectionBars(accent);
+
+        // 主题圆角 + 悬停时长（默认参数下这两步都是恒等变换）
+        _cornerScale = radiusScale;
+        _hoverScale = hoverScale;
+        StripSurface.CornerRadius = ThemeScale.Corners(DesignStripCornerRadius, _cornerScale);
+        ApplyCornerRadiusToRealizedTabs();
+        ApplyHoverDurationToSlots();   // 只改时长，不动展开状态（别把正在悬停的那一项收起来）
+    }
+
+    /// <summary>把新的悬停时长下发给已登记的图标槽（`hover_ms` 参数）。</summary>
+    private void ApplyHoverDurationToSlots()
+    {
+        foreach (var (_, slot) in _slots)
+        {
+            slot.DurationMs = HoverDurationMs;
+        }
+    }
+
+    /// <summary>标签栏外框 / 标签项的设计圆角（DIP）。</summary>
+    private const double DesignStripCornerRadius = 6;
+
+    private const double DesignTabCornerRadius = 5;
+
+    /// <summary>主题圆角倍率（`radius` 参数；默认 1.0）。</summary>
+    private double _cornerScale = 1;
+
+    /// <summary>主题悬停时长倍率（`hover_ms` 参数；默认 1.0）。</summary>
+    private double _hoverScale = 1;
+
+    /// <summary>图标槽的悬停动画时长 =「动效」节的时长 × 主题倍率。</summary>
+    private int HoverDurationMs => ThemeScale.HoverDuration(_spec.DurationMs, _hoverScale);
+
+    /// <summary>把圆角写给"已经实现出来"的标签项容器（新实现/回收的走 ContainerContentChanging）。</summary>
+    private void ApplyCornerRadiusToRealizedTabs()
+    {
+        for (int i = 0; i < Tabs.Items.Count; i++)
+        {
+            if (Tabs.ContainerFromIndex(i) is Control container)
+            {
+                container.CornerRadius = ThemeScale.Corners(DesignTabCornerRadius, _cornerScale);
+            }
+        }
     }
 
     /// <summary>把强调条颜色直接写到"已经实现出来"的标签项上（含回收复用的容器）。</summary>
@@ -286,8 +332,15 @@ public sealed partial class TabStripView : UserControl
             return;
         }
 
-        slot.DurationMs = _spec.DurationMs;
+        slot.DurationMs = HoverDurationMs;
         _slots[tab] = slot;
+
+        // 主题圆角：标签项容器（ListViewItem）刚实现出来时也补一次
+        // ⚠️ 这里能拿到容器：模板 Loaded 时容器已经建好（TabHiddenSlotView 就在容器子树里）。
+        if (Tabs.ContainerFromItem(tab) is Control container)
+        {
+            container.CornerRadius = ThemeScale.Corners(DesignTabCornerRadius, _cornerScale);
+        }
 
         // 成对登记：容器被回收/换数据源时要把它从表里摘掉，否则这张强引用表只增不减
         // （条目本身不会重复 Loaded，但**同一个插槽控件**可能被复用给另一个标签，
@@ -315,7 +368,7 @@ public sealed partial class TabStripView : UserControl
 
         foreach (var (tab, slot) in _slots)
         {
-            slot.DurationMs = _spec.DurationMs;
+            slot.DurationMs = HoverDurationMs;
             slot.IsExpanded = CurrentIconMode == TabIconMode.Always;
         }
 
@@ -334,7 +387,7 @@ public sealed partial class TabStripView : UserControl
 
         foreach (var (candidate, slot) in _slots)
         {
-            slot.DurationMs = _spec.DurationMs;
+            slot.DurationMs = HoverDurationMs;
             slot.IsExpanded = ReferenceEquals(candidate, tab);
         }
     }

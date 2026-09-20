@@ -22,9 +22,22 @@ public sealed partial class SettingsPanel : UserControl
     private bool _syncingUi;
     private string? _dataDirectory;
 
+    /// <summary>当前生效的主题解析结果（由宿主下发）—— 滑杆显示的是**生效值**，不是"文件里写过什么"。</summary>
+    private ThemeResolution? _theme;
+
+    /// <summary>「外观微调」的滑杆/标签/数值文字，按参数 key 索引（只建一次）。</summary>
+    private readonly Dictionary<string, Slider> _tuningSliders = new(StringComparer.Ordinal);
+
+    private readonly Dictionary<string, TextBlock> _tuningLabels = new(StringComparer.Ordinal);
+
+    private readonly Dictionary<string, TextBlock> _tuningValues = new(StringComparer.Ordinal);
+
+    private bool _tuningBuilt;
+
     public SettingsPanel()
     {
         InitializeComponent();
+        BuildTuningPanel();
     }
 
     /// <summary>某项设置已改并落盘 —— 宿主据此重新套用界面。</summary>
@@ -64,6 +77,18 @@ public sealed partial class SettingsPanel : UserControl
         SyncUiFromModel();
     }
 
+    /// <summary>
+    /// 宿主下发"当前生效的主题"（生效预置 + 解析后的 8 个参数）。
+    /// <para>⚠️ 为什么不由面板自己算：生效预置要看"系统是不是深色"（跟随系统那一档），
+    /// 那是窗口才知道的事；面板只该显示结果（与"界面主题"一节同一条纪律：
+    /// 同一份值只有一个来源，别两处各算一遍）。</para>
+    /// </summary>
+    public void ApplyThemeResolution(ThemeResolution resolution)
+    {
+        _theme = resolution;
+        SyncTuningFromModel();
+    }
+
     /// <summary>显示数据目录（"数据"一节里的那行小字）—— 由宿主传入，面板不去定位路径。</summary>
     public void SetDataDirectory(string? path)
     {
@@ -83,6 +108,7 @@ public sealed partial class SettingsPanel : UserControl
         AnimationSwitch.OnContent = I18n.T("settings.animations.on");
         AnimationSwitch.OffContent = I18n.T("settings.animations.off");
         RefreshDataDirectoryText();
+        RefreshTuningLabels();   // 参数名来自 Core 的规格表（按语言取），不在 XAML 里
     }
 
     private void RefreshDataDirectoryText()
@@ -119,12 +145,8 @@ public sealed partial class SettingsPanel : UserControl
         _syncingUi = true;
         try
         {
-            UiThemeChoices.SelectedIndex = _settings.UiTheme switch
-            {
-                ThemeMode.Light => 1,
-                ThemeMode.Dark => 2,
-                _ => 0,
-            };
+            // 「跟随系统」+ 5 个预置（顺序必须与 XAML 里那 6 个 RadioButton 一致 —— 见 ThemeChoiceOrder）
+            ThemeChoices.SelectedIndex = Math.Max(0, Array.IndexOf(ThemeChoiceOrder, _settings.ThemeChoice));
 
             BackdropBox.SelectedIndex = Array.IndexOf(
                 BackdropKinds.All, _settings.Backdrop) is var backdropIndex && backdropIndex >= 0
@@ -167,7 +189,13 @@ public sealed partial class SettingsPanel : UserControl
         // StackPanel 不是 Control，没有 IsEnabled —— 用"不吃命中 + 变淡"表达禁用
         AnimationDetails.IsHitTestVisible = _settings.AnimationsEnabled;
         AnimationDetails.Opacity = _settings.AnimationsEnabled ? 1 : 0.45;
+
+        SyncTuningFromModel();
     }
+
+    /// <summary>「外观微调」6 个选项的顺序（`system` + 5 个预置）—— 必须与 XAML 里那 6 个 RadioButton 一致。</summary>
+    private static readonly string[] ThemeChoiceOrder =
+        new[] { ThemePresets.SystemId }.Concat(ThemePresets.Ids).ToArray();
 
     // ────────────────────────────── 控件 → 模型 ──────────────────────────────
 
@@ -194,13 +222,162 @@ public sealed partial class SettingsPanel : UserControl
         }
     }
 
-    private void OnUiThemeChanged(object sender, SelectionChangedEventArgs e)
+    // ────────────────────────────── 主题 / 外观微调（v2.0.6）──────────────────────────────
+    //
+    // 两层结构，别混：
+    //   · 「预置主题」= 5 个预置 + 跟随系统（内存里就是 `theme` 与 `ui_theme` 两个字段，见 AppSettings）；
+    //   · 「外观微调」= 8 个参数里的 6 个，滑杆**按 Core 的规格表生成**（ThemeParamSpecs.Adjustable），
+    //     值存在 `theme_overrides` 的 `param:<key>`（与原版/QML 线完全同一套键名 ⇒ 双向兼容）。
+    //
+    // ⚠️ 滑杆的值一律来自宿主下发的**生效值**（`_theme.Params`）：这样"切预置之后滑杆跟着走到新预置的
+    //    默认位置"，用户看到的就是当前真实生效的参数，而不是"文件里写过什么"。
+
+    /// <summary>点某个主题选项：跟随系统 ⇒ 写 `ui_theme=system`；具体预置 ⇒ 同时锁定明暗。</summary>
+    private void OnThemeChoiceChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (UiThemeChoices.SelectedItem is RadioButton { Tag: string wire })
+        if (ThemeChoices.SelectedItem is not RadioButton { Tag: string choice })
         {
-            Apply(s => s.UiTheme = ThemeTokens.ParseMode(wire));
+            return;
+        }
+
+        Apply(s =>
+        {
+            if (choice == ThemePresets.SystemId)
+            {
+                s.UiTheme = ThemeMode.System;
+            }
+            else
+            {
+                s.SelectPreset(choice);
+            }
+        });
+    }
+
+    /// <summary>按 Core 的规格表把「外观微调」的控件树建起来（只建一次）。</summary>
+    private void BuildTuningPanel()
+    {
+        if (_tuningBuilt)
+        {
+            return;
+        }
+
+        _tuningBuilt = true;
+
+        foreach (var spec in ThemeParamSpecs.Adjustable)
+        {
+            var label = new TextBlock { FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
+            var valueText = new TextBlock
+            {
+                FontSize = 11,
+                Opacity = 0.6,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+
+            var header = new Grid();
+            header.Children.Add(label);
+            header.Children.Add(valueText);
+
+            var slider = new Slider
+            {
+                Minimum = spec.UiMin,
+                Maximum = spec.UiMax,
+                StepFrequency = spec.Step,
+                SmallChange = spec.Step,
+                LargeChange = spec.Step * 5,
+            };
+            slider.ValueChanged += (_, args) => OnTuningChanged(spec, args.NewValue);
+
+            var block = new StackPanel { Spacing = 2 };
+            block.Children.Add(header);
+            block.Children.Add(slider);
+
+            TuningPanel.Children.Add(block);
+
+            _tuningSliders[spec.Key] = slider;
+            _tuningLabels[spec.Key] = label;
+            _tuningValues[spec.Key] = valueText;
+        }
+
+        RefreshTuningLabels();
+    }
+
+    /// <summary>参数名按当前语言写一遍（名字来自 Core 的规格表，与 XAML 无关）。</summary>
+    private void RefreshTuningLabels()
+    {
+        foreach (var spec in ThemeParamSpecs.Adjustable)
+        {
+            if (_tuningLabels.TryGetValue(spec.Key, out var label))
+            {
+                label.Text = spec.Label(I18n.Current);
+            }
         }
     }
+
+    /// <summary>把"生效值"写到滑杆与数值文字上（内部会打开 `_syncingUi` 闸门，不会反向落盘）。</summary>
+    private void SyncTuningFromModel()
+    {
+        if (!_tuningBuilt || _theme is null)
+        {
+            return;
+        }
+
+        bool previous = _syncingUi;
+        _syncingUi = true;
+        try
+        {
+            foreach (var spec in ThemeParamSpecs.Adjustable)
+            {
+                var value = _theme.Params.Get(spec.Key);
+
+                if (_tuningSliders.TryGetValue(spec.Key, out var slider)
+                    && Math.Abs(slider.Value - value) > spec.Step / 2)
+                {
+                    slider.Value = value;   // 只在"真的不一样"时写：免得拖到一半被自己弹回去
+                }
+
+                if (_tuningValues.TryGetValue(spec.Key, out var text))
+                {
+                    text.Text = FormatParamValue(spec, value);
+                }
+            }
+        }
+        finally
+        {
+            _syncingUi = previous;
+        }
+    }
+
+    /// <summary>参数值的显示格式：步长小于 1 的按两位小数（不透明度），其余取整（圆角 / 毫秒）。</summary>
+    private static string FormatParamValue(ThemeParamSpec spec, double value)
+        => spec.Step < 1 ? value.ToString("0.00") : value.ToString("0");
+
+    /// <summary>拖动某个滑杆 —— 与预置默认值相同的就**不写覆盖**（保持 config.json 干净）。</summary>
+    private void OnTuningChanged(ThemeParamSpec spec, double value)
+    {
+        if (_syncingUi || _settings is null)
+        {
+            return;
+        }
+
+        var presetDefault = _theme?.Preset.ParamOrDefault(spec.Key) ?? spec.Default;
+
+        Apply(s =>
+        {
+            if (Math.Abs(value - presetDefault) <= spec.Step / 2)
+            {
+                s.RemoveThemeParamOverride(spec.Key);
+            }
+            else
+            {
+                s.SetThemeParamOverride(spec.Key, value);
+            }
+        });
+    }
+
+    /// <summary>「恢复默认外观」= 清掉全部主题细调（颜色 + 参数），回到当前预置的原样。</summary>
+    private void OnResetTuningClick(object sender, RoutedEventArgs e)
+        => Apply(s => s.ClearThemeOverrides());
 
     private void OnTabIconModeChanged(object sender, SelectionChangedEventArgs e)
     {

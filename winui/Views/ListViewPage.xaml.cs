@@ -47,6 +47,16 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
 
         _entrance = new EntranceAnimator(Rows);
 
+        // 主题圆角（`radius` 参数）：新实现/回收再利用的行容器也要补一次，
+        // 否则"改了圆角之后才滚动出来"的行还是样式里那个旧值。
+        Rows.ContainerContentChanging += (_, args) =>
+        {
+            if (!args.InRecycleQueue && args.ItemContainer is Control container)
+            {
+                container.CornerRadius = ThemeScale.Corners(DesignCornerRadius, _cornerScale);
+            }
+        };
+
         // ⚠️ 不再挂 PointerPressed / DragStarting / DragItemsStarting —— 实测**全都收不到**
         //    （ERROR.md E25）。拖动链路只靠：目标端 DragOver（登记落点）+ 源端 DragItemsCompleted
         //    （带着 args.Items 与 DropResult 来收口）。
@@ -175,11 +185,34 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
     /// <summary>
     /// 拖放落点指示线用的是本项目注入的固定键（`AccentBrushDark`）——
     /// **它不随主题变**，所以这里按当前令牌直接赋值（切主题与页面创建时都会调用）。
+    ///
+    /// <para>顺带把主题的圆角倍率落到列表行容器上（`radius` 参数，默认倍率 1.0 ⇒ 不变）。</para>
     /// </summary>
-    public void ApplyTheme(ThemePalette palette)
+    public void ApplyTheme(ThemePalette palette, double radiusScale)
     {
         var (a, r, g, b) = palette.Accent;
         DropIndicator.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(a, r, g, b));
+
+        _cornerScale = radiusScale;
+        ApplyCornerRadiusToRealizedRows();
+    }
+
+    /// <summary>列表行的设计圆角（DIP）—— `radius` 参数默认值时就是它本身。</summary>
+    private const double DesignCornerRadius = 4;
+
+    /// <summary>当前主题的圆角倍率（默认 1.0）。</summary>
+    private double _cornerScale = 1;
+
+    /// <summary>把圆角写给"已经实现出来"的行容器（新实现/回收的走 ContainerContentChanging）。</summary>
+    private void ApplyCornerRadiusToRealizedRows()
+    {
+        for (int i = 0; i < _tab.VisibleListItems.Count; i++)
+        {
+            if (Rows.ContainerFromIndex(i) is Control container)
+            {
+                container.CornerRadius = ThemeScale.Corners(DesignCornerRadius, _cornerScale);
+            }
+        }
     }
 
     /// <summary>置于入场起始态（整页不透明度 = 0）。必须在页面可见之前调用。</summary>

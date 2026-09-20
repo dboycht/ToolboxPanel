@@ -6,9 +6,9 @@
 //
 // 外加本项目自己的两条（原版没有的）规则，都在这里写清楚：
 //
-//   ① **明暗由预置决定**：`ui_theme` 里的 `light`/`dark` 只是"锁定明暗"，真正决定控件主题与
-//      调色板的是**生效预置**（`midnight`/`grape`/`matcha` 都是深色系 —— 与原版一致）。
-//      这样就不会出现"浅色底 + 深色控件"这种自相矛盾的组合。
+//   ① **明暗与预置必须一致**：`ui_theme` 的 `light`/`dark` 是"锁定明暗"，`theme` 是预置。
+//      两者冲突时以**明暗**为准（预置退回该明暗的中性预置）—— 这样既不会出现
+//      "浅色底 + 深色控件"，也保住了老配置（`theme` 以前是老线的主题名）的原有观感。
 //   ② **"跟随系统"是一种选择项**（`ui_theme=system`）：它不改变用户选的预置，
 //      只是本次运行时按系统明暗挑 `dark` / `light` 预置。
 //
@@ -96,21 +96,41 @@ public static class ThemeResolver
     // ────────────────────────────── 生效预置 ──────────────────────────────
 
     /// <summary>
-    /// 挑出真正生效的预置：
-    /// <list type="bullet">
-    ///   <item>跟随系统 ⇒ 系统深色用 <c>dark</c>、系统浅色用 <c>light</c>（**不**用用户选的彩色预置）；</item>
-    ///   <item>锁定浅/深 ⇒ 用用户选的预置；预置名认不出时回落该明暗的中性预置。</item>
+    /// 挑出真正生效的预置。
+    ///
+    /// <para>规则（顺序即优先级）：</para>
+    /// <list type="number">
+    ///   <item><b>跟随系统</b> ⇒ 系统深色用 <c>dark</c>、系统浅色用 <c>light</c>
+    ///     （此时用户选的彩色预置不参与 —— 否则"系统浅色 + 葡萄紫"会做出浅底深字的怪东西）；</item>
+    ///   <item><b>锁定浅/深</b> ⇒ 用用户选的预置，**但预置必须与锁定的明暗一致**：
+    ///     不一致就退回该明暗的中性预置。</item>
     /// </list>
+    ///
+    /// <para>⚠️ 第 2 条的"必须一致"是**兼容性要求**，不是洁癖：`theme` 这个字段以前是**老线/QML 线的主题名**，
+    /// 老配置里完全可能是"<c>ui_theme=light</c> + <c>theme=dark</c>"这种组合 ——
+    /// 那时以 `ui_theme` 为准，升级到本版后必须**还是**浅色。
+    /// 界面上的「预置主题」一节总是把两者写成一致的（见 <see cref="AppSettings.SelectPreset"/>），
+    /// 所以这条退路只对手改/老配置生效。</para>
     /// </summary>
-    public static ThemePreset ResolvePreset(ThemeRequest request, bool systemIsDark)
+    public static ThemePreset ResolvePreset(ThemeMode mode, string? presetId, bool systemIsDark)
     {
-        if (request.Mode == ThemeMode.System)
+        if (mode == ThemeMode.System)
         {
             return systemIsDark ? ThemePresets.Dark : ThemePresets.Light;
         }
 
-        return ThemePresets.Find(request.PresetId)
-            ?? (request.Mode == ThemeMode.Light ? ThemePresets.Light : ThemePresets.Dark);
+        bool wantDark = mode == ThemeMode.Dark;
+        var neutral = wantDark ? ThemePresets.Dark : ThemePresets.Light;
+        var chosen = ThemePresets.Find(presetId);
+
+        return chosen is not null && chosen.IsDark == wantDark ? chosen : neutral;
+    }
+
+    /// <summary>同上，直接吃一个解析请求。</summary>
+    public static ThemePreset ResolvePreset(ThemeRequest request, bool systemIsDark)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return ResolvePreset(request.Mode, request.PresetId, systemIsDark);
     }
 
     // ────────────────────────────── 颜色：预置 + 逐令牌覆盖 ──────────────────────────────

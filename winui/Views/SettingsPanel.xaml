@@ -62,15 +62,35 @@
         <ScrollViewer Grid.Row="1" Padding="16,0,16,16">
             <StackPanel Spacing="8">
 
-                <!-- ── 主题 ── -->
+                <!-- ── 主题 ──
+                     主题 =「跟随系统」+ 5 个预置（原版 theme.py 的 PRESETS，颜色逐字照抄）。
+                     ⚠️ 点具体预置会**同时锁定明暗**（午夜蓝/葡萄紫/抹茶绿都是深色系）——
+                        不这么做就会出现"系统是浅色、用户却选了午夜蓝"这种自相矛盾（见 Core 的 ThemeResolver）。
+                     文案全部用现成 key（**没有新增任何文案**）：settings.theme.system /
+                     theme.dark / theme.light / theme.midnight / theme.grape / theme.matcha。 -->
                 <TextBlock ui:Tr.Key="settings.section.theme" Style="{StaticResource SectionHeaderStyle}" />
-                <RadioButtons x:Name="UiThemeChoices" ui:Tr.Header="settings.ui_theme"
-                              SelectionChanged="OnUiThemeChanged">
+                <RadioButtons x:Name="ThemeChoices" ui:Tr.Header="settings.ui_theme" MaxColumns="3"
+                              SelectionChanged="OnThemeChoiceChanged">
                     <RadioButton ui:Tr.Key="settings.theme.system" Tag="system" />
-                    <RadioButton ui:Tr.Key="theme.light" Tag="light" />
                     <RadioButton ui:Tr.Key="theme.dark" Tag="dark" />
+                    <RadioButton ui:Tr.Key="theme.light" Tag="light" />
+                    <RadioButton ui:Tr.Key="theme.midnight" Tag="midnight" />
+                    <RadioButton ui:Tr.Key="theme.grape" Tag="grape" />
+                    <RadioButton ui:Tr.Key="theme.matcha" Tag="matcha" />
                 </RadioButtons>
                 <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.theme.hint" />
+
+                <!-- ── 外观微调 ──
+                     滑杆**由代码按 Core 的规格表生成**（ThemeParamSpecs.Adjustable）：
+                     参数名 / 区间 / 步长 / 中英标签只有一处来源（原版就是拿 PARAM_SPECS 自动铺控件的）。
+                     ⚠️ 8 个参数里有两个不在这一节里，理由写在 Core 的 ThemeParamSpecs 注释：
+                        · blur_radius —— 系统材质不暴露模糊半径，我们不掌握那一层，不能假装能调；
+                        · anim_ms —— 与「动效」节的"时长"是同一个值（2026-09-20 与用户确认：不搞两处调同一个东西）。 -->
+                <TextBlock ui:Tr.Key="settings.tuning" Style="{StaticResource SectionHeaderStyle}" />
+                <StackPanel x:Name="TuningPanel" Spacing="8" />
+                <Button x:Name="ResetTuningButton" ui:Tr.Key="settings.reset" Margin="0,4,0,0"
+                        Click="OnResetTuningClick" />
+                <TextBlock Style="{StaticResource SectionHintStyle}" ui:Tr.Key="settings.tuning_hint" />
 
                 <!-- ── 窗口 ── -->
                 <TextBlock ui:Tr.Key="settings.section.window" Style="{StaticResource SectionHeaderStyle}" />

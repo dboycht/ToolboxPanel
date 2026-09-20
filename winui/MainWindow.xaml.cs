@@ -293,117 +293,167 @@ public sealed partial class MainWindow : Window
     /// </summary>
     private ElementTheme CurrentElementTheme => _themePalette.IsDark ? ElementTheme.Dark : ElementTheme.Light;
 
-    /// <summary>把令牌灌进应用级资源（**幂等**：XAML 每次加载都会重新解析资源引用，字典只需建一次）。</summary>
+    /// <summary>
+    /// 启动时先把**两个中性基调**（深/浅）灌进应用级资源，让 XAML 里的
+    /// `{ThemeResource XxxDark}` 一开始就有一个合理值；真正生效的那一份由
+    /// <see cref="ApplyTheme"/> 里 <see cref="InjectThemeResources"/> 按当前预置覆盖。
+    /// </summary>
     private static void EnsureThemeResources()
     {
+        InjectThemeResources(ThemeTokens.Dark);
+        InjectThemeResources(ThemeTokens.Light);
+    }
+
+    /// <summary>
+    /// 把一套令牌灌进应用级资源键（键形如 `PanelSurfaceDark` / `AccentBrushLight`）。
+    ///
+    /// <para>为什么必须**应用级**：设置面板是独立 UserControl，只有应用级资源才拿得到同一套颜色。</para>
+    /// <para>⚠️ 为什么每次 <see cref="ApplyTheme"/> 都要重灌一遍：XAML 里引用的键名是**写死的**
+    /// （`XxxDark`），预置/参数一变、而某些元素是**之后才创建**的（页面、弹层），
+    /// 它们会读到启动时那份基线值 ⇒ 颜色与新主题对不上。重灌一次成本极低，且与
+    /// "切主题时直接改已实现元素"那条纪律（ERROR.md E19）互为补充。</para>
+    /// </summary>
+    private static void InjectThemeResources(ThemePalette palette)
+    {
         var resources = Application.Current.Resources;
-        if (resources.ContainsKey("PanelSurfaceBrush"))
-        {
-            return;
-        }
+        var suffix = palette.IsDark ? "Dark" : "Light";
 
-        void Add(string key, ThemePalette palette, Func<ThemePalette, (byte A, byte R, byte G, byte B)> pick)
-        {
-            var (a, r, g, b) = pick(palette);
-            resources[key] = new SolidColorBrush(Color.FromArgb(a, r, g, b));
-        }
+        void Add(string key, (byte A, byte R, byte G, byte B) value)
+            => resources[key] = new SolidColorBrush(Color.FromArgb(value.A, value.R, value.G, value.B));
 
-        foreach (var palette in new[] { ThemeTokens.Dark, ThemeTokens.Light })
-        {
-            var suffix = palette.IsDark ? "Dark" : "Light";
-
-            // 令牌名 → Brush。键名与 XAML 里的 {StaticResource} 一一对应。
-            Add($"PanelSurface{suffix}", palette, p => p.PanelSurface);
-            Add($"PanelBorder{suffix}", palette, p => p.PanelBorder);
-            Add($"OverlaySurface{suffix}", palette, p => p.Overlay);
-            Add($"StatusSurface{suffix}", palette, p => p.StatusSurface);
-            Add($"TabStripSurface{suffix}", palette, p => p.TabStripSurface);
-            Add($"TabStripBorder{suffix}", palette, p => p.TabStripBorder);
-            Add($"CardSurface{suffix}", palette, p => p.CardSurface);
-            Add($"HoverSurface{suffix}", palette, p => p.HoverSurface);
-            Add($"PressedSurface{suffix}", palette, p => p.PressedSurface);
-            Add($"SelectedSurface{suffix}", palette, p => p.SelectedSurface);
-            Add($"AccentBrush{suffix}", palette, p => p.Accent);
-            Add($"DividerBrush{suffix}", palette, p => p.Divider);
-            Add($"TitleBarButtonForeground{suffix}", palette, p => p.TitleBarButtonForeground);
-            Add($"TitleBarButtonInactiveForeground{suffix}", palette, p => p.TitleBarButtonInactiveForeground);
-            Add($"TitleBarButtonHover{suffix}", palette, p => p.TitleBarButtonHoverBackground);
-            Add($"TitleBarButtonPressed{suffix}", palette, p => p.TitleBarButtonPressedBackground);
-        }
+        // 令牌名 → Brush。键名与 XAML 里的 {StaticResource} 一一对应。
+        Add($"PanelSurface{suffix}", palette.PanelSurface);
+        Add($"PanelBorder{suffix}", palette.PanelBorder);
+        Add($"OverlaySurface{suffix}", palette.Overlay);
+        Add($"StatusSurface{suffix}", palette.StatusSurface);
+        Add($"TabStripSurface{suffix}", palette.TabStripSurface);
+        Add($"TabStripBorder{suffix}", palette.TabStripBorder);
+        Add($"CardSurface{suffix}", palette.CardSurface);
+        Add($"HoverSurface{suffix}", palette.HoverSurface);
+        Add($"PressedSurface{suffix}", palette.PressedSurface);
+        Add($"SelectedSurface{suffix}", palette.SelectedSurface);
+        Add($"AccentBrush{suffix}", palette.Accent);
+        Add($"DividerBrush{suffix}", palette.Divider);
+        Add($"TitleBarButtonForeground{suffix}", palette.TitleBarButtonForeground);
+        Add($"TitleBarButtonInactiveForeground{suffix}", palette.TitleBarButtonInactiveForeground);
+        Add($"TitleBarButtonHover{suffix}", palette.TitleBarButtonHoverBackground);
+        Add($"TitleBarButtonPressed{suffix}", palette.TitleBarButtonPressedBackground);
     }
 
     /// <summary>按 `--theme=` 临时覆盖（开发/验证用，**不落盘**）。</summary>
     private string? _themeOverride;
 
-    /// <summary>套用界面主题：换令牌 + 跟根 Grid 的 RequestedTheme，并刷新标题栏按钮与手写的画刷。</summary>
+    /// <summary>当前生效的主题解析结果（生效预置 + 令牌 + 参数）。</summary>
+    private ThemeResolution _themeResolution = ThemeResolver.Resolve(
+        new ThemeRequest(ThemeMode.System, ThemePresets.DefaultId), systemIsDark: true);
+
+    /// <summary>
+    /// 套用界面主题：**解析（预置 + 参数 + 逐令牌覆盖）→ 令牌 → 根元素 RequestedTheme →
+    /// 各处的画刷与度量**。
+    ///
+    /// <para>⚠️ 两条必须守住的规则：</para>
+    /// <list type="number">
+    ///   <item><b>明暗与预置必须一致</b>：`ui_theme` 锁定明暗、`theme` 是预置；两者冲突时以明暗为准
+    ///     （预置退回中性预置）⇒ 既不会"浅色底 + 深色控件"，老配置的观感也不会被翻掉；</item>
+    ///   <item><b>改 `RequestedTheme` 之前必须先摘掉 SystemBackdrop</b>（ERROR.md E16 的崩溃）。</item>
+    /// </list>
+    /// </summary>
     private void ApplyTheme()
     {
-        var mode = _themeOverride is null
-            ? (_settingsData?.UiTheme ?? ThemeMode.System)
-            : ThemeTokens.ParseMode(_themeOverride);
+        var settings = _settingsData ?? new AppSettings();
+        var mode = _themeOverride is null ? settings.UiTheme : ThemeTokens.ParseMode(_themeOverride);
+        var request = ThemeResolver.FromSettings(settings) with { Mode = mode };
 
-        // "跟随系统"要让根元素回到 Default（= 跟随系统），否则一旦被强制过就再也回不去系统了。
-        // 具体生效的深浅由 ApplyThemeToHandWrittenBrushes 里读 RootGrid.ActualTheme 决定 ——
-        // ⚠️ ElementTheme 与 ApplicationTheme 是两个不同的类型，不能直接比较（会 CS0019）。
-        if (RootGrid is not null)
+        // ① 先把 RequestedTheme 拨到 ui_theme 要的那一档（跟随系统 ⇒ Default），
+        //    这一步决定"ActualTheme 是不是系统的真实深浅"。
+        ApplyRequestedTheme(mode switch
         {
-            var requested = mode switch
-            {
-                ThemeMode.Light => ElementTheme.Light,
-                ThemeMode.Dark => ElementTheme.Dark,
-                _ => ElementTheme.Default,
-            };
+            ThemeMode.Light => ElementTheme.Light,
+            ThemeMode.Dark => ElementTheme.Dark,
+            _ => ElementTheme.Default,
+        });
 
-            if (RootGrid.RequestedTheme != requested)
-            {
-                // ⚠️⚠️ 改 `RequestedTheme` 之前**必须先摘掉 SystemBackdrop**（用户实测的崩溃，见 ERROR.md E16）：
-                //    主题一变，WinUI 会把"默认背景配置变了"通知给当前挂着的 backdrop
-                //    （`SystemBackdrop.OnDefaultSystemBackdropConfigurationChanged`），
-                //    这一步会抛 `System.ArgumentException: 参数错误`（XamlUnhandledException ⇒ 直接崩）。
-                //    摘掉之后再改，就没有 backdrop 可通知了。
-                bool detached = SystemBackdrop is not null;
-                if (detached)
-                {
-                    SystemBackdrop = null;
-                }
+        // ② 系统深浅：Default 档下 ActualTheme 就是系统值；强制档下这个值用不到
+        //    （生效预置由设置里的预置名决定 —— 见 ThemeResolver.ResolvePreset）。
+        bool systemIsDark = RootGrid is null || RootGrid.ActualTheme == ElementTheme.Dark;
 
-                try
-                {
-                    RootGrid.RequestedTheme = requested;
-                }
-                catch (Exception ex)
-                {
-                    // 换主题失败不该把窗口搞挂：落盘 + 继续（保持原主题）
-                    App.WriteCrash("ApplyTheme/RequestedTheme", ex);
-                }
+        // ③ 解析主题（预置 → 参数覆盖 → 逐令牌覆盖）
+        var resolution = ThemeResolver.Resolve(request, systemIsDark);
+        _themeResolution = resolution;
+        _themePalette = resolution.Palette;
 
-                // 自己挂回来：`ApplyAllSettings` 随后也会再挂一次（那一步是幂等的），
-                // 但如果本次是从别处（例如只改主题）调用，没有第二次机会 —— 所以这里必须兜住，
-                // 否则窗口会永久失去材质（表现就是"玻璃没了"）。
-                if (detached)
-                {
-                    ApplyBackdrop(_settingsData?.Backdrop ?? BackdropKinds.Mica);
-                }
-            }
+        // ④ 锁定档下若预置的明暗与①设的不一致（只可能来自手改配置），以预置为准再拨一次
+        if (mode != ThemeMode.System)
+        {
+            ApplyRequestedTheme(resolution.IsDark ? ElementTheme.Dark : ElementTheme.Light);
         }
 
-        // 真正的深浅：强制模式直接定；"跟随系统"读根元素的生效主题
-        // （刚把 RequestedTheme 设成 Default 后，ActualTheme 就是系统的深浅）。
-        bool isDark = mode switch
-        {
-            ThemeMode.Light => false,
-            ThemeMode.Dark => true,
-            _ => RootGrid is null || RootGrid.ActualTheme == ElementTheme.Dark,
-        };
-
-        var palette = ThemeTokens.Resolve(mode, systemIsDark: isDark);
-        _themePalette = palette;
-
+        InjectThemeResources(resolution.Palette);
         ApplyThemeToHandWrittenBrushes();
-        TabStrip.ApplyTheme(palette);
+        TabStrip.ApplyTheme(resolution.Palette, resolution.Params.RadiusScale, resolution.HoverScale);
+        ApplyThemeCornerRadius();
+        Settings.ApplyThemeResolution(resolution);   // 面板的「外观微调」滑杆显示的就是这份生效值
         Settings.Refresh();
         RefreshSettingsButtonBackground();
-        _log.AppendLine($"主题 = {ThemeTokens.ToWire(mode)}（生效：{(palette.IsDark ? "深色" : "浅色")}）");
+        _log.AppendLine(
+            $"主题 = {resolution.PresetId}（ui_theme={ThemeTokens.ToWire(mode)}，"
+            + $"生效：{(resolution.IsDark ? "深色" : "浅色")}，圆角×{resolution.Params.RadiusScale:0.##}，"
+            + $"抽屉 {resolution.Params.SheetOpacity:0.##}，悬停×{resolution.HoverScale:0.##}）");
+    }
+
+    /// <summary>拨根元素的 <c>RequestedTheme</c>（**先摘 backdrop 再改**，见 ERROR.md E16）。</summary>
+    private void ApplyRequestedTheme(ElementTheme requested)
+    {
+        if (RootGrid is null || RootGrid.RequestedTheme == requested)
+        {
+            return;
+        }
+
+        bool detached = SystemBackdrop is not null;
+        if (detached)
+        {
+            SystemBackdrop = null;
+        }
+
+        try
+        {
+            RootGrid.RequestedTheme = requested;
+        }
+        catch (Exception ex)
+        {
+            // 换主题失败不该把窗口搞挂：落盘 + 继续（保持原主题）
+            App.WriteCrash("ApplyTheme/RequestedTheme", ex);
+        }
+
+        // 自己挂回来：`ApplyAllSettings` 随后也会再挂一次（那一步是幂等的），
+        // 但如果本次是从别处（例如只改主题）调用，没有第二次机会 —— 所以这里必须兜住，
+        // 否则窗口会永久失去材质（表现就是"玻璃没了"）。
+        if (detached)
+        {
+            ApplyBackdrop(_settingsData?.Backdrop ?? BackdropKinds.Mica);
+        }
+    }
+
+    /// <summary>
+    /// 主题的圆角倍率（`radius` 参数）落到主窗口自己持有的那几个圆角上。
+    ///
+    /// <para>⚠️ 设计值各不相同（搜索栏 6 / 状态栏 5 / 面板走自己的样子），
+    /// 一律**按倍率缩放**：默认参数 ⇒ ×1.0 ⇒ 与现在逐像素一致。
+    /// 图块与列表行由各自页面处理（见 <c>IAnimatedPage.ApplyTheme</c>）。</para>
+    /// </summary>
+    private void ApplyThemeCornerRadius()
+    {
+        double scale = _themeResolution.Params.RadiusScale;
+
+        if (SearchBar is not null)
+        {
+            SearchBar.CornerRadius = ThemeScale.Corners(6, scale);
+        }
+
+        if (StatusBar is not null)
+        {
+            StatusBar.CornerRadius = ThemeScale.Corners(5, scale);
+        }
     }
 
     /// <summary>当前是否真的用上了系统材质（由 <see cref="ApplyBackdrop"/> 更新）。</summary>
@@ -785,7 +835,8 @@ public sealed partial class MainWindow : Window
     private static string DescribeSettings(AppSettings settings)
         => $"材质={settings.Backdrop} 标签图标={settings.TabIconModeRaw ?? "默认hover"} "
            + $"显示数量={settings.ShowTabCounts} 动效={settings.AnimationsEnabled} "
-           + $"{settings.AnimationDurationMs}ms/{settings.AnimationStaggerMs}ms/{AppSettings.ToWire(settings.AnimationEasing)}";
+           + $"{settings.AnimationDurationMs}ms/{settings.AnimationStaggerMs}ms/{AppSettings.ToWire(settings.AnimationEasing)} "
+           + $"主题={settings.ThemeChoice} 外观细调={settings.ThemeParamOverrides().Count + settings.ThemeColorOverrides().Count} 项";
 
     /// <summary>把当前设置整体套用到界面（幂等：设置一变就整份重套，省掉"改一处忘一处"）。</summary>
     private void ApplyAllSettings()
@@ -800,7 +851,7 @@ public sealed partial class MainWindow : Window
         foreach (var page in _pages.Values.OfType<IAnimatedPage>())
         {
             page.ApplyAnimationSpec(settings.ToAnimationSpec());
-            page.ApplyTheme(_themePalette);   // 页面里的固定资源键（落点指示线等）随主题重绘
+            page.ApplyTheme(_themePalette, _themeResolution.Params.RadiusScale);   // 页面里的固定资源键（落点指示线等）随主题重绘
         }
 
         // 图标大小三档：只对网格页有意义（列表页没有图块，不实现这个契约）
@@ -2427,7 +2478,7 @@ public sealed partial class MainWindow : Window
         {
             if (page is IAnimatedPage animated)
             {
-                animated.ApplyTheme(_themePalette);
+                animated.ApplyTheme(_themePalette, _themeResolution.Params.RadiusScale);
             }
 
             if (page is IIconSizedPage sized)
