@@ -222,6 +222,152 @@ public sealed class AppSettings
         set => UiThemeRaw = ThemeTokens.ToWire(value);
     }
 
+    /// <summary>
+    /// 主题预置 id（`theme` 字段；认不出的值一律归一化到默认预置）。
+    ///
+    /// <para>⚠️ 这个字段是**老线/QML 线也在用的**（原版 `theme.py` 的 `PRESETS` 就存这儿），
+    /// 所以取值集合必须与原版一致：dark / light / midnight / grape / matcha。</para>
+    /// </summary>
+    [JsonIgnore]
+    public string ThemePresetId
+    {
+        get => ThemePresets.Normalize(Theme);
+        set => Theme = ThemePresets.Normalize(value);
+    }
+
+    /// <summary>
+    /// 界面上「预置主题」一节的选择：`system`（跟随系统）或某个预置 id。
+    /// <para>它就是"当前选中项"，不是新的存储字段 —— 跟随系统看 <c>ui_theme</c>，预置看 <c>theme</c>。</para>
+    /// </summary>
+    [JsonIgnore]
+    public string ThemeChoice => UiTheme == ThemeMode.System ? ThemePresets.SystemId : ThemePresetId;
+
+    /// <summary>
+    /// 选中一个预置：**同时**把明暗锁定成该预置的归属（深色系预置 ⇒ 锁定深色）。
+    ///
+    /// <para>为什么要一起写 `ui_theme`：预置已经决定了明暗，再留着"跟随系统"就会出现
+    /// "系统是浅色、用户却选了午夜蓝"这种自相矛盾（`ThemeResolver.ResolvePreset` 里那条
+    /// "明暗由预置决定"的规则也是为此）。选「跟随系统」请直接写 <see cref="UiTheme"/> = System。</para>
+    /// </summary>
+    public void SelectPreset(string? presetId)
+    {
+        var preset = ThemePresets.Find(presetId) ?? ThemePresets.Dark;
+        Theme = preset.Id;
+        UiTheme = preset.IsDark ? ThemeMode.Dark : ThemeMode.Light;
+    }
+
+    /// <summary>
+    /// 逐令牌**颜色**覆盖（`theme_overrides` 里的颜色键；只认 21 个已知令牌）。
+    ///
+    /// <para>本项目界面不提供选色（与原版 QML 线一致：原版也只暴露了 `setColor` 接口），
+    /// 但**旧版/手改配置文件写的覆盖照样生效** —— 这正是"逐令牌覆盖"这一层存在的意义。</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, string> ThemeColorOverrides()
+    {
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (ThemeOverrides is null)
+        {
+            return result;
+        }
+
+        foreach (var (key, element) in ThemeOverrides)
+        {
+            if (!ThemePresets.IsColorKey(key) || element.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var text = element.GetString();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                result[key] = text.Trim();
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// **数字参数**覆盖（`theme_overrides` 里的 `param:&lt;key&gt;`；只认 8 个已知参数）。
+    ///
+    /// <para>键格式与原版 `theme.py::setParam` 完全一致（`param:radius` 这样），
+    /// 所以原版/QML 版写下的细调，本版读得到；反之亦然。</para>
+    /// </summary>
+    public IReadOnlyDictionary<string, double> ThemeParamOverrides()
+    {
+        var result = new Dictionary<string, double>(StringComparer.Ordinal);
+
+        if (ThemeOverrides is null)
+        {
+            return result;
+        }
+
+        foreach (var (key, element) in ThemeOverrides)
+        {
+            if (!key.StartsWith(ThemeParamSpecs.OverridePrefix, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var spec = ThemeParamSpecs.Find(key[ThemeParamSpecs.OverridePrefix.Length..]);
+            if (spec is null || element.ValueKind != JsonValueKind.Number
+                || !element.TryGetDouble(out var value) || !double.IsFinite(value))
+            {
+                continue;
+            }
+
+            result[spec.Key] = spec.Clamp(value);
+        }
+
+        return result;
+    }
+
+    /// <summary>写一个参数覆盖（立刻反映到 `theme_overrides`；落盘由 <c>SettingsStore.Save</c> 负责）。</summary>
+    public void SetThemeParamOverride(string? key, double value)
+    {
+        var spec = ThemeParamSpecs.Find(key);
+        if (spec is null)
+        {
+            return;
+        }
+
+        ThemeOverrides ??= new Dictionary<string, JsonElement>();
+        ThemeOverrides[ThemeParamSpecs.OverridePrefix + spec.Key] =
+            JsonSerializer.SerializeToElement(spec.Clamp(value));
+    }
+
+    /// <summary>删掉一个参数覆盖（"恢复该参数为预置默认"）。返回是否真的删掉了。</summary>
+    public bool RemoveThemeParamOverride(string? key)
+    {
+        var spec = ThemeParamSpecs.Find(key);
+        if (spec is null || ThemeOverrides is null)
+        {
+            return false;
+        }
+
+        return ThemeOverrides.Remove(ThemeParamSpecs.OverridePrefix + spec.Key);
+    }
+
+    /// <summary>清空全部主题细调（颜色 + 参数）—— 界面上的「恢复默认外观」。</summary>
+    public void ClearThemeOverrides() => ThemeOverrides = new Dictionary<string, JsonElement>();
+
+    /// <summary>
+    /// 只清掉**颜色**覆盖，保留参数细调（原版切预置时就是这个行为，这里单独留一个入口备用）。
+    /// </summary>
+    public void ClearThemeColorOverrides()
+    {
+        if (ThemeOverrides is null)
+        {
+            return;
+        }
+
+        foreach (var key in ThemeOverrides.Keys.Where(ThemePresets.IsColorKey).ToList())
+        {
+            ThemeOverrides.Remove(key);
+        }
+    }
+
     /// <summary>是否显示标签栏数量（未设置时默认显示）。</summary>
     [JsonIgnore]
     public bool ShowTabCounts
@@ -456,6 +602,12 @@ public sealed class SettingsStore
         if (string.IsNullOrWhiteSpace(settings.Theme))
         {
             settings.Theme = AppSettings.DefaultTheme;
+        }
+        else
+        {
+            // 预置名归一化：认不出的值回落默认预置（照原版 `theme.py::load_from_settings`
+            // "name if name in PRESETS else DEFAULT_PRESET"）—— 5 个预置名与原版完全同一套。
+            settings.Theme = ThemePresets.Normalize(settings.Theme);
         }
 
         // 主题细调必须是对象；是别的类型就当空（原版同样处理）
