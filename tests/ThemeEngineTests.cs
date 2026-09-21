@@ -370,9 +370,11 @@ public class ThemeEngineTests
             }),
             systemIsDark: true).Palette.PanelSurface.A;
 
-        Assert.Equal((byte)222, PanelAlpha(0.62));   // 预置默认 ⇒ 与现在完全一样
-        Assert.Equal((byte)255, PanelAlpha(1.00));   // 拉满 ⇒ 夹到不透明
-        Assert.Equal((byte)72, PanelAlpha(0.20));    // 222 × 0.20/0.62 = 71.6 ⇒ 72
+        // ⚠️ 2026-09-21 起设计值就是**不透明**（用户："这个默认主题你可以不用半透明的"）：
+        //    默认（0.62）⇒ 255（实心面板），往下拖才逐渐变透。
+        Assert.Equal((byte)255, PanelAlpha(0.62));   // 预置默认 ⇒ 实心面板
+        Assert.Equal((byte)255, PanelAlpha(1.00));
+        Assert.Equal((byte)82, PanelAlpha(0.20));    // 255 × 0.20/0.62 = 82.2 ⇒ 82
     }
 
     [Fact]

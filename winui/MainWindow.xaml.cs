@@ -504,36 +504,27 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 设置面板的表面：**带真实色调层的元素级 Acrylic**。
+    /// 设置面板的表面。
     ///
-    /// <para>⚠️⚠️ 2026-09-21 修（用户实测"鼠标移上去整块变黑"）：此前是 `TintOpacity = 0`，
-    /// 注释写着"不额外加色调层，浓度完全交给 tint 的 alpha" —— **那条注释是错的**：
-    /// `TintOpacity = 0` 的含义是"完全没有色调层"，面板于是退化成**纯模糊**，
-    /// 颜色 100% 由"窗口背后是什么"决定（元素级 Acrylic 采的是窗口的 host backdrop，
-    /// **不是**应用自己的内容）⇒ 背后是深色桌面/深色窗口时，浅色主题的面板就整块发暗发黑，
-    /// 而面板里的文字仍是浅色主题的深字 ⇒ 几乎看不见（用户截图正是这样）。</para>
-    ///
-    /// <para>实测复现（1200×800，窗口放在 40,40，材质 mica → acrylic）：面板亮度
-    /// `#B7B7B7`（亮）→ `#484848` → `#0B0B0B`（近黑），而同一帧里主区仍是浅色（`#ADB4B7`）。</para>
-    ///
-    /// <para>现在把**令牌自己的 alpha 当作 `TintOpacity`**（色调层真正生效）：
-    /// 面板 ≈ 令牌色 + 约 1/6 的背后模糊 ⇒ 无论背后是什么，浅色主题就是浅面板、深色主题就是深面板，
-    /// 同时玻璃感仍在。`TintLuminosityOpacity` 仍必须是 0（ERROR.md E11 的实测结论）。</para>
+    /// <para>⚠️⚠️ 2026-09-21（用户实测"鼠标移上去整块变黑"，查了三轮）：最终**不用元素级 Acrylic**，
+    /// 改成一枚**半透明纯色画刷**（令牌色 + 令牌自己的 alpha）。理由（全部是实测）：</para>
+    /// <list type="number">
+    ///   <item>元素级 Acrylic **采的是"窗口的 host backdrop"（窗口背后是什么），不是应用内它下面的内容**
+    ///     —— 所以它既给不了我们想要的"糊住应用自己的内容"，又让面板外观随"背后是什么"漂移；</item>
+    ///   <item>`TintOpacity = 0`（旧写法）等于**没有色调层** ⇒ 面板退化成纯模糊 ⇒ 背后深色就整块发黑
+    ///     （ERROR.md E43 复现：`#B7B7B7` → `#0B0B0B`）。补上色调层能修掉那一半，
+    ///     但用户的机器上**照样**整块黑 —— 看门狗实测：UI 线程一直活着（心跳不停）、
+    ///     指针事件正常、画刷是 `Tint=#FFF9F9F9 Op=0.84`、应用自己的渲染均值 B=239（亮），
+    ///     而屏幕上是黑的 ⇒ **黑在合成层（compositor/DWM），不在我们的内容里**；</item>
+    ///   <item>换成一枚 `SolidColorBrush` 之后，面板颜色 100% 由令牌决定：
+    ///     **不可能发黑、不可能随背后漂移**，同时那 16% 的 alpha 透出来的正是**应用自己的内容**
+    ///     （比 Acrylic 糊"桌面"更符合本来的意图）。</item>
+    /// </list>
     /// </summary>
-    private static AcrylicBrush CreatePanelGlass(ThemePalette palette)
+    private static Brush CreatePanelGlass(ThemePalette palette)
     {
-        var tint = ToColor(palette.PanelSurface);
-        var opaque = Color.FromArgb(255, tint.R, tint.G, tint.B);
-
-        return new AcrylicBrush
-        {
-            // ⚠️ TintColor 用**不透明**色、浓度只由 TintOpacity 表达：
-            //    两边都带 alpha 会被叠乘两次（A/255 × A/255），比令牌想要的更透。
-            TintColor = opaque,
-            TintOpacity = tint.A / 255.0,
-            TintLuminosityOpacity = 0.0,   // 默认 0.8 会往模糊上再叠一层很亮的亮度层，把玻璃"洗"成实心
-            FallbackColor = opaque,        // 材质被系统回退时也不至于看不清字
-        };
+        // 令牌色（ARGB）：alpha 就是"抽屉不透明度"（settings → 外观微调可调）
+        return new SolidColorBrush(ToColor(palette.PanelSurface));
     }
 
     /// <summary>设置按钮"打开中"的底色（选中态）—— 深色用白、浅色用黑。</summary>

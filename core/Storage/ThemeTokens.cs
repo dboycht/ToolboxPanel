@@ -108,7 +108,11 @@ public static class ThemeTokens
     {
         IsDark = true,
         WindowFallback = (255, 32, 32, 37),          // 与原来 ApplyBackdrop 的兜底色一致
-        PanelSurface = (222, 27, 27, 31),            // 原来是 #F21B1B1F
+        // ⚠️ 2026-09-21 起**不透明**（用户 2026-09-21：「这个默认主题你可以不用半透明的」）：
+        //    设置面板是一块实心表面 ⇒ 不再依赖"窗口背后是什么"，也就不会再出现"面板整块发黑"
+        //    （ERROR.md E43：元素级 Acrylic 的合成层在用户机器上会画成黑的）。
+        //    想要玻璃观的话，「外观微调 → 抽屉不透明度」可以把它调透（0.20~0.62 映射 82~255）。
+        PanelSurface = (255, 27, 27, 31),
         PanelBorder = (36, 255, 255, 255),           // 原来是 #1FFFFFFF
         Overlay = (89, 0, 0, 0),                     // 原来是 #59000000
         StatusSurface = (38, 0, 0, 0),               // 原来是 #26000000
@@ -131,7 +135,7 @@ public static class ThemeTokens
     {
         IsDark = false,
         WindowFallback = (255, 243, 243, 243),
-        PanelSurface = (214, 249, 249, 249),
+        PanelSurface = (255, 249, 249, 249),         // 同深色：不透明的实心面板（见上一条说明）
         PanelBorder = (36, 0, 0, 0),
         Overlay = (68, 0, 0, 0),
         StatusSurface = (30, 0, 0, 0),

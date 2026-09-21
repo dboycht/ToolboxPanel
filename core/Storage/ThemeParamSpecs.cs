@@ -27,6 +27,7 @@ namespace ToolboxPanel.Core.Storage;
 /// <param name="En">英文标签。</param>
 /// <param name="Adjustable">是否出现在设置面板的「外观微调」里（见各参数的说明）。</param>
 /// <param name="UiMinOverride">界面上实际可拖的下界（null = 用 <see cref="Min"/>）。</param>
+/// <param name="UiMaxOverride">界面上实际可拖的上界（null = 用 <see cref="Max"/>）。</param>
 public sealed record ThemeParamSpec(
     string Key,
     double Default,
@@ -36,13 +37,14 @@ public sealed record ThemeParamSpec(
     string Zh,
     string En,
     bool Adjustable = true,
-    double? UiMinOverride = null)
+    double? UiMinOverride = null,
+    double? UiMaxOverride = null)
 {
     /// <summary>界面滑杆的下界。</summary>
     public double UiMin => UiMinOverride ?? Min;
 
     /// <summary>界面滑杆的上界。</summary>
-    public double UiMax => Max;
+    public double UiMax => UiMaxOverride ?? Max;
 
     /// <summary>按语言取标签（原版就是按 <c>language</c> 从 PARAM_SPECS 里挑一列）。</summary>
     public string Label(string? language)
@@ -99,7 +101,10 @@ public static class ThemeParamSpecs
         new ThemeParamSpec(HoverMsKey, 160.0, 0.0, 600.0, 10.0, "悬停时长(ms)", "Hover (ms)"),
 
         // 抽屉（设置面板）玻璃色调：旧版写死 0.97 近实心，是"整体看着不透明"的主因之一
-        new ThemeParamSpec(SheetOpacityKey, 0.62, 0.20, 1.00, 0.02, "抽屉不透明度", "Panel opacity"),
+        // ⚠️ 界面区间只到**预置默认值 0.62**（= 不透明面板）：0.62 以上没有意义了（面板本来就实心），
+        //    这么定让滑杆的整条行程都在"从实心到更透"的有效范围内。
+        new ThemeParamSpec(SheetOpacityKey, 0.62, 0.20, 1.00, 0.02, "抽屉不透明度", "Panel opacity",
+            UiMaxOverride: 0.62),
     };
 
     /// <summary>参数名列表（顺序同上）。</summary>

@@ -22,6 +22,9 @@ public sealed partial class SettingsPanel : UserControl
     private bool _syncingUi;
     private string? _dataDirectory;
 
+    /// <summary>"套用界面"是否已经排进下一帧（拖滑杆时把上百次改动合并成一次，见 <see cref="ApplyCoalesced"/>）。</summary>
+    private bool _applyQueued;
+
     /// <summary>当前生效的主题解析结果（由宿主下发）—— 滑杆显示的是**生效值**，不是"文件里写过什么"。</summary>
     private ThemeResolution? _theme;
 
@@ -38,6 +41,87 @@ public sealed partial class SettingsPanel : UserControl
     {
         InitializeComponent();
         BuildTuningPanel();
+        EnableClickToSeek(DurationSlider);   // XAML 里那根"动效时长"滑杆也一样补上
+    }
+
+    // ────────────────────────────── 滑杆：整条轨道都能点 ──────────────────────────────
+    //
+    // ⚠️ 为什么需要这段（2026-09-21 用户实测反馈"设置那些按钮点起来很费劲，得对准某个小位置"）：
+    //    WinUI 默认的 `Slider` **只有那 ~20 DIP 的拖柄可拖**，轨道是两块普通 `Rectangle`
+    //    （命中测试实测：轨道上的最上层元素是 `Rectangle#HorizontalTrackRect` / `#HorizontalDecreaseRect`），
+    //    点在轨道上什么都不发生 ⇒ 用户必须精确抓住那个小圆点。
+    //    这里补上"按下轨道 → 按位置取值 → 按住不放可以继续拖"（现代滑杆的通用手感）。
+
+    /// <summary>让整条滑杆都能点/拖（按在拖柄上时交给控件自己，保住微调手感）。</summary>
+    private static void EnableClickToSeek(Slider slider)
+    {
+        bool dragging = false;
+
+        slider.AddHandler(
+            UIElement.PointerPressedEvent,
+            new PointerEventHandler((_, args) =>
+            {
+                if (args.OriginalSource is Thumb)
+                {
+                    return;   // 抓的是拖柄 ⇒ 走控件自己的拖动逻辑
+                }
+
+                dragging = true;
+                slider.CapturePointer(args.Pointer);
+                SeekTo(slider, args.GetCurrentPoint(slider).Position.X);
+                args.Handled = true;
+            }),
+            handledEventsToo: true);
+
+        slider.AddHandler(
+            UIElement.PointerMovedEvent,
+            new PointerEventHandler((_, args) =>
+            {
+                if (!dragging)
+                {
+                    return;
+                }
+
+                SeekTo(slider, args.GetCurrentPoint(slider).Position.X);
+                args.Handled = true;
+            }),
+            handledEventsToo: true);
+
+        void End(PointerRoutedEventArgs args)
+        {
+            if (!dragging)
+            {
+                return;
+            }
+
+            dragging = false;
+            slider.ReleasePointerCapture(args.Pointer);
+            args.Handled = true;
+        }
+
+        slider.AddHandler(
+            UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) => End(args)), handledEventsToo: true);
+        slider.AddHandler(
+            UIElement.PointerCanceledEvent, new PointerEventHandler((_, args) => End(args)), handledEventsToo: true);
+        slider.AddHandler(
+            UIElement.PointerCaptureLostEvent, new PointerEventHandler((_, args) => End(args)), handledEventsToo: true);
+    }
+
+    /// <summary>按指针在滑杆里的横向位置取值（按步长吸附，夹在 Min/Max 之间）。</summary>
+    private static void SeekTo(Slider slider, double x)
+    {
+        if (slider.ActualWidth <= 0 || slider.Maximum <= slider.Minimum)
+        {
+            return;
+        }
+
+        double ratio = Math.Clamp(x / slider.ActualWidth, 0, 1);
+        double raw = slider.Minimum + ratio * (slider.Maximum - slider.Minimum);
+        double snapped = slider.StepFrequency > 0
+            ? slider.Minimum + Math.Round((raw - slider.Minimum) / slider.StepFrequency) * slider.StepFrequency
+            : raw;
+
+        slider.Value = Math.Clamp(snapped, slider.Minimum, slider.Maximum);
     }
 
     /// <summary>某项设置已改并落盘 —— 宿主据此重新套用界面。</summary>
@@ -214,6 +298,39 @@ public sealed partial class SettingsPanel : UserControl
         SettingApplied?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// 与 <see cref="Apply"/> 相同，但把**连续多次**改动合并成一次"套用到界面"。
+    ///
+    /// <para>⚠️ 为什么需要（2026-09-21 实测）：每套一次界面要 ~13ms（`ApplyAllSettings`：
+    /// 解析主题 + 重灌 32 个资源画刷 + 遍历页面 + 同步面板控件）。拖滑杆时 `ValueChanged`
+    /// 一秒能来上百次 ⇒ 全部同步跑会把 UI 线程压住，手感变成"一卡一卡"。
+    /// 落盘本身只要 ~1ms，保持每次都写；**只把"套用界面"合并到下一帧**。</para>
+    /// </summary>
+    private void ApplyCoalesced(Action<AppSettings> change)
+    {
+        if (_syncingUi || _store is null || _settings is null)
+        {
+            return;
+        }
+
+        change(_settings);
+        _store.Save(_settings);
+
+        if (_applyQueued)
+        {
+            return;
+        }
+
+        _applyQueued = true;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            _applyQueued = false;
+            AnimationDetails.IsHitTestVisible = _settings.AnimationsEnabled;
+            AnimationDetails.Opacity = _settings.AnimationsEnabled ? 1 : 0.45;
+            SettingApplied?.Invoke(this, EventArgs.Empty);
+        });
+    }
+
     private void OnBackdropChanged(object sender, SelectionChangedEventArgs e)
     {
         if (BackdropBox.SelectedItem is ComboBoxItem { Tag: string kind })
@@ -287,6 +404,7 @@ public sealed partial class SettingsPanel : UserControl
                 LargeChange = spec.Step * 5,
             };
             slider.ValueChanged += (_, args) => OnTuningChanged(spec, args.NewValue);
+            EnableClickToSeek(slider);   // 整条轨道都能点（见上面的说明）
 
             var block = new StackPanel { Spacing = 2 };
             block.Children.Add(header);
@@ -362,7 +480,7 @@ public sealed partial class SettingsPanel : UserControl
 
         var presetDefault = _theme?.Preset.ParamOrDefault(spec.Key) ?? spec.Default;
 
-        Apply(s =>
+        ApplyCoalesced(s =>
         {
             if (Math.Abs(value - presetDefault) <= spec.Step / 2)
             {
@@ -413,7 +531,7 @@ public sealed partial class SettingsPanel : UserControl
         => Apply(s => s.AnimationsEnabled = AnimationSwitch.IsOn);
 
     private void OnDurationChanged(object sender, RangeBaseValueChangedEventArgs e)
-        => Apply(s => s.AnimationDurationMs = (int)Math.Round(e.NewValue));
+        => ApplyCoalesced(s => s.AnimationDurationMs = (int)Math.Round(e.NewValue));
 
     private void OnEasingChanged(object sender, SelectionChangedEventArgs e)
     {

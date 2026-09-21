@@ -48,14 +48,16 @@
         -->
         <Grid Grid.Row="0" Padding="16,44,10,8">
             <TextBlock ui:Tr.Key="settings.title" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" />
-            <!-- ⚠️ 同 ⚙：关掉焦点视觉，避免"看起来像被选中"（见 MainWindow.xaml 的说明） -->
-            <Button HorizontalAlignment="Right" Padding="6,2"
+            <!-- ⚠️ 同 ⚙：关掉焦点视觉，避免"看起来像被选中"（见 MainWindow.xaml 的说明）
+                 ⚠️ 2026-09-21：原来是 `Padding="6,2"` ⇒ 命中区只有 24×16 DIP，用户实测"不好点中"，
+                    现在给足内边距（≈34×28 DIP）—— 这个 ✕ 在面板右上角，太小的确难抓。 -->
+            <Button HorizontalAlignment="Right" Padding="11,6" MinWidth="34" MinHeight="28"
                     Background="Transparent" BorderThickness="0"
                     UseSystemFocusVisuals="False"
                     FocusVisualPrimaryThickness="0"
                     FocusVisualSecondaryThickness="0"
                     Click="OnCloseClick" ui:Tr.Tip="settings.close_tip">
-                <FontIcon Glyph="&#xE711;" FontSize="12" />
+                <FontIcon Glyph="&#xE711;" FontSize="13" />
             </Button>
         </Grid>
 

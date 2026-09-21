@@ -62,12 +62,16 @@ public class ThemeTokensTests
     [Fact]
     public void 飘在玻璃上的表面必须带透明度()
     {
-        // 面板/标签栏/遮罩这些"浮层"一旦完全不透明，就会把窗口材质盖住（ERROR.md E9）
-        Assert.True(ThemeTokens.Dark.PanelSurface.A < 255);
-        Assert.True(ThemeTokens.Light.PanelSurface.A < 255);
+        // 标签栏 / 遮罩这些"浮层"一旦完全不透明，就会把窗口材质盖住（ERROR.md E9）
+        //
+        // ⚠️ 例外：**设置面板（PanelSurface）自 2026-09-21 起刻意是不透明的** ——
+        //    它是一块"抽屉"而不是飘在玻璃上的薄纱，用户也明确说过"这个默认主题你可以不用半透明的"；
+        //    更重要的是：半透明 + 元素级 Acrylic 在用户机器上会整块画成黑的（ERROR.md E43）。
+        //    想要玻璃观的话，「外观微调 → 抽屉不透明度」可以把它调透（见 ThemeEngineTests）。
         Assert.True(ThemeTokens.Dark.TabStripSurface.A < 255);
         Assert.True(ThemeTokens.Light.TabStripSurface.A < 255);
         Assert.True(ThemeTokens.Dark.Overlay.A < 255);
+        Assert.True(ThemeTokens.Light.Overlay.A < 255);
     }
 
     [Theory]
