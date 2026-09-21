@@ -4,9 +4,9 @@
 // 光靠 C# 自己往返是自证；这里**真的把文件交给原版 Python 实现去读**，逐字段核对。
 //
 // 条件式测试：开发副本里（有 src/toolbox 且 PATH 上有 python）才会真正执行；
-// 找不到就跳过，不会在 canonical / CI 上误报。
+// 探测不到就由 [PythonFact] **显式跳过**（报告里显示"已跳过"，不是静默 passed）；
+// 开发副本里探测不到 python 则**显式失败**（见 PythonRunner / PythonFactAttribute）。
 
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using ToolboxPanel.Core.Models;
@@ -47,25 +47,12 @@ public class CrossImplementationTests
         print(json.dumps(out, ensure_ascii=False))
         """;
 
-    [Fact]
+    [PythonFact]
     public void CSharp写出的tabs_json能被原版Python读回且字段无损()
     {
-        var repoRoot = AppPaths.FindRepositoryRoot(AppContext.BaseDirectory);
-        if (repoRoot is null)
-        {
-            return;   // 不是开发副本，跳过
-        }
-
-        var pythonSourceRoot = Path.Combine(repoRoot, "src");
-        if (!Directory.Exists(Path.Combine(pythonSourceRoot, "toolbox", "models")))
-        {
-            return;
-        }
-
-        if (!PythonIsAvailable())
-        {
-            return;
-        }
+        // 开发副本 + python 齐备才会走到这里（否则 [PythonFact] 已经 Skip / 开发副本里缺 python 直接抛异常）
+        var pythonSourceRoot = PythonRunner.OriginalSourceRoot;
+        PythonRunner.RequireOriginalDirectory("src", "toolbox", "models");
 
         using var temp = new TempDataDirectory();
 
@@ -157,20 +144,11 @@ public class CrossImplementationTests
         Assert.Equal(1, itemsSeen[1].GetProperty("sort_order").GetInt32());
     }
 
-    [Fact]
+    [PythonFact]
     public void Python写的文件CSharp读进来再写回_Python仍能读且内容不变()
     {
-        var repoRoot = AppPaths.FindRepositoryRoot(AppContext.BaseDirectory);
-        if (repoRoot is null || !PythonIsAvailable())
-        {
-            return;
-        }
-
-        var pythonSourceRoot = Path.Combine(repoRoot, "src");
-        if (!Directory.Exists(Path.Combine(pythonSourceRoot, "toolbox", "models")))
-        {
-            return;
-        }
+        var pythonSourceRoot = PythonRunner.OriginalSourceRoot;
+        PythonRunner.RequireOriginalDirectory("src", "toolbox", "models");
 
         using var temp = new TempDataDirectory();
 
@@ -252,8 +230,6 @@ public class CrossImplementationTests
             $"{because}（长度 {expected.Length} vs {actual.Length}，首个差异在第 {i} 个字符）\n"
             + $"--- 期望（Python 写出）---\n{Context(e)}\n--- 实际（C# 写出）---\n{Context(a)}");
     }
-
-    private static bool PythonIsAvailable() => PythonRunner.IsAvailable();
 
     private static (int ExitCode, string StdOut, string StdErr) RunPython(
         string scriptPath, string pythonSourceRoot, string dataDirectory)

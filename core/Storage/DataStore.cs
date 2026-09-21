@@ -287,7 +287,11 @@ public sealed class DataStore
             foreach (var file in Directory.EnumerateFiles(IconsDirectory))
             {
                 var name = Path.GetFileName(file);
-                if (!CacheFileName.IsPlain(name))
+
+                // ⚠️ 以 `.` 开头的隐藏文件**不算图标缓存**（`icons/.cache-format` 是缓存格式标记）——
+                //    重置数据只该删图标，把标记一起删掉等于"下次启动又白重提一遍全部图标"。
+                //    口径与 `OrphanCacheFiles()` 保持一致。
+                if (name.StartsWith('.') || !CacheFileName.IsPlain(name))
                 {
                     continue;
                 }
@@ -684,22 +688,32 @@ public sealed class DataStore
     /// 末尾补齐的判据也用同一个 <c>taken</c> —— 两个集合的口径不可能再分叉。</para>
     /// </summary>
     private static List<T> ReorderById<T>(List<T> current, IReadOnlyList<string> orderedIds, Func<T, string> idOf)
+        where T : class
     {
-        var byId = current.ToDictionary(idOf, item => item);
-        var taken = new HashSet<string>(StringComparer.Ordinal);
+        // ⚠️ 2026-09-21（审计实测）：这里**不能**用 `current.ToDictionary(...)` ——
+        //    它在源里出现**重复 id** 时会抛 `ArgumentException`，而"重复 id"是手改/异常数据能造出来的，
+        //    后果是"拖动一下排序，应用直接崩"。改成"首个赢"的容错字典。
+        var byId = new Dictionary<string, T>(StringComparer.Ordinal);
+        foreach (var item in current)
+        {
+            byId.TryAdd(idOf(item), item);
+        }
+
+        // ⚠️ "已经收过"必须按**实例**判断，不能按 id —— 数据里出现重复 id 时，按 id 判断会把
+        //    第二个同 id 的项当成"已经收过"而在末尾补齐时跳过 ⇒ **静默丢一项**（2026-09-21 实测）。
+        var added = new HashSet<T>(ReferenceEqualityComparer.Instance);
         var reordered = new List<T>(current.Count);
 
         foreach (var id in orderedIds)
         {
-            // taken.Add 返回 false = 这个 id 已经收过了（重复入参）⇒ 跳过，绝不重复收同一个实例
-            if (taken.Add(id) && byId.TryGetValue(id, out var item))
+            if (byId.TryGetValue(id, out var item) && added.Add(item))
             {
                 reordered.Add(item);
             }
         }
 
         // 清单里没提到的项一律追加到末尾（防御：绝不静默丢项）
-        reordered.AddRange(current.Where(item => !taken.Contains(idOf(item))));
+        reordered.AddRange(current.Where(item => !added.Contains(item)));
 
         return reordered;
     }

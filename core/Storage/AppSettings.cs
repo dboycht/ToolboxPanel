@@ -16,6 +16,7 @@
 
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace ToolboxPanel.Core.Storage;
@@ -538,7 +539,7 @@ public sealed class SettingsStore
             if (File.Exists(SettingsFile))
             {
                 var text = File.ReadAllText(SettingsFile, Encoding.UTF8);
-                var loaded = JsonSerializer.Deserialize<AppSettings>(text, TabsJson.Options);
+                var loaded = JsonSerializer.Deserialize<AppSettings>(DropTypeMismatchedFields(text), TabsJson.Options);
                 if (loaded is not null)
                 {
                     settings = loaded;
@@ -580,6 +581,38 @@ public sealed class SettingsStore
         if (save)
         {
             Save(Current);
+        }
+    }
+
+    /// <summary>
+    /// 把"类型明显不对"的已知字段就地丢掉，免得**一个坏字段把整份配置清零**。
+    ///
+    /// <para>⚠️ 2026-09-21（审计实测）：`config.json` 里写成 `"theme_overrides": 5`（手改 / 别的程序写坏）
+    /// 会让整个 `Deserialize` 抛 `JsonException` ⇒ 落到下面的 catch ⇒ **用户全部设置静默变默认值**
+    /// （语言、图标大小、主题、快捷键覆盖全丢）。这里只丢那一个坏字段，其余原样保留。</para>
+    /// </summary>
+    internal static string DropTypeMismatchedFields(string json)
+    {
+        try
+        {
+            if (JsonNode.Parse(json) is not JsonObject root)
+            {
+                return json;
+            }
+
+            foreach (var key in new[] { "theme_overrides", "shortcut_bindings" })
+            {
+                if (root.TryGetPropertyValue(key, out var value) && value is not null and not JsonObject)
+                {
+                    root.Remove(key);
+                }
+            }
+
+            return root.ToJsonString();
+        }
+        catch (JsonException)
+        {
+            return json;   // 整体就不是合法 JSON ⇒ 交给原来的"损坏"路径（回默认值）
         }
     }
 

@@ -38,6 +38,9 @@ public sealed class MainViewModel
     /// <summary>本次载入原地重提了多少个图标缓存（自检日志用；界面文案不占 i18n key）。</summary>
     public int RefreshedIconCacheCount { get; private set; }
 
+    /// <summary>本次载入**需要**重提的图标缓存个数（用来判断"是不是全都成功了"）。</summary>
+    private int _iconsNeedingRefresh;
+
     public MainViewModel(string? dataDirectory = null, IShellHost? shellHost = null)
     {
         _store = dataDirectory is null ? DataStore.CreateDefault() : new DataStore(dataDirectory);
@@ -272,10 +275,16 @@ public sealed class MainViewModel
         //    每次载入只多一次目录枚举，代价可以忽略。
         _store.CleanOrphanCache();
 
-        // 全部图标都重提过了 ⇒ 记下"当前格式"，下次启动不再重提（标记文件以 `.` 开头，不会被孤儿清理收走）
+        // 全部图标都重提过了 ⇒ 记下"当前格式"，下次启动不再重提（标记文件以 `.` 开头，不会被孤儿清理收走）。
+        // ⚠️ 2026-09-21 修：**只有零失败时**才记 —— 否则失败的那几张会永远停在旧格式
+        //    （与 "失败了下一次启动还会再试一次" 的承诺相反，见下面 RefreshIconCacheInPlace 的注释）。
         if (_refreshIconCaches)
         {
-            _iconExtractor?.MarkCacheFormatCurrent();
+            if (RefreshedIconCacheCount == _iconsNeedingRefresh)
+            {
+                _iconExtractor?.MarkCacheFormatCurrent();
+            }
+
             _refreshIconCaches = false;
         }
 
@@ -521,9 +530,6 @@ public sealed class MainViewModel
 
         return new DropImportResult(added, messages, null);
     }
-
-    /// <summary>图标缓存目录（界面上要显示"图标从哪来"时用）。</summary>
-    public string IconsDirectory => _iconExtractor?.CacheDirectory ?? string.Empty;
 
     /// <summary>
     /// 底层的 <see cref="DataStore"/>（演示模式下为 null）。
@@ -954,9 +960,13 @@ public sealed class MainViewModel
             {
                 // 缓存格式过时（提取方式改过）⇒ **原地重提**一次：文件名不变，
                 // 所以 tabs.json 一个字节都不用改，也不会产生孤儿缓存。
-                if (_refreshIconCaches && RefreshIconCacheInPlace(icon))
+                if (_refreshIconCaches)
                 {
-                    RefreshedIconCacheCount++;
+                    _iconsNeedingRefresh++;
+                    if (RefreshIconCacheInPlace(icon))
+                    {
+                        RefreshedIconCacheCount++;
+                    }
                 }
 
                 return (CreateImageSource(cached), false);

@@ -51,6 +51,9 @@ public sealed partial class TabStripView : UserControl
     /// <summary>每个标签的隐藏项控件（自己管"图标 + 数量文字"的出现与名字让位）。</summary>
     private readonly Dictionary<TabItemViewModel, TabHiddenSlotView> _slots = new();
 
+    /// <summary>已经挂过 <c>Unloaded</c> 的插槽控件（避免同一个控件被复用/重复 Loaded 时累加处理器）。</summary>
+    private readonly HashSet<TabHiddenSlotView> _unloadHooked = new();
+
     /// <summary>
     /// 当前的图标形态（`static`）。
     ///
@@ -130,9 +133,6 @@ public sealed partial class TabStripView : UserControl
             Tabs.ItemsSource = value;
         }
     }
-
-    public IReadOnlyList<TabItemViewModel> Tabs_Items =>
-        Tabs.Items.OfType<TabItemViewModel>().ToList();
 
     public int SelectedIndex
     {
@@ -342,24 +342,40 @@ public sealed partial class TabStripView : UserControl
             container.CornerRadius = ThemeScale.Corners(DesignTabCornerRadius, _cornerScale);
         }
 
-        // 成对登记：容器被回收/换数据源时要把它从表里摘掉，否则这张强引用表只增不减
-        // （条目本身不会重复 Loaded，但**同一个插槽控件**可能被复用给另一个标签，
-        //   所以这里按"控件自己卸载"来摘，而不是按索引猜）。
-        slot.Unloaded += (s, _) =>
+        // 成对登记：容器被回收/换数据源时要把它从表里摘掉，否则这张强引用表只增不减。
+        //
+        // ⚠️ 2026-09-21 修：同一个插槽控件会被**复用给另一个标签**（于是 `Loaded` 会再触发一次），
+        //    原来每次都 `slot.Unloaded += lambda` 且从不摘除 ⇒ 处理器逐个累积：一次 Unloaded 跑 N 遍，
+        //    旧 lambda 还把旧的 tab 键钉住不放。现在**每个插槽只挂一次具名处理器**。
+        if (_unloadHooked.Add(slot))
         {
-            if (s is TabHiddenSlotView self
-                && _slots.TryGetValue(tab, out var registered)
-                && ReferenceEquals(registered, self))
-            {
-                _slots.Remove(tab);
-            }
-        };
+            slot.Unloaded += OnHiddenSlotViewUnloaded;
+        }
 
         // 初始态：按当前形态（text = 收起；always = 展开）就位，不做动画。
         // ⚠️ 用 CurrentIconMode（静态）而不是 _iconMode（实例）：模板加载可能早于/晚于设置下发。
-        slot.IsExpanded = CurrentIconMode == TabIconMode.Always;
+        // ⚠️ 2026-09-21 修：还要认"**这一项正是当前悬停项**" —— 否则悬停期间容器被回收重建时，
+        //    那个标签会突然收起，要等指针再动一下才展开。
+        slot.IsExpanded = CurrentIconMode == TabIconMode.Always || ReferenceEquals(tab, _expandedTab);
 
         ApplyPendingHoverTab();
+    }
+
+    /// <summary>插槽控件卸载：把它从 <see cref="_slots"/> / <see cref="_unloadHooked"/> 里摘掉。</summary>
+    private void OnHiddenSlotViewUnloaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TabHiddenSlotView slot)
+        {
+            return;
+        }
+
+        _unloadHooked.Remove(slot);
+
+        // 按"控件自己"摘：谁登记的是它，就摘谁（不看闭包里的 tab —— 那个控件可能已经换了标签）
+        foreach (var key in _slots.Where(pair => ReferenceEquals(pair.Value, slot)).Select(pair => pair.Key).ToList())
+        {
+            _slots.Remove(key);
+        }
     }
 
     private void ApplyIconModeToAll()
@@ -507,7 +523,12 @@ public sealed partial class TabStripView : UserControl
         //    所以"是不是本应用在拖"改判"载荷为空"；落点登记给源端，由源端的 DragItemsCompleted 收口。
         var (hasText, hasStorage) = DescribeDrag(e);
 
-        if (!DragSession.LooksLikeInternalDrag(hasText, hasStorage) && DragSession.Target is null)
+        // ⚠️ 2026-09-21 收紧：只有"看起来是本应用在拖"、或者"**不是文件拖入**且已经登记过落点"才接受。
+        //    原来写成 `!internal && Target is null` ⇒ 只要 `DragSession.Target` 有残留
+        //    （源端 `DragItemsCompleted` 没送达，例如拖动中源页被销毁），
+        //    从资源管理器拖文件进来也会被当成内部拖动接受成 `Move` 并登记假落点。
+        if (!DragSession.LooksLikeInternalDrag(hasText, hasStorage)
+            && (hasStorage || DragSession.Target is null))
         {
             e.AcceptedOperation = DataPackageOperation.None;
             StopDragTimers();

@@ -280,4 +280,106 @@ public class AuditFixTests
         Assert.NotEmpty(fileLike);
         Assert.All(fileLike, icon => Assert.Equal(icon.SourcePath, icon.TargetPath));
     }
+
+    // ────────────────────────────── 2026-09-21 体检轮（第二轮）新增 ──────────────────────────────
+
+    [Fact]
+    public void 数据里出现重复id时_排序不抛异常()
+    {
+        // ⚠️ 改之前：`ReorderById` 用 `current.ToDictionary(idOf, ...)` 建索引 —— 源里出现**重复 id**
+        //    时 `ToDictionary` 会抛 `ArgumentException` ⇒ "拖一下图标排序，应用直接崩"。
+        //    重复 id 是手改 / 别处写坏的 tabs.json 能造出来的（单测原先只测了"入参"重复，没测"数据"重复）。
+        using var temp = new TempDataDirectory();
+        temp.WriteRawTabsJson(
+            """
+            {
+              "version": 1,
+              "tabs": [
+                {
+                  "id": "t1", "name": "图标页", "type": "grid", "order": 0,
+                  "icons": [
+                    { "id": "dup", "name": "A", "type": "file", "source_path": "C:\\a", "sort_order": 0 },
+                    { "id": "dup", "name": "B", "type": "file", "source_path": "C:\\b", "sort_order": 1 },
+                    { "id": "c", "name": "C", "type": "file", "source_path": "C:\\c", "sort_order": 2 }
+                  ]
+                }
+              ]
+            }
+            """);
+
+        var store = temp.NewStore();
+        var tabs = store.Load();
+        var tab = tabs[0];
+        var loadedCount = tab.Icons.Count;   // 加载侧可能已经去过重，这里只关心"排序不会崩、也不会丢项"
+
+        // 不抛异常就是这条测试的核心；顺带要求"一个都不丢、也不虚增"
+        var ok = store.ApplyIconOrder(tab.Id, new[] { "dup", "c" });
+
+        Assert.True(ok);
+        Assert.Equal(loadedCount, tab.Icons.Count);
+    }
+
+    [Fact]
+    public void 配置里类型不对的字段_不会让整份配置清零()
+    {
+        // ⚠️ 改之前：`"theme_overrides": 5` 会让整个 `Deserialize` 抛 JsonException ⇒ 落到 catch
+        //    ⇒ **用户全部设置静默变默认值**（语言、图标大小、主题、快捷键覆盖全丢）。
+        using var temp = new TempDataDirectory();
+        File.WriteAllText(
+            Path.Combine(temp.Path, "config.json"),
+            """{ "language": "en", "icon_size": "large", "theme": "grape", "theme_overrides": 5 }""",
+            new UTF8Encoding(false));
+
+        var settings = new SettingsStore(temp.Path).Load();
+
+        Assert.Equal("en", settings.Language);              // 好字段一个都没丢
+        Assert.Equal("large", settings.IconSize);
+        Assert.Equal("grape", settings.Theme);
+        Assert.Empty(settings.ThemeParamOverrides());       // 坏字段当空处理（而不是整份回默认）
+    }
+
+    [Fact]
+    public void 重置数据_不删图标缓存的格式标记()
+    {
+        // ⚠️ 改之前：`ResetAll` 只按 `CacheFileName.IsPlain` 过滤 ⇒ `icons/.cache-format`
+        //    （缓存格式标记）会被当普通缓存删掉 ⇒ 下次启动又白重提一遍全部图标。
+        using var temp = new TempDataDirectory();
+        var store = temp.NewStore();
+        store.Load();
+        var tab = store.AddTab("图标页");
+        temp.TouchIconCache("a.png");
+        temp.TouchIconCache(IconExtractor.CacheFormatFileName);
+
+        store.ResetAll();
+
+        Assert.False(File.Exists(Path.Combine(temp.IconsDirectory, "a.png")));
+        Assert.True(File.Exists(Path.Combine(temp.IconsDirectory, IconExtractor.CacheFormatFileName)));
+    }
+
+    [Fact]
+    public void 导出备份_不会把备份自己打进包()
+    {
+        // ⚠️ 改之前：导出打包数据目录下**所有**文件、只排除 `.tmp`。
+        //    导出目录是用户自己选的（完全可能就选在 data/ 里）⇒ 上一份备份 zip 会被递归打进新包；
+        //    自动备份目录 `backups/` 同理。
+        using var temp = new TempDataDirectory();
+        var store = temp.NewStore();
+        store.Load();
+        store.AddTab("图标页");
+        store.Save();
+
+        File.WriteAllText(Path.Combine(temp.Path, "旧的备份.zip"), "zip");
+        Directory.CreateDirectory(Path.Combine(temp.Path, "backups"));
+        File.WriteAllText(Path.Combine(temp.Path, "backups", "auto.zip"), "zip");
+
+        var zipPath = temp.NewSiblingPath();
+        var result = BackupManager.Export(temp.Path, zipPath, version: "0.0.0");
+        Assert.True(result.Success, result.Message);
+
+        using var archive = System.IO.Compression.ZipFile.OpenRead(zipPath);
+        var entries = archive.Entries.Select(entry => entry.FullName).ToList();
+
+        Assert.Contains(entries, name => name.EndsWith("tabs.json"));
+        Assert.DoesNotContain(entries, name => name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase));
+    }
 }

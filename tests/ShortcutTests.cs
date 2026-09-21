@@ -1,6 +1,9 @@
 // ShortcutTests.cs —— W2：.lnk 解析（含与「原版 Python + pywin32」的兼容性）
+//
+// 跨实现那条是**条件式测试**：开发副本 + PATH 上有 python 且装了 pywin32 才会跑；
+// 缺条件时由 [PythonFact("win32com.client")] **显式跳过**（报告里显示"已跳过"，不是静默 passed）；
+// 开发副本里探测不到 python 则**显式失败**（见 PythonRunner）。
 
-using System.Diagnostics;
 using System.Text;
 using ToolboxPanel.Core.Services;
 
@@ -101,15 +104,10 @@ public class ShortcutTests
         Assert.Null(WindowsShortcut.Resolve(path));
     }
 
-    [Fact]
+    [PythonFact("win32com.client")]
     public void 原版Python加pywin32创建的lnk_能被CSharp解析()
     {
-        // 条件式：需要 PATH 上有 python 且装了 pywin32（原版 requirements.txt 有）
-        if (!PythonWithPywin32IsAvailable())
-        {
-            return;
-        }
-
+        // 开发副本 + python + pywin32 齐备才会走到这里（否则 [PythonFact] 已经 Skip）
         using var temp = new TempDataDirectory();
         var lnkPath = Path.Combine(temp.Path, "python 造的.lnk");
         var target = Path.Combine(WindowsDir, "System32", "calc.exe");
@@ -132,8 +130,8 @@ public class ShortcutTests
         File.WriteAllText(scriptPath, script, new UTF8Encoding(false));
         var iconFile = Path.Combine(WindowsDir, "System32", "shell32.dll");
 
-        var (exitCode, stdout, stderr) = RunPython(
-            scriptPath, lnkPath, target, WindowsDir, iconFile);
+        var (exitCode, stdout, stderr) = PythonRunner.RunScript(
+            scriptPath, new[] { lnkPath, target, WindowsDir, iconFile });
         Assert.True(exitCode == 0, $"Python 造 .lnk 失败：\n{stderr}\n{stdout}");
         Assert.Contains("CREATED", stdout);
 
@@ -146,47 +144,5 @@ public class ShortcutTests
         Assert.Equal("由 Python 创建", info.Description);
         Assert.Equal(iconFile, info.IconPath);
         Assert.Equal(2, info.IconIndex);
-    }
-
-    // ────────────────────────────── 工具 ──────────────────────────────
-
-    private static bool PythonWithPywin32IsAvailable()
-    {
-        try
-        {
-            var (exitCode, _, _) = RunPython("-c", "import win32com.client");
-            return exitCode == 0;
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
-        {
-            return false;
-        }
-    }
-
-    private static (int ExitCode, string StdOut, string StdErr) RunPython(params string[] arguments)
-    {
-        var psi = new ProcessStartInfo("python")
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            CreateNoWindow = true,
-        };
-
-        foreach (var argument in arguments)
-        {
-            psi.ArgumentList.Add(argument);
-        }
-
-        psi.Environment["PYTHONIOENCODING"] = "utf-8";
-        psi.Environment["PYTHONUTF8"] = "1";
-
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(60_000);
-        return (process.HasExited ? process.ExitCode : -1, stdout, stderr);
     }
 }

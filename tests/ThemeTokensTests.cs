@@ -97,15 +97,10 @@ public class ThemeTokensTests
         }
     }
 
-    [Theory]
-    [InlineData(ThemeMode.Light, true, false)]    // 强制浅色：系统再深也是浅色
-    [InlineData(ThemeMode.Dark, false, true)]     // 强制深色：系统再浅也是深色
-    [InlineData(ThemeMode.System, true, true)]    // 跟随系统：系统深则深
-    [InlineData(ThemeMode.System, false, false)]
-    public void 解析令牌_强制模式不受系统影响_跟随系统才看系统(ThemeMode mode, bool systemIsDark, bool expectDark)
-    {
-        Assert.Equal(expectDark, ThemeTokens.Resolve(mode, systemIsDark).IsDark);
-    }
+    // ⚠️ 「按模式取令牌」（原 `ThemeTokens.Resolve`）已删除：现在**只有一条路**
+    //    —— `ThemeResolver.Resolve`（预置 + 参数 + 逐令牌覆盖）。它那几条亮度规则
+    //    在 `ThemeEngineTests` 里被钉住（跟随系统 / 锁定明暗 / 预置与明暗冲突时以明暗为准），
+    //    留着第二个入口只会让人不知道哪份才是真的。
 
     // ────────────────────────────── config.json 契约 ──────────────────────────────
 

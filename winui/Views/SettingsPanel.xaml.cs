@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core;
 using ToolboxPanel.Core.Storage;
 
@@ -87,7 +88,7 @@ public sealed partial class SettingsPanel : UserControl
             }),
             handledEventsToo: true);
 
-        void End(PointerRoutedEventArgs args)
+        void End(PointerRoutedEventArgs args, bool releaseCapture)
         {
             if (!dragging)
             {
@@ -95,19 +96,41 @@ public sealed partial class SettingsPanel : UserControl
             }
 
             dragging = false;
-            slider.ReleasePointerCapture(args.Pointer);
+
+            // ⚠️ `PointerCaptureLost` 本身就意味着"捕获已经没了" ⇒ 那里不能再 Release（会抛）。
+            //    另外事件处理器里逃出的异常没人接（`App.UnhandledException` 只记日志），所以整体兜一层。
+            try
+            {
+                if (releaseCapture)
+                {
+                    slider.ReleasePointerCapture(args.Pointer);
+                }
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            {
+                App.WriteCrash("SettingsPanel.EnableClickToSeek/release", ex);
+            }
+
             args.Handled = true;
         }
 
         slider.AddHandler(
-            UIElement.PointerReleasedEvent, new PointerEventHandler((_, args) => End(args)), handledEventsToo: true);
+            UIElement.PointerReleasedEvent,
+            new PointerEventHandler((_, args) => End(args, releaseCapture: true)), handledEventsToo: true);
         slider.AddHandler(
-            UIElement.PointerCanceledEvent, new PointerEventHandler((_, args) => End(args)), handledEventsToo: true);
+            UIElement.PointerCanceledEvent,
+            new PointerEventHandler((_, args) => End(args, releaseCapture: true)), handledEventsToo: true);
         slider.AddHandler(
-            UIElement.PointerCaptureLostEvent, new PointerEventHandler((_, args) => End(args)), handledEventsToo: true);
+            UIElement.PointerCaptureLostEvent,
+            new PointerEventHandler((_, args) => End(args, releaseCapture: false)), handledEventsToo: true);
     }
 
-    /// <summary>按指针在滑杆里的横向位置取值（按步长吸附，夹在 Min/Max 之间）。</summary>
+    /// <summary>
+    /// 按指针在滑杆里的横向位置取值（按步长吸附，夹在 Min/Max 之间）。
+    ///
+    /// <para>⚠️ 映射要扣掉模板**左右两端各半个拖柄**的内缩（`HorizontalDecreaseRect` 起点、轨道终点）：
+    /// 直接用 `x / ActualWidth` 的话，点最左/最右拿到的不是 Min/Max（约 3% 偏差，杆越长越明显）。</para>
+    /// </summary>
     private static void SeekTo(Slider slider, double x)
     {
         if (slider.ActualWidth <= 0 || slider.Maximum <= slider.Minimum)
@@ -115,13 +138,55 @@ public sealed partial class SettingsPanel : UserControl
             return;
         }
 
-        double ratio = Math.Clamp(x / slider.ActualWidth, 0, 1);
+        // 拿模板里那两块可见矩形当"轨道的真实范围"；拿不到就退回整宽（旧行为）
+        double left = 0;
+        double right = slider.ActualWidth;
+        if (FindTemplateRectangle(slider, "HorizontalDecreaseRect") is { } decrease)
+        {
+            left = decrease.TransformToVisual(slider).TransformPoint(new Windows.Foundation.Point(0, 0)).X;
+        }
+
+        if (FindTemplateRectangle(slider, "HorizontalTrackRect") is { } track)
+        {
+            var origin = track.TransformToVisual(slider).TransformPoint(new Windows.Foundation.Point(0, 0));
+            right = origin.X + track.ActualWidth;
+        }
+
+        double span = right - left;
+        if (span <= 0)
+        {
+            left = 0;
+            span = slider.ActualWidth;
+        }
+
+        double ratio = Math.Clamp((x - left) / span, 0, 1);
         double raw = slider.Minimum + ratio * (slider.Maximum - slider.Minimum);
         double snapped = slider.StepFrequency > 0
             ? slider.Minimum + Math.Round((raw - slider.Minimum) / slider.StepFrequency) * slider.StepFrequency
             : raw;
 
         slider.Value = Math.Clamp(snapped, slider.Minimum, slider.Maximum);
+    }
+
+    /// <summary>在模板子树里按名字找一块矩形（滑杆模板里那两块轨道矩形）。</summary>
+    private static FrameworkElement? FindTemplateRectangle(DependencyObject root, string name)
+    {
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is FrameworkElement element && element.Name == name)
+            {
+                return element;
+            }
+
+            if (FindTemplateRectangle(child, name) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>某项设置已改并落盘 —— 宿主据此重新套用界面。</summary>

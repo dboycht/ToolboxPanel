@@ -399,40 +399,11 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
     /// <summary>拖动链路诊断 —— 写 `%TEMP%\toolboxpanel-probe.log`（手感类问题只能用户手试，
     /// 有了这条链路日志，用户试一次就能定位"哪一步断了"）。</summary>
-    private static void DragTrace(string message)
-        => App.ProbeLog($"[拖动 {DateTime.Now:HH:mm:ss.fff}] {message}");
+    private static void DragTrace(string message) => DragDropShared.Trace(message);
 
     /// <summary>读一下这次拖放到底带了什么（诊断用；读不到就当作没有）。</summary>
     private static (bool HasText, string? Text, bool HasStorageItems) DescribeData(DragEventArgs e)
-    {
-        bool hasText = false;
-        string? text = null;
-        bool hasStorage = false;
-
-        try
-        {
-            hasText = e.DataView.Contains(StandardDataFormats.Text);
-            if (hasText)
-            {
-                text = e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult();
-            }
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("GridPage.DescribeData/text", ex);
-        }
-
-        try
-        {
-            hasStorage = e.DataView.Contains(StandardDataFormats.StorageItems);
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("GridPage.DescribeData/storage", ex);
-        }
-
-        return (hasText, text, hasStorage);
-    }
+        => DragDropShared.Describe(e, "GridPage.DescribeData");
     // ────────────────────────────── 右键菜单（W5：新建 / 编辑属性）──────────────────────────────
     //
     // 交互照原版 v1.11.6：
@@ -748,16 +719,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
     /// <summary>把落点（相对本页的坐标）交给 Core 的几何计算，得到"插到第几个"。</summary>
     private int ComputeInsertIndex(DragEventArgs e)
-    {
-        var bounds = CollectItemBounds();
-        if (bounds.Count == 0)
-        {
-            return 0;
-        }
-
-        var position = e.GetPosition(this);
-        return DropIndexCalculator.Compute(bounds, position.X, position.Y);
-    }
+        => DragDropShared.ComputeInsertIndex(e, this, CollectItemBounds());
 
     /// <summary>
     /// 收集每个已实现图块的矩形（**相对本页**，DIP），顺序 = 界面上看到的顺序。
@@ -767,50 +729,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     ///    过滤态下由 MainViewModel 用 Core 的换算函数换回 Core 下标。
     /// </summary>
     private List<ItemBounds> CollectItemBounds()
-    {
-        var result = new List<ItemBounds>(_tab.VisibleIcons.Count);
-
-        for (int i = 0; i < _tab.VisibleIcons.Count; i++)
-        {
-            if (TileGrid.ContainerFromIndex(i) is not FrameworkElement container)
-            {
-                continue;
-            }
-
-            try
-            {
-                var origin = container.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, 0));
-                result.Add(new ItemBounds(origin.X, origin.Y, container.ActualWidth, container.ActualHeight));
-            }
-            catch (Exception ex)
-            {
-                App.WriteCrash("GridPage.CollectItemBounds", ex);
-            }
-        }
-
-        return result;
-    }
+        => DragDropShared.CollectBounds(TileGrid, _tab.VisibleIcons.Count, this, "GridPage.CollectItemBounds");
 
     private void ShowDropIndicator(int insertIndex)
-    {
-        var bounds = CollectItemBounds();
-        if (bounds.Count == 0)
-        {
-            HideDropIndicator();
-            return;
-        }
+        => DragDropShared.ShowVerticalIndicator(DropIndicator, CollectItemBounds(), insertIndex);
 
-        var (x, y, height) = DropIndexCalculator.IndicatorAt(bounds, insertIndex);
-
-        // ⚠️ 竖条要**骑在边界线上**（左移半个条宽），看起来才是"插在两块之间"，
-        //    而不是"盖在右边那一块上"。
-        Canvas.SetLeft(DropIndicator, x - DropIndicator.Width / 2);
-        Canvas.SetTop(DropIndicator, y);
-        DropIndicator.Height = Math.Max(8, height);
-        DropIndicator.Visibility = Visibility.Visible;
-    }
-
-    private void HideDropIndicator() => DropIndicator.Visibility = Visibility.Collapsed;
+    private void HideDropIndicator() => DragDropShared.HideIndicator(DropIndicator);
 }
 
 /// <summary>

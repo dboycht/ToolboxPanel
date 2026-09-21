@@ -79,12 +79,6 @@ public sealed partial class ShortcutDialog : ContentDialog
 
     private void RefreshRows() => RowsHost.ItemsSource = BuildRows();
 
-    /// <summary>
-    /// 开发/自检用：当前列表行。**探针读它做断言**，这样"界面搭得对不对"不用注入鼠标键盘
-    /// （本项目 memory/04 §13 的"应用内流程型探针"做法）。
-    /// </summary>
-    internal IReadOnlyList<ShortcutRow> RowsForDiagnostics => BuildRows();
-
     private List<ShortcutRow> BuildRows()
         => _bindings.Select(binding =>
         {
@@ -245,11 +239,15 @@ public sealed partial class ShortcutDialog : ContentDialog
         RefreshRows();
 
         MessageText.Text = I18n.T("shortcut.changed",
-            ("name", ShortcutCatalog.Label(ShortcutCatalog.Find(action)!)),
+            ("name", NameOf(action)),
             ("keys", ShortcutBindings.DefaultGesture(action).Display));
 
         BindingsChanged?.Invoke(this, _bindings);
     }
+
+    /// <summary>动作名（文案来自 Core 的目录；目录里查不到就退回枚举名，绝不 NRE）。</summary>
+    private static string NameOf(ShortcutAction action)
+        => ShortcutCatalog.Find(action) is { } entry ? ShortcutCatalog.Label(entry) : action.ToString();
 
     private void OnResetAllClick(object sender, RoutedEventArgs e) => ResetAllBindings();
 
@@ -281,11 +279,14 @@ public sealed partial class ShortcutDialog : ContentDialog
 
         foreach (var binding in _bindings)
         {
-            if (HotkeyProbe.Check(binding.Gesture) == HotkeyAvailability.Available)
+            // ⚠️ 2026-09-21 修：原来这里把 `HotkeyProbe.Check` 调了两次（每次都是一次 `RegisterHotKey` P/Invoke），
+            //    `probed` 与 `taken` 可能基于两次不同的结果。现在**一次取值再判**。
+            var state = HotkeyProbe.Check(binding.Gesture);
+            if (state == HotkeyAvailability.Available)
             {
                 probed++;
             }
-            else if (HotkeyProbe.Check(binding.Gesture) == HotkeyAvailability.TakenByOtherApp)
+            else if (state == HotkeyAvailability.TakenByOtherApp)
             {
                 probed++;
                 taken.Add(binding.Action);

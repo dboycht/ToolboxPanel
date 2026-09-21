@@ -252,40 +252,11 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
     private bool _dropSeen;                    // 本次拖动是否真的落在本页（Drop 事件到场）
 
     /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）。</summary>
-    private static void DragTrace(string message)
-        => App.ProbeLog($"[拖动 {DateTime.Now:HH:mm:ss.fff}] {message}");
+    private static void DragTrace(string message) => DragDropShared.Trace(message);
 
     /// <summary>这次拖放带了什么（诊断用；读不到就当作没有）—— 与网格页同款。</summary>
     private static (bool HasText, string? Text, bool HasStorageItems) DescribeData(DragEventArgs e)
-    {
-        bool hasText = false;
-        string? text = null;
-        bool hasStorage = false;
-
-        try
-        {
-            hasText = e.DataView.Contains(StandardDataFormats.Text);
-            if (hasText)
-            {
-                text = e.DataView.GetTextAsync().AsTask().GetAwaiter().GetResult();
-            }
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("ListViewPage.DescribeData/text", ex);
-        }
-
-        try
-        {
-            hasStorage = e.DataView.Contains(StandardDataFormats.StorageItems);
-        }
-        catch (Exception ex)
-        {
-            App.WriteCrash("ListViewPage.DescribeData/storage", ex);
-        }
-
-        return (hasText, text, hasStorage);
-    }
+        => DragDropShared.Describe(e, "ListViewPage.DescribeData");
 
     // ────────────────────────────── 拖拽排序（2026-09-16 最终形态）──────────────────────────────
     //
@@ -409,72 +380,19 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
 
     /// <summary>把落点（相对本页的坐标）交给 Core 的几何计算，得到"插到第几个"。</summary>
     private int ComputeInsertIndex(DragEventArgs e)
-    {
-        var bounds = CollectRowBounds();
-        if (bounds.Count == 0)
-        {
-            return 0;
-        }
-
-        var position = e.GetPosition(this);
-        return DropIndexCalculator.Compute(bounds, position.X, position.Y);
-    }
+        => DragDropShared.ComputeInsertIndex(e, this, CollectRowBounds());
 
     /// <summary>
     /// 已实现行的矩形（相对本页，DIP），顺序 = 从上到下。
     /// ⚠️ 遍历的是**可见集合**（= ItemsSource）：落点是"可见位"，过滤态下由 MainViewModel 换算回 Core 下标。
     /// </summary>
     private List<ItemBounds> CollectRowBounds()
-    {
-        var result = new List<ItemBounds>(_tab.VisibleListItems.Count);
-
-        for (int i = 0; i < _tab.VisibleListItems.Count; i++)
-        {
-            if (Rows.ContainerFromIndex(i) is not FrameworkElement container)
-            {
-                continue;
-            }
-
-            try
-            {
-                var origin = container.TransformToVisual(this).TransformPoint(new Windows.Foundation.Point(0, 0));
-                result.Add(new ItemBounds(origin.X, origin.Y, container.ActualWidth, container.ActualHeight));
-            }
-            catch (Exception ex)
-            {
-                App.WriteCrash("ListViewPage.CollectRowBounds", ex);
-            }
-        }
-
-        return result;
-    }
+        => DragDropShared.CollectBounds(Rows, _tab.VisibleListItems.Count, this, "ListViewPage.CollectRowBounds");
 
     private void ShowDropIndicator(int insertIndex)
-    {
-        var bounds = CollectRowBounds();
-        if (bounds.Count == 0)
-        {
-            HideDropIndicator();
-            return;
-        }
+        => DragDropShared.ShowHorizontalIndicator(DropIndicator, CollectRowBounds(), insertIndex);
 
-        var (x, y, _) = DropIndexCalculator.IndicatorAt(bounds, insertIndex);
-
-        // 横条要横跨整行宽度（不能只画在某一行的左边界那么宽）
-        double width = 0;
-        foreach (var bound in bounds)
-        {
-            width = Math.Max(width, bound.X + bound.Width);
-        }
-
-        Canvas.SetLeft(DropIndicator, x);
-        // ⚠️ 横条要**骑在行边界上**（上移半个条高），看起来才是"插在两行之间"。
-        Canvas.SetTop(DropIndicator, y - DropIndicator.Height / 2);
-        DropIndicator.Width = Math.Max(24, width - x);
-        DropIndicator.Visibility = Visibility.Visible;
-    }
-
-    private void HideDropIndicator() => DropIndicator.Visibility = Visibility.Collapsed;
+    private void HideDropIndicator() => DragDropShared.HideIndicator(DropIndicator);
 }
 
 /// <summary>一次列表行菜单动作请求（页面 → 宿主窗口）。与图块的 <c>IconMenuRequest</c> 同一套写法。</summary>

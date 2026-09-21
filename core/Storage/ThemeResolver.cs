@@ -39,14 +39,8 @@ public sealed record ThemeResolution(
     ThemeParams Params,
     IReadOnlyDictionary<string, string> Colors)
 {
-    /// <summary>按语言取预置标签（界面上的"预置主题"一节用它）。</summary>
-    public string Label(string? language) => Preset.Label(language);
-
     /// <summary>把一个设计圆角按当前 `radius` 参数缩放（默认参数下等于不变）。</summary>
     public double ScaleCornerRadius(double designCornerRadius) => Params.ScaleCornerRadius(designCornerRadius);
-
-    /// <summary>悬停时长倍率（默认参数下 = 1.0）。</summary>
-    public double HoverScale => Params.HoverScale;
 }
 
 /// <summary>主题解析器（纯函数，可单测）。</summary>
@@ -75,10 +69,6 @@ public static class ThemeResolver
 
         return new ThemeResolution(preset.Id, preset, preset.IsDark, palette, parameters, colors);
     }
-
-    /// <summary>便捷入口：直接按设置解析。</summary>
-    public static ThemeResolution Resolve(AppSettings settings, bool systemIsDark)
-        => Resolve(FromSettings(settings), systemIsDark);
 
     /// <summary>把设置翻译成解析请求（**唯一**一处从设置读主题相关字段的地方）。</summary>
     public static ThemeRequest FromSettings(AppSettings settings)

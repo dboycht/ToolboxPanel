@@ -276,16 +276,9 @@ internal sealed class EntranceAnimator
         StopWatchdog();
 
         // 恢复常态：整片可见。这是唯一"放行"的地方 —— 只要它跑到，界面就一定是可见的。
+        // ⚠️ 2026-09-21 精简：这里原来还遍历所有容器把 `Opacity` 写回 1（"防上一版残留"），
+        //    但本版**容器根本不参与动画**（`HideRealized` 也只动整片），那段是死代码。
         _list.Opacity = 1;
-
-        for (int index = 0; index < _list.Items.Count; index++)
-        {
-            if (_list.ContainerFromIndex(index) is UIElement container)
-            {
-                // 容器本身不再参与动画，恢复常态以防上一版残留（升级运行的极端情况）
-                container.Opacity = 1;
-            }
-        }
     }
 
     /// <summary>三种观感的曲线（设置里只暴露这三种，不把缓动函数名暴露给用户）。</summary>

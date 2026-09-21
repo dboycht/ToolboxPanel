@@ -98,14 +98,10 @@ public class ThemeEngineTests
         Assert.Equal(expected, ThemePresets.Normalize(raw));
     }
 
-    [Fact]
-    public void 预置标签按语言取()
-    {
-        Assert.Equal("午夜蓝", ThemePresets.Label("midnight", "zh"));
-        Assert.Equal("Midnight", ThemePresets.Label("midnight", "en"));
-        Assert.Equal("Midnight", ThemePresets.Label("midnight", "EN"));   // 大小写不敏感
-        Assert.Equal("深色", ThemePresets.Label("乱写", "zh"));            // 未知 ⇒ 默认预置的标签
-    }
+    // ⚠️ 「预置标签按语言取」这条测试随 `ThemePresets.Label` 一起删了（2026-09-21 精简）：
+    //    界面上的预置名走的是**原版那 6 个 i18n key**（`theme.dark` 等，XAML 里 `ui:Tr.Key` 直接用），
+    //    Core 里再存一份中英标签属于第二份来源。表里的中英字段本身仍被
+    //    `ThemeFidelityTests` 拿真实 Python 逐字比对钉住。
 
     // ────────────────────────────── 参数规格 ──────────────────────────────
 

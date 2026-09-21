@@ -159,6 +159,25 @@ public static class BackupManager
     }
 
     /// <summary>
+    /// 打包时要跳过的文件：原子写的临时产物（<c>*.tmp</c>）、以及**备份自己**
+    /// （<c>*.zip</c> 与 <c>backups/</c> 目录 —— 导出目录是用户选的，完全可能就选在数据目录里，
+    /// 不排除的话上一份备份会被递归打进新包）。
+    /// </summary>
+    internal static bool ShouldSkipInBackup(string dataDirectory, string filePath)
+    {
+        if (filePath.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
+            || filePath.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var relative = Path.GetRelativePath(dataDirectory, filePath);
+        return relative
+            .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            .Any(segment => string.Equals(segment, "backups", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
     /// 导出：把 <paramref name="dataDirectory"/> 下**所有文件**打进 zip（元数据 + <c>data/</c> 前缀）。
     /// </summary>
     /// <param name="version">写进元数据的版本号（由调用方给，通常是程序集版本 —— Core 里不写死版本）。</param>
@@ -176,9 +195,12 @@ public static class BackupManager
             // ⚠️ 排除原子写盘用的临时文件（`tabs.tmp` / `config.tmp`）：
             //    它们只是保存过程中的中转产物，打进包里既是垃圾、又会让"包里没有的文件就是没有"
             //    这条导入语义变得含糊。
+            // ⚠️ 另外排除 **`.tmp` / `*.zip` / `backups/`**（2026-09-21 审计）：
+            //    导出目录由用户自己选，完全可能就选在 `data/` 里 —— 那样"上一份备份 zip"
+            //    会被递归打进新包（包越滚越大）；自动备份目录同理。
             var files = Directory.Exists(dataDirectory)
                 ? Directory.GetFiles(dataDirectory, "*", SearchOption.AllDirectories)
-                    .Where(file => !file.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase))
+                    .Where(file => !ShouldSkipInBackup(dataDirectory, file))
                     .ToArray()
                 : Array.Empty<string>();
 

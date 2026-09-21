@@ -33,12 +33,6 @@ public static class BulkDelete
     /// <summary>进入批量管理模式时的状态栏提示（原版 <c>status.batch_mode_on</c>）。</summary>
     public static string StatusOnText => I18n.T("status.batch_mode_on");
 
-    /// <summary>退出批量管理的按钮文案（WinUI 线新增，key <c>bulk.exit</c>）。</summary>
-    public static string ExitLabel => I18n.T("bulk.exit");
-
-    /// <summary>全选按钮（WinUI 线新增，key <c>bulk.select_all</c>）。</summary>
-    public static string SelectAllLabel => I18n.T("bulk.select_all");
-
     /// <summary>二次确认正文（原版 <c>bulk_delete.confirm</c>）。</summary>
     public static string ConfirmText(int count) => I18n.T("bulk_delete.confirm", ("count", count));
 

@@ -7,9 +7,10 @@
 //   ④ 缺 metadata.json ⇒ 按原版报"无效备份"；metadata 缺字段 ⇒ 当"未知"而不报错；
 //   ⑤ 额外安全线：拒绝解压到数据目录之外（zip-slip）。
 //
-// 跨实现的两条是**条件式测试**：开发副本 + PATH 上有 python 才会跑，找不到就跳过（同 CrossImplementationTests）。
+// 跨实现的两条是**条件式测试**：开发副本 + PATH 上有 python（且装了 PyQt6）才会跑；
+// 缺条件时由 [PythonFact("PyQt6")] **显式跳过**（报告里显示"已跳过"，不是静默 passed）；
+// 开发副本里探测不到 python 则**显式失败**（同 CrossImplementationTests，见 PythonRunner）。
 
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
 using ToolboxPanel.Core.Models;
@@ -322,14 +323,9 @@ public class BackupTests
 
     // ────────────────────────────── 与原版 Python 的双向兼容（条件式） ──────────────────────────────
 
-    [Fact]
+    [PythonFact("PyQt6")]
     public void 原版Python导出的包_能被CSharp导入()
     {
-        if (!TryPreparePython(out var repoRoot))
-        {
-            return;
-        }
-
         using var source = new TempDataDirectory();
         WriteTabsJson(source.Path, """
             {"version":1,"tabs":[{"id":"py","name":"Python 页","tab_type":"grid",
@@ -339,7 +335,7 @@ public class BackupTests
         source.TouchIconCache("py.png");
 
         var zip = source.NewSiblingPath();
-        var (exitCode, stdout, stderr) = RunPythonScript(repoRoot!, "export", source.Path, zip);
+        var (exitCode, stdout, stderr) = RunPythonScript("export", source.Path, zip);
         Assert.True(exitCode == 0, $"原版 Python 导出失败：{stderr}");
 
         // 原版包里写的版本号 = 开发副本 src/toolbox/__init__.py 的 __version__（别把版本号写死在测试里）
@@ -360,14 +356,9 @@ public class BackupTests
 
     }
 
-    [Fact]
+    [PythonFact("PyQt6")]
     public void CSharp导出的包_能被原版Python导入()
     {
-        if (!TryPreparePython(out var repoRoot))
-        {
-            return;
-        }
-
         using var source = new TempDataDirectory();
         WriteTabsJson(source.Path, """
             {"version":1,"tabs":[{"id":"cs","name":"C# 页","tab_type":"grid",
@@ -380,7 +371,7 @@ public class BackupTests
 
         // 原版导入到另一个目录（它会清空目标目录里的 tabs.json/config.json/icons）
         using var target = new TempDataDirectory();
-        var (exitCode, stdout, stderr) = RunPythonScript(repoRoot!, "import", target.Path, zip);
+        var (exitCode, stdout, stderr) = RunPythonScript("import", target.Path, zip);
         Assert.True(exitCode == 0, $"原版 Python 导入失败：{stderr}\n{stdout}");
 
         // ⚠️ 这条正是"写正斜杠"的意义：原版导入只认 data/ 前缀，
@@ -428,92 +419,32 @@ public class BackupTests
         print("DONE")
         """;
 
-    private static bool TryPreparePython(out string? repoRoot)
-    {
-        repoRoot = null;
-
-        var root = AppPaths.FindRepositoryRoot(AppContext.BaseDirectory);
-        if (root is null || !Directory.Exists(Path.Combine(root, "src", "toolbox", "services")))
-        {
-            return false;
-        }
-
-        try
-        {
-            var (exitCode, _, _) = RunProcess("python", new[] { "--version" }, null);
-            if (exitCode != 0)
-            {
-                return false;
-            }
-        }
-        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or FileNotFoundException)
-        {
-            return false;
-        }
-
-        // 原版 backup_manager 需要 PyQt6
-        var (pyqt, _, _) = RunProcess("python", new[] { "-c", "import PyQt6" }, null);
-        if (pyqt != 0)
-        {
-            return false;
-        }
-
-        repoRoot = root;
-        return true;
-    }
-
+    /// <summary>
+    /// 用**原版** Python 跑一次导出/导入 —— 统一走 <see cref="PythonRunner"/>（不再自带一份进程执行器）。
+    /// 开发副本里缺 <c>src\toolbox\services</c> ⇒ 抛异常显式失败。
+    /// </summary>
     private static (int ExitCode, string StdOut, string StdErr) RunPythonScript(
-        string repoRoot, string mode, string dataDirectory, string zipPath)
+        string mode, string dataDirectory, string zipPath)
     {
+        var srcRoot = PythonRunner.RequireOriginalDirectory("src");
+        PythonRunner.RequireOriginalDirectory("src", "toolbox", "services");
+
         var scriptPath = Path.Combine(Path.GetTempPath(), $"toolboxpanel-backup-probe-{Guid.NewGuid():N}.py");
         File.WriteAllText(scriptPath, PythonScript, new UTF8Encoding(false));
 
         try
         {
-            return RunProcess("python", new[]
+            return PythonRunner.RunScript(scriptPath, new[]
             {
-                scriptPath,
-                Path.Combine(repoRoot, "src"),
+                srcRoot,
                 mode,
                 dataDirectory,
                 zipPath,
-            }, null);
+            });
         }
         finally
         {
             try { File.Delete(scriptPath); } catch (IOException) { }
         }
-    }
-
-    private static (int ExitCode, string StdOut, string StdErr) RunProcess(
-        string fileName, IEnumerable<string> arguments, string? workingDirectory)
-    {
-        var psi = new ProcessStartInfo(fileName)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding = Encoding.UTF8,
-            CreateNoWindow = true,
-        };
-
-        foreach (var argument in arguments)
-        {
-            psi.ArgumentList.Add(argument);
-        }
-
-        psi.Environment["PYTHONIOENCODING"] = "utf-8";
-        psi.Environment["PYTHONUTF8"] = "1";
-        if (workingDirectory is not null)
-        {
-            psi.WorkingDirectory = workingDirectory;
-        }
-
-        using var process = Process.Start(psi)!;
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit(60_000);
-        return (process.HasExited ? process.ExitCode : -1, stdout, stderr);
     }
 }

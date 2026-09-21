@@ -53,10 +53,6 @@ public sealed record ThemeParamSpec(
     /// <summary>夹到合法区间（NaN / 无穷一律回落默认值 —— 配置文件可能是手改的）。</summary>
     public double Clamp(double value)
         => double.IsFinite(value) ? Math.Clamp(value, Min, Max) : Default;
-
-    /// <summary>夹到"界面上可拖的区间"（比 <see cref="Clamp"/> 更窄，用于滑杆）。</summary>
-    public double ClampUi(double value)
-        => double.IsFinite(value) ? Math.Clamp(value, UiMin, UiMax) : Default;
 }
 
 /// <summary>8 个参数的规格表（顺序 = 原版 <c>PARAM_SPECS</c> 的顺序，界面也照这个顺序铺）。</summary>

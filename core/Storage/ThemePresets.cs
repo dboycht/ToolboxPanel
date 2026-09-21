@@ -27,10 +27,6 @@ public sealed record ThemePreset(
     IReadOnlyDictionary<string, string> Colors,
     IReadOnlyDictionary<string, double> Params)
 {
-    /// <summary>按语言取标签（未知语言回落英文，与原版 <c>preset_label</c> 一致）。</summary>
-    public string Label(string? language)
-        => string.Equals(language, "en", StringComparison.OrdinalIgnoreCase) ? En : Zh;
-
     /// <summary>该预置里某个参数的默认值（表中没写就回落 <see cref="ThemeParamSpecs"/> 的默认值）。</summary>
     public double ParamOrDefault(string key)
         => Params.TryGetValue(key, out var value) ? value : ThemeParamSpecs.Find(key)?.Default ?? 0;
@@ -232,10 +228,6 @@ public static class ThemePresets
 
     /// <summary>归一化：认不出的 id 一律回落 <see cref="DefaultId"/>（与原版"非法值归一化"一致）。</summary>
     public static string Normalize(string? id) => Find(id)?.Id ?? DefaultId;
-
-    /// <summary>按语言取标签；未知 id 用默认预置的标签（照原版 <c>preset_label</c>）。</summary>
-    public static string Label(string? id, string? language)
-        => (Find(id) ?? Dark).Label(language);
 
     /// <summary>复制一份基线并覆盖若干令牌（对应 Python 的 <c>{**DARK, ...}</c>）。</summary>
     private static Dictionary<string, string> Overlay(

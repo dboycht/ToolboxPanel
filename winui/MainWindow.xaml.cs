@@ -390,15 +390,17 @@ public sealed partial class MainWindow : Window
 
         InjectThemeResources(resolution.Palette);
         ApplyThemeToHandWrittenBrushes();
-        TabStrip.ApplyTheme(resolution.Palette, resolution.Params.RadiusScale, resolution.HoverScale);
+        TabStrip.ApplyTheme(resolution.Palette, resolution.Params.RadiusScale, resolution.Params.HoverScale);
         ApplyThemeCornerRadius();
         Settings.ApplyThemeResolution(resolution);   // 面板的「外观微调」滑杆显示的就是这份生效值
-        Settings.Refresh();
+                                                     // ⚠️ 这里**不**再调 `Settings.Refresh()`：`ApplyAllSettings` 末尾统一刷一次，
+                                                     //    否则一次设置变化会把 `SyncUiFromModel`（逐项写 SelectedIndex/滑杆值）跑三四遍。
+
         RefreshSettingsButtonBackground();
         _log.AppendLine(
             $"主题 = {resolution.PresetId}（ui_theme={ThemeTokens.ToWire(mode)}，"
             + $"生效：{(resolution.IsDark ? "深色" : "浅色")}，圆角×{resolution.Params.RadiusScale:0.##}，"
-            + $"抽屉 {resolution.Params.SheetOpacity:0.##}，悬停×{resolution.HoverScale:0.##}）");
+            + $"抽屉 {resolution.Params.SheetOpacity:0.##}，悬停×{resolution.Params.HoverScale:0.##}）");
     }
 
     /// <summary>拨根元素的 <c>RequestedTheme</c>（**先摘 backdrop 再改**，见 ERROR.md E16）。</summary>

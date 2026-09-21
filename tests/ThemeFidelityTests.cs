@@ -9,7 +9,8 @@
 //    PARAM_SPECS / PRESETS）在文件前半部分，与 Qt 无关 —— 截取到 `def preset_names` 之前、
 //    去掉 import 行即可，**读到的仍然是原文件里的真实字面量**。
 //
-// 与 `I18nTests` 同一套纪律：开发副本 + PATH 有 python 时才跑，否则静默跳过。
+// 与 `I18nTests` 同一套纪律：开发副本 + PATH 有 python 时才跑，否则由 [PythonFact] **显式跳过**
+// （报告里显示"已跳过"，不是静默 passed）；开发副本里探测不到 python / 缺 theme.py 则**显式失败**。
 
 using System.Text;
 using System.Text.Json;
@@ -37,19 +38,10 @@ public class ThemeFidelityTests
         }, ensure_ascii=False))
         """;
 
-    private static JsonElement? TryLoadOriginalTheme()
+    /// <summary>读原版 theme.py 的数据段；开发副本里缺文件 ⇒ 显式失败（不许静默跳过）。</summary>
+    private static JsonElement LoadOriginalTheme()
     {
-        var repoRoot = AppPaths.FindRepositoryRoot(AppContext.BaseDirectory);
-        if (repoRoot is null)
-        {
-            return null;   // 不是开发副本（canonical / CI）⇒ 跳过
-        }
-
-        var themePy = Path.Combine(repoRoot, "src", "toolbox", "ui", "theme.py");
-        if (!File.Exists(themePy) || !PythonRunner.IsAvailable())
-        {
-            return null;
-        }
+        var themePy = PythonRunner.RequireOriginalFile("src", "toolbox", "ui", "theme.py");
 
         var scriptPath = Path.Combine(Path.GetTempPath(), $"tb-theme-dump-{Guid.NewGuid():N}.py");
         File.WriteAllText(scriptPath, DumpScript, new UTF8Encoding(false));
@@ -71,13 +63,10 @@ public class ThemeFidelityTests
     private static IReadOnlyDictionary<string, string> ToColorMap(JsonElement element)
         => element.EnumerateObject().ToDictionary(p => p.Name, p => p.Value.GetString() ?? string.Empty);
 
-    [Fact]
+    [PythonFact]
     public void 五个预置的颜色与参数与原版theme_py逐字段一致()
     {
-        if (TryLoadOriginalTheme() is not { } original)
-        {
-            return;
-        }
+        var original = LoadOriginalTheme();
 
         Assert.Equal(ThemePresets.DefaultId, original.GetProperty("default").GetString());
 
@@ -116,13 +105,10 @@ public class ThemeFidelityTests
         }
     }
 
-    [Fact]
+    [PythonFact]
     public void 深色与浅色基线令牌与原版完全一致()
     {
-        if (TryLoadOriginalTheme() is not { } original)
-        {
-            return;
-        }
+        var original = LoadOriginalTheme();
 
         var dark = ToColorMap(original.GetProperty("dark"));
         var light = ToColorMap(original.GetProperty("light"));
@@ -143,13 +129,10 @@ public class ThemeFidelityTests
         }
     }
 
-    [Fact]
+    [PythonFact]
     public void 八个参数的默认范围步长与中英标签与原版一致()
     {
-        if (TryLoadOriginalTheme() is not { } original)
-        {
-            return;
-        }
+        var original = LoadOriginalTheme();
 
         var specs = original.GetProperty("param_specs");
         var originalKeys = specs.EnumerateObject().Select(p => p.Name).ToList();

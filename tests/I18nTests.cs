@@ -3,7 +3,8 @@
 // 两类测试：
 //   ① ★ **保真测试**：用**真实 Python** 解析原版 `src/toolbox/i18n.py`，与 C# 的 `I18n.Table`
 //      **逐 key、逐语言逐字比对**（193 条 × 2 种语言，含多行文案）。这是"key 命名与文案照原版"
-//      这条验收条款的唯一硬证据；开发副本 + PATH 有 python 时才跑，否则跳过。
+//      这条验收条款的唯一硬证据；开发副本 + PATH 有 python 时才跑，否则由 [PythonFact] **显式跳过**
+//      （报告里显示"已跳过"，不是静默 passed）；开发副本里探测不到 python / 缺 i18n.py 则**显式失败**。
 //   ② 运行时行为：未知 key 回落 `??key??`、命名占位符替换、**缺参数保留占位符不抛异常**、
 //      语言切换幂等 + 事件只在真的变化时触发、白名单与 `AppSettings.Languages` 同源。
 
@@ -29,20 +30,11 @@ public class I18nTests
 
     // ────────────────────────────── ★ 保真：与原版 i18n.py 逐条一致 ──────────────────────────────
 
-    [Fact]
+    [PythonFact]
     public void 文案表与原版i18n_py逐条一致()
     {
-        var repoRoot = AppPaths.FindRepositoryRoot(AppContext.BaseDirectory);
-        if (repoRoot is null)
-        {
-            return;   // 不是开发副本（canonical / CI）⇒ 跳过
-        }
-
-        var i18nPy = Path.Combine(repoRoot, "src", "toolbox", "i18n.py");
-        if (!File.Exists(i18nPy) || !PythonRunner.IsAvailable())
-        {
-            return;
-        }
+        // 开发副本 + python 齐备才会走到这里（否则 [PythonFact] 已经 Skip / 开发副本里缺 python 直接抛异常）
+        var i18nPy = PythonRunner.RequireOriginalFile("src", "toolbox", "i18n.py");
 
         var scriptPath = Path.Combine(Path.GetTempPath(), $"tb-i18n-dump-{Guid.NewGuid():N}.py");
         File.WriteAllText(scriptPath, DumpScript, new UTF8Encoding(false));

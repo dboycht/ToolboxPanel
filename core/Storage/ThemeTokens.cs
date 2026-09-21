@@ -99,8 +99,6 @@ public static class ThemeTokens
     public const string LightWire = "light";
     public const string DarkWire = "dark";
 
-    public static readonly string[] AllModes = { SystemWire, LightWire, DarkWire };
-
     /// <summary>
     /// 深色（默认）。观感与原 W3 的硬编码值保持一致 —— 换主题引擎不该顺手改外观。
     /// </summary>
@@ -151,14 +149,6 @@ public static class ThemeTokens
         TitleBarButtonInactiveForeground = (255, 128, 128, 128),
         TitleBarButtonHoverBackground = (30, 0, 0, 0),
         TitleBarButtonPressedBackground = (48, 0, 0, 0),
-    };
-
-    /// <summary>按主题模式取令牌；<see cref="ThemeMode.System"/> 用调用方给的"系统当前是否深色"决定。</summary>
-    public static ThemePalette Resolve(ThemeMode mode, bool systemIsDark) => mode switch
-    {
-        ThemeMode.Light => Light,
-        ThemeMode.Dark => Dark,
-        _ => systemIsDark ? Dark : Light,
     };
 
     /// <summary>解析 `config.json` 里的字符串（未知值回落 System，与原版"非法值归一化"一致）。</summary>
