@@ -379,6 +379,7 @@ public sealed partial class SettingsPanel : UserControl
     private void OnResetTuningClick(object sender, RoutedEventArgs e)
         => Apply(s => s.ClearThemeOverrides());
 
+
     private void OnTabIconModeChanged(object sender, SelectionChangedEventArgs e)
     {
         if (TabIconModeChoices.SelectedItem is RadioButton { Tag: string wire })
