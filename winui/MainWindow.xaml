@@ -50,28 +50,32 @@
                     · `IsTabStop=False` + `UseSystemFocusVisuals=False` + 两处 FocusVisual*Thickness=0 一起关掉；
                     · 键盘可达性**不受影响**：Esc 关面板由 SettingsPanel 自己的 KeyboardAccelerator 负责。
                     （同一套修法在本工作区 learn-helper 项目里已用过 → 跨项目通用经验，见 memory/03。）
+
+                    ⚠️ 2026-09-21 用户反馈"这几个按钮点起来费劲" ⇒ 命中区从 24×16 DIP 放大到 ~34×28 DIP
+                    （Padding 6,2 → 10,6，并给 MinWidth/MinHeight 兜底）。图标 12 → 13 像素跟上。
+                    ⚠️ 三个标题栏按钮**尺寸必须一致**（⚙ / ⓘ / 🔍 是同一排的视觉家族）。
                 -->
-                <Button x:Name="SettingsButton" Padding="6,2" Margin="2,0,0,0"
+                <Button x:Name="SettingsButton" Padding="10,6" Margin="2,0,0,0" MinWidth="34" MinHeight="28"
                         Background="Transparent" BorderThickness="0"
                         IsTabStop="False"
                         UseSystemFocusVisuals="False"
                         FocusVisualPrimaryThickness="0"
                         FocusVisualSecondaryThickness="0"
                         Click="OnSettingsButtonClick" ui:Tr.Tip="titlebar.settings">
-                    <FontIcon Glyph="&#xE713;" FontSize="12" />
+                    <FontIcon Glyph="&#xE713;" FontSize="13" />
                 </Button>
                 <!--
                     「关于」按钮：与设置按钮同一套写法（同一套 E15 纪律：
-                    关掉焦点视觉 + 不进 Tab 序列，避免启动时被系统焦点画出框）。
+                    关掉焦点视觉 + 不进 Tab 序列，避免启动时被系统焦点画出框 + 同一套放大后的命中区）。
                 -->
-                <Button x:Name="AboutButton" Padding="6,2" Margin="2,0,0,0"
+                <Button x:Name="AboutButton" Padding="10,6" Margin="2,0,0,0" MinWidth="34" MinHeight="28"
                         Background="Transparent" BorderThickness="0"
                         IsTabStop="False"
                         UseSystemFocusVisuals="False"
                         FocusVisualPrimaryThickness="0"
                         FocusVisualSecondaryThickness="0"
                         Click="OnAboutButtonClick" ui:Tr.Tip="titlebar.about">
-                    <FontIcon Glyph="&#xE946;" FontSize="12" />
+                    <FontIcon Glyph="&#xE946;" FontSize="13" />
                 </Button>
                 <!--
                     ⚠️ 这里**原来**有个 ❓「快捷键参考」按钮（照"标题栏按钮 = 原版菜单项"的做法）。
@@ -83,14 +87,14 @@
                     搜索按钮：与设置/关于同一套写法（同一套 E15 纪律：关掉焦点视觉）。
                     行为照原版 v1.11.6：**隐藏式搜索栏**，点一下开、再点一下关（Ctrl+F 同效）。
                 -->
-                <Button x:Name="SearchButton" Padding="6,2" Margin="2,0,0,0"
+                <Button x:Name="SearchButton" Padding="10,6" Margin="2,0,0,0" MinWidth="34" MinHeight="28"
                         Background="Transparent" BorderThickness="0"
                         IsTabStop="False"
                         UseSystemFocusVisuals="False"
                         FocusVisualPrimaryThickness="0"
                         FocusVisualSecondaryThickness="0"
                         Click="OnSearchButtonClick" ui:Tr.Tip="search.tip">
-                    <FontIcon Glyph="&#xE721;" FontSize="12" />
+                    <FontIcon Glyph="&#xE721;" FontSize="13" />
                 </Button>
             </StackPanel>
         </Grid>
