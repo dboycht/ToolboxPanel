@@ -19,7 +19,7 @@
     xmlns:ui="using:ToolboxPanel"
     xmlns:views="using:ToolboxPanel.Views">
 
-    <Grid x:Name="RootGrid" Background="Transparent">
+    <Grid x:Name="RootGrid" Background="Transparent" KeyboardAcceleratorPlacementMode="Hidden">
         <!--
             ⚠️ 快捷键**不在这里手写**：加速器由 `MainWindow.ApplyShortcuts()` 照着
             Core 的 `ShortcutCatalog` 逐个注册（有单测钉住"键位不重复、功能名 key 都在"）。
@@ -40,8 +40,16 @@
         <Grid x:Name="AppTitleBar" Grid.Row="0" Background="Transparent">
             <StackPanel Orientation="Horizontal" Spacing="7"
                         Margin="12,0,0,0" VerticalAlignment="Center">
-                <FontIcon Glyph="&#xE71D;" FontSize="12" />
-                <TextBlock x:Name="TitleText" Text="ToolboxPanel" FontSize="12" FontWeight="SemiBold" />
+                <!--
+                    ⚠️ 2026-09-21：图标与标题都必须 `VerticalAlignment="Center"`。
+                    根因：这排按钮放大到 28 DIP 之后，StackPanel 的高度由**最高的子项**（按钮）决定，
+                    而 `TextBlock` / `FontIcon` 的默认垂直对齐是 **Stretch** ⇒ 它们的盒子被拉到 28 DIP、
+                    文字却贴在盒子**顶部** ⇒ 标题比图标/按钮高了约 5 DIP（用户实测反馈"窗口标题有点错位"，
+                    抓图量出：标题中心 y=18、图标 26.5、按钮 26.5、系统按钮 23）。
+                -->
+                <FontIcon Glyph="&#xE71D;" FontSize="12" VerticalAlignment="Center" />
+                <TextBlock x:Name="TitleText" Text="ToolboxPanel" FontSize="12" FontWeight="SemiBold"
+                           VerticalAlignment="Center" />
                 <TextBlock x:Name="BackdropLabel" FontSize="10.5" Opacity="0.5" VerticalAlignment="Center" />
                 <!--
                     ⚠️ 设置按钮**必须关掉焦点视觉 + 不进 Tab 序列**（用户实测反馈："启动时这个按钮是选中状态"）。
