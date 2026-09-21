@@ -2,6 +2,7 @@
 
 using System.Text;
 using ToolboxPanel.Core.Models;
+using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 
 namespace ToolboxPanel.Core.Tests;
@@ -375,6 +376,26 @@ public class DataStoreCrudTests
         store.CleanOrphanCache();
 
         Assert.True(File.Exists(Path.Combine(temp.IconsDirectory, "used.png")));
+        Assert.False(File.Exists(Path.Combine(temp.IconsDirectory, "orphan.png")));
+    }
+
+    [Fact]
+    public void 隐藏文件不算孤儿缓存_格式标记不会被删掉()
+    {
+        // `icons/.cache-format` 是图标缓存的格式标记（见 IconExtractor.CacheFormat）：
+        // 它当然不被任何图标引用，但绝不能被"孤儿清理"删掉 —— 删了每次启动都会重提全部图标。
+        using var temp = new TempDataDirectory();
+        var store = temp.NewStore();
+        store.Load();
+        temp.TouchIconCache(IconExtractor.CacheFormatFileName);
+        temp.TouchIconCache("orphan.png");
+
+        Assert.DoesNotContain(IconExtractor.CacheFormatFileName, store.OrphanCacheFiles());
+        Assert.Contains("orphan.png", store.OrphanCacheFiles());
+
+        store.CleanOrphanCache();
+
+        Assert.True(File.Exists(Path.Combine(temp.IconsDirectory, IconExtractor.CacheFormatFileName)));
         Assert.False(File.Exists(Path.Combine(temp.IconsDirectory, "orphan.png")));
     }
 

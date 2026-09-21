@@ -2101,6 +2101,11 @@ public sealed partial class MainWindow : Window
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");
             _log.AppendLine(_viewModel.StatusText);
+            if (_viewModel.RefreshedIconCacheCount > 0)
+            {
+                // 缓存格式升级（提取方式改过）⇒ 自动原地重提了一次；只写自检文件，不动界面文案
+                _log.AppendLine($"图标缓存格式升级 ⇒ 已原地重提 {_viewModel.RefreshedIconCacheCount} 个（文件名不变，tabs.json 未改动）");
+            }
             foreach (var tab in _viewModel.Tabs)
             {
                 _log.AppendLine($"  - [{tab.DraggableKind}] {tab.Name} :: {tab.CountLabel}");

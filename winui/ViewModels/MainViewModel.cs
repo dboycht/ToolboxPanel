@@ -29,6 +29,15 @@ public sealed class MainViewModel
     /// <summary>本次载入是否动过数据（提取过图标缓存），决定要不要写回 tabs.json。</summary>
     private bool _dataChanged;
 
+    /// <summary>
+    /// 本次载入是否要"原地重提已有图标缓存"（磁盘上的缓存格式过时，见 <c>IconExtractor.CacheFormat</c>）。
+    /// <para>只在 <see cref="Load"/> 开头判定一次，重提完写格式标记。</para>
+    /// </summary>
+    private bool _refreshIconCaches;
+
+    /// <summary>本次载入原地重提了多少个图标缓存（自检日志用；界面文案不占 i18n key）。</summary>
+    public int RefreshedIconCacheCount { get; private set; }
+
     public MainViewModel(string? dataDirectory = null, IShellHost? shellHost = null)
     {
         _store = dataDirectory is null ? DataStore.CreateDefault() : new DataStore(dataDirectory);
@@ -207,6 +216,12 @@ public sealed class MainViewModel
 
         _dataChanged = false;
 
+        // 图标缓存格式升级（例如 2026-09-21 修掉"图标黑底"那次改了提取方式）：
+        // 磁盘上已有的 PNG 是旧格式，`LoadOrExtractIcon` 又只在"文件不存在"时才提取 ⇒
+        // 不主动重提的话，用户会一直看到旧图（"我修了、用户看不见修"）。
+        _refreshIconCaches = _iconExtractor is not null && !_iconExtractor.IsCacheFormatCurrent;
+        RefreshedIconCacheCount = 0;
+
         var tabs = _store.Load();
         Tabs.Clear();
 
@@ -256,6 +271,13 @@ public sealed class MainViewModel
         //    判定集是**拿当前 Tabs 现算**的（`OrphanCacheFiles()`），所以这里不会误删还在用的图。
         //    每次载入只多一次目录枚举，代价可以忽略。
         _store.CleanOrphanCache();
+
+        // 全部图标都重提过了 ⇒ 记下"当前格式"，下次启动不再重提（标记文件以 `.` 开头，不会被孤儿清理收走）
+        if (_refreshIconCaches)
+        {
+            _iconExtractor?.MarkCacheFormatCurrent();
+            _refreshIconCaches = false;
+        }
 
         _statusIsDemoSummary = false;
         _statusTabCount = tabs.Count;
@@ -873,6 +895,28 @@ public sealed class MainViewModel
         RebuildStatusText();
     }
 
+    /// <summary>
+    /// 把某个图标的缓存**原地重提**（缓存格式升级时用；文件名不变 ⇒ tabs.json 不用改）。
+    /// <para>失败只写崩溃日志、不影响启动：图标照旧用旧的那张，下次启动还会再试一次。</para>
+    /// </summary>
+    private bool RefreshIconCacheInPlace(IconModel icon)
+    {
+        try
+        {
+            // 快捷方式：先解析（自定义图标的「文件 + 索引」），与首次提取完全同序
+            var shortcut = icon.Type == IconType.Shortcut
+                ? WindowsShortcut.Resolve(icon.SourcePath)
+                : null;
+
+            return _iconExtractor!.RefreshCache(icon, icon.IconCacheFile, shortcut);
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainViewModel.RefreshIconCacheInPlace", ex);
+            return false;
+        }
+    }
+
     /// <summary>演示用：取图标失败也不抛异常，交给模板的字形兜底。</summary>
     private (ImageSource? Source, bool Extracted) LoadOrExtractOrFallback(IconModel icon, ShortcutInfo? shortcut)
     {
@@ -908,6 +952,13 @@ public sealed class MainViewModel
             var cached = _iconExtractor.CachePath(icon.IconCacheFile);
             if (File.Exists(cached))
             {
+                // 缓存格式过时（提取方式改过）⇒ **原地重提**一次：文件名不变，
+                // 所以 tabs.json 一个字节都不用改，也不会产生孤儿缓存。
+                if (_refreshIconCaches && RefreshIconCacheInPlace(icon))
+                {
+                    RefreshedIconCacheCount++;
+                }
+
                 return (CreateImageSource(cached), false);
             }
         }

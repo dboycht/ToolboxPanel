@@ -881,7 +881,13 @@ public sealed class DataStore
             return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         }
 
-        var onDisk = Directory.EnumerateFiles(IconsDirectory).Select(Path.GetFileName).OfType<string>();
+        var onDisk = Directory.EnumerateFiles(IconsDirectory)
+            .Select(Path.GetFileName)
+            .OfType<string>()
+            // ⚠️ 以 `.` 开头的隐藏文件**不算缓存**：`icons/.cache-format` 是图标缓存的格式标记
+            //    （见 IconExtractor.CacheFormat），它当然不被任何图标引用 ——
+            //    当成孤儿删掉的话，每次启动都会把全部图标重提一遍。
+            .Where(name => !name.StartsWith('.'));
         return onDisk.Where(name => !referenced.Contains(name))
                      .ToHashSet(StringComparer.OrdinalIgnoreCase);
     }

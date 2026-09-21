@@ -242,6 +242,153 @@ public class IconExtractorTests
         Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, bytes.Take(4).ToArray());
     }
 
+    // ────────────────────────────── ★ 透明背景（2026-09-21 用户反馈的真 bug）──────────────────────────────
+    //
+    // 现象：用户（切到浅色主题后）看到"有的图标背景是半透明的、有的却是黑的"。
+    // 根因：`Bitmap.FromHicon` 对**用 AND 掩码表示透明**的图标（SHGetFileInfo 给的就是这一类）
+    //       会把所有像素的 alpha 填成 255 ⇒ 透明区变成不透明黑 ⇒ 图标背后一块黑方块。
+    // 详见 ERROR.md E42。
+
+    [Fact]
+    public void 提取的图标必须保留透明背景_不能是黑底()
+    {
+        using var temp = new TempDataDirectory();
+        var extractor = new IconExtractor(temp.IconsDirectory);
+
+        // ⚠️ 必须用"从 shell 图库拿图标"的那条路（SHGetFileInfo）：它给的正是掩码型图标。
+        //    只测兜底/stock 图标是测不出这个 bug 的（那些本来就带 alpha）。
+        var cacheName = extractor.ExtractAndCache(NotepadPath, IconType.File);
+        var cachePath = Path.Combine(temp.IconsDirectory, cacheName);
+
+        using var image = new Bitmap(cachePath);
+
+        // ① 角上必须是透明的（黑底 bug 下这里是 A255）
+        var corner = image.GetPixel(1, 1);
+        Assert.True(corner.A < 8, $"左上角不是透明的：A={corner.A}（图标被画在了不透明底上，见 ERROR.md E42）");
+
+        // ② "不透明纯黑"的像素占比必须很小：那正是黑方块的指纹。
+        //    图标本身可以有黑色描边/黑字，所以给 10% 的余量；黑底 bug 下这个比例是 20%~40%。
+        int opaqueBlack = 0;
+        int total = image.Width * image.Height;
+        for (int y = 0; y < image.Height; y++)
+        {
+            for (int x = 0; x < image.Width; x++)
+            {
+                var pixel = image.GetPixel(x, y);
+                if (pixel.A > 240 && pixel.R < 12 && pixel.G < 12 && pixel.B < 12)
+                {
+                    opaqueBlack++;
+                }
+            }
+        }
+
+        double ratio = (double)opaqueBlack / total;
+        Assert.True(ratio < 0.10, $"不透明黑占了 {ratio:P1} —— 透明区被填成了黑底（ERROR.md E42）");
+
+        // ③ 反向对照：图标本身还得有内容（别用"整张全透明"来骗过上面两条）
+        AssertImage(cachePath, IconExtractor.DefaultIconSize, minOpaqueRatio: 0.02);
+    }
+
+    [Fact]
+    public void 快捷方式图标同样保留透明背景()
+    {
+        using var temp = new TempDataDirectory();
+        var extractor = new IconExtractor(temp.IconsDirectory);
+
+        // .lnk 的图标同样来自 shell 图库（掩码型）
+        var lnkPath = Path.Combine(temp.Path, "probe.lnk");
+        TestShortcutFactory.Create(lnkPath, NotepadPath);
+
+        var cacheName = extractor.ExtractAndCache(lnkPath, IconType.Shortcut);
+        var cachePath = Path.Combine(temp.IconsDirectory, cacheName);
+
+        using var image = new Bitmap(cachePath);
+        var corner = image.GetPixel(1, 1);
+        Assert.True(corner.A < 8, $"快捷方式图标左上角不是透明的：A={corner.A}（ERROR.md E42）");
+    }
+
+    // ────────────────────────────── 缓存格式版本 + 原地重提 ──────────────────────────────
+
+    [Fact]
+    public void 缓存格式标记_写入后才算当前格式()
+    {
+        using var temp = new TempDataDirectory();
+        var extractor = new IconExtractor(temp.IconsDirectory);
+
+        Assert.False(extractor.IsCacheFormatCurrent);   // 新目录里没有标记
+
+        extractor.MarkCacheFormatCurrent();
+        Assert.True(extractor.IsCacheFormatCurrent);
+
+        // 旧版本的标记 ⇒ 视为"需要重提"
+        File.WriteAllText(extractor.CacheFormatPath, "1");
+        Assert.False(extractor.IsCacheFormatCurrent);
+
+        // 比当前更高的版本（降级运行）⇒ 不要重提（别人的新格式别乱覆盖）
+        File.WriteAllText(extractor.CacheFormatPath, (IconExtractor.CacheFormat + 1).ToString());
+        Assert.True(extractor.IsCacheFormatCurrent);
+
+        // 垃圾内容 ⇒ 当作需要重提（最坏只是多提一次）
+        File.WriteAllText(extractor.CacheFormatPath, "not-a-number");
+        Assert.False(extractor.IsCacheFormatCurrent);
+    }
+
+    [Fact]
+    public void 原地重提会用同一个文件名覆盖_且内容被修好()
+    {
+        using var temp = new TempDataDirectory();
+        var extractor = new IconExtractor(temp.IconsDirectory);
+
+        // 先造一个"旧格式"的坏缓存：把真实图标写进一个已知文件名，再把它弄成黑底
+        var fileName = "11111111-2222-3333-4444-555555555555.png";
+        var cachePath = Path.Combine(temp.IconsDirectory, fileName);
+        using (var black = new Bitmap(IconExtractor.DefaultIconSize, IconExtractor.DefaultIconSize,
+                   System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+        {
+            using var graphics = Graphics.FromImage(black);
+            graphics.Clear(Color.Black);            // 全不透明黑 = 旧格式的坏图
+            black.Save(cachePath, ImageFormat.Png);
+        }
+
+        var icon = new IconModel { Type = IconType.File, SourcePath = NotepadPath, IconCacheFile = fileName };
+
+        Assert.True(extractor.RefreshCache(icon, fileName));
+
+        // 文件名没变（tabs.json 不用改），内容已经是透明背景的正确图标
+        Assert.True(File.Exists(cachePath));
+        using var refreshed = new Bitmap(cachePath);
+        Assert.True(refreshed.GetPixel(1, 1).A < 8, "重提之后角上仍不是透明（没有真的覆盖成功）");
+        Assert.Equal(IconExtractor.DefaultIconSize, refreshed.Width);
+    }
+
+    [Fact]
+    public void 原地重提拒绝越界的缓存文件名()
+    {
+        using var temp = new TempDataDirectory();
+        var extractor = new IconExtractor(temp.IconsDirectory);
+        var icon = new IconModel { Type = IconType.File, SourcePath = NotepadPath };
+
+        // 缓存文件名来自磁盘上的 JSON ⇒ 当不可信输入：`..\` 一律拒绝（同 CacheFileName 的判据）
+        Assert.False(extractor.RefreshCache(icon, @"..\..\tabs.json"));
+        Assert.False(extractor.RefreshCache(icon, ""));
+        Assert.False(extractor.RefreshCache(icon, null));
+    }
+
+    [Fact]
+    public void 重提中途失败不会留下临时文件()
+    {
+        using var temp = new TempDataDirectory();
+        var extractor = new IconExtractor(temp.IconsDirectory);
+
+        var cacheName = extractor.ExtractAndCache(NotepadPath);
+        Assert.False(string.IsNullOrEmpty(cacheName));
+        Assert.True(extractor.RefreshCache(
+            new IconModel { Type = IconType.File, SourcePath = NotepadPath }, cacheName));
+
+        // 写 PNG 走的是 `*.tmp` → 原子替换，跑完之后不该有 .tmp 残留
+        Assert.Empty(Directory.GetFiles(temp.IconsDirectory, "*.tmp"));
+    }
+
     // ────────────────────────────── 断言辅助 ──────────────────────────────
 
     /// <summary>断言是一张指定尺寸、可解码、且"有内容"（不透明像素占比达标）的 PNG。</summary>
