@@ -200,7 +200,7 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
-### v2.0.6 (开发中)
+### v2.0.6 (2026-09-22) — 主题引擎做全 + 两处显示修复 + 代码体检（第二轮）
 
 > v2.0.5 定版后的下一轮开发：**细节打磨**（用户 2026-09-19："先打版 tag，下一版做一下细节"）。
 > ✅ 已完成：
