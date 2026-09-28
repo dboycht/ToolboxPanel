@@ -39,6 +39,7 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | ✏️ **编辑属性** | 右键 → 编辑属性…，快捷方式支持描述与自定义图标 |
 | 🖥️ **打开方式** | 右键 → 用其他应用打开…（Windows 打开方式对话框） |
 | 🔍 **图标搜索** | Ctrl+F 按名称过滤，Esc 关闭 |
+| 📋 **文本页（粘贴板）** | 一种标签页类型：左列备注 + 右列文本，**点一行即复制**，可增删改与搜索 |
 | 📏 **图标大小** | 视图 → 图标大小（小/中/大），偏好持久化 |
 | 📱 **手机网格布局** | 图标自动排列，窗口缩放时自动调整列数 |
 | ↔️ **拖动排序** | 图标可在标签页内拖动排序，也可跨标签页移动 |
@@ -57,6 +58,7 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | ✏️ **Edit properties** | Right-click → Edit…; shortcuts support description & custom icon |
 | 🖥️ **Open With** | Right-click → Open With… (Windows dialog) |
 | 🔍 **Search icons** | Ctrl+F filters by name, Esc closes |
+| 📋 **Text tab (clipboard)** | A tab type with note + text columns; **click a row to copy**, plus add/edit/delete and search |
 | 📏 **Icon size** | View → Icon Size (small/medium/large), preference saved |
 | 📱 **Phone‑grid layout** | Auto‑flow grid, columns adjust on window resize |
 | ↔️ **Drag to reorder** | Rearrange icons within a tab; drag to another tab to move |
@@ -200,11 +202,22 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
-### v2.0.7 (开发中)
+### v2.0.7 (开发中) — 文本页（粘贴板式表格页）
 
-> v2.0.6 定版发布后的下一轮开发，范围待与用户逐项确认。
-> 目前已知的候选：代码体检轮留下的几项**数据安全加固**（配置损坏时的处置、备份搬运的回滚、
-> 导出一致性）、标签页拖动重排、以及原计划的「好用度」批次（批量导入快捷方式 / 频次排序 / 备份轮转）。
+> v2.0.6 定版发布后的下一轮开发。**本轮已做**：新增**第三种标签页类型「文本页」**。
+
+**📋 文本页（粘贴板）**
+
+- 标签栏右键 →「**新建文本标签页**」（或快捷键 `Ctrl+Shift+X`）即可新建；
+- 表格两列：**左列备注** + **右列文本**；
+- **点一行就把该行文本复制进剪贴板**（多行内容原样保留；右键菜单里也有「复制」）；
+- 右键菜单：新建文本项 / 编辑属性… / 复制 / 删除；**备注可以留空，文本必填**；
+- 搜索（`Ctrl+F`）按**备注或文本**过滤；
+- 文本页不参与图标拖拽（图标/列表项拖到文本页上会被拒绝）；
+- 中英双语齐备。
+
+> 其余候选（范围待与用户逐项确认，尚未开工）：代码体检轮留下的几项**数据安全加固**、
+> 标签页与文本页的拖动排序、以及原计划的「好用度」批次（批量导入快捷方式 / 频次排序 / 备份轮转）。
 
 ### v2.0.6 (2026-09-22) — 主题引擎做全 + 两处显示修复 + 代码体检（第二轮）
 
