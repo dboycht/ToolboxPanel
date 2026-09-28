@@ -107,6 +107,17 @@ public sealed class DataStore
 
         _documentExtraFields = document.ExtraFields;
 
+        // ⚠️ 这里**刻意不给 `TextItems` 补空集合**（与其他两个集合不同）：
+        //    它的"没人碰过 = null"正是"非文本页写回时不出现 `"text_items": []`"的判据
+        //    （见 TabModel.TextItems 的长注释）。在 Load 里补上会让**每次读盘再写回都多出这个键** ⇒
+        //    "二次往返字节完全相同"与"与 Python 原文件逐字节相同"两条测试立刻变红（2026-09-28 实测）。
+        //    界面层不要直接碰这个可空集合，走 TabModel.EffectiveTextItems。
+        foreach (var tab in loaded)
+        {
+            tab.ListItems ??= new List<ListItemModel>();
+            tab.Icons ??= new List<IconModel>();
+        }
+
         // 与原版一致：OrderBy 是稳定排序（List.Sort 不是，别换成 Sort）
         Tabs = loaded.OrderBy(t => t.Order).ToList();
         return Tabs;
@@ -197,6 +208,28 @@ public sealed class DataStore
         return null;
     }
 
+    /// <summary>按文本项 id 找到「所属标签页 + 文本项」；找不到返回 null。</summary>
+    public (TabModel Tab, TextItemModel Item)? FindTextItem(string itemId)
+    {
+        foreach (var tab in Tabs)
+        {
+            if (tab.TextItems is not { } items)
+            {
+                continue;   // ⚠️ 没碰过文本项的页这里是 null（见 TabModel.TextItems 的说明）
+            }
+
+            foreach (var item in items)
+            {
+                if (item.Id == itemId)
+                {
+                    return (tab, item);
+                }
+            }
+        }
+
+        return null;
+    }
+
     // ────────────────────────────── 标签页 ──────────────────────────────
 
     public TabModel AddTab(string name = FallbackTabName, string tabType = TabModel.TypeGrid)
@@ -247,6 +280,7 @@ public sealed class DataStore
             DeleteCacheFile(icon.IconCacheFile);
         }
 
+        // 文本页的条目只活在 tabs.json 里（没有磁盘缓存文件），随页一起消失 —— 不需要额外清理。
         Tabs.Remove(tab);
         RenumberTabOrder();
         Save();
@@ -718,6 +752,81 @@ public sealed class DataStore
         return reordered;
     }
 
+    // ────────────────────────────── 文本项（文本页）──────────────────────────────
+    //
+    // 与列表项同一套形状：**校验/字段语义在 Core 的 `TextItemEditor`**，这里只管落库。
+    // ⚠️ 文本页**不参与拖拽**（图标与列表项各有自己的门控，见 ApplyDragDrop）——
+    //    所以这里也没有 ReorderTextItems：顺序 = 集合顺序 = sort_order 连续值。
+
+    /// <summary>往文本页追加一条（页不存在或不是文本页 ⇒ 什么都不做、返回 false）。</summary>
+    public bool AddTextItem(string tabId, TextItemModel item)
+    {
+        var tab = FindTab(tabId);
+        if (tab is null || !tab.IsTextTab)
+        {
+            return false;
+        }
+
+        // ⚠️ `??=` 不能省：没碰过文本项的页上这个集合是 null（那是为了让"非文本页的
+        //    tabs.json 与原版逐字节一致"—— 见 TabModel.TextItems 的长注释）。
+        tab.TextItems ??= new List<TextItemModel>();
+        item.SortOrder = tab.TextItems.Count;
+        tab.TextItems.Add(item);
+        Save();
+        return true;
+    }
+
+    /// <summary>删掉一条文本项（找不到就什么都不做）。</summary>
+    public void RemoveTextItem(string itemId)
+    {
+        var found = FindTextItem(itemId);
+        if (found is null)
+        {
+            return;
+        }
+
+        var (tab, item) = found.Value;
+        tab.TextItems!.Remove(item);
+        RenumberTextItems(tab);
+        Save();
+    }
+
+    /// <summary>只更新传入的非 null 字段（与 <see cref="UpdateListItem"/> 一致的「部分更新」语义）。</summary>
+    public void UpdateTextItem(string itemId, string? note = null, string? text = null)
+    {
+        var found = FindTextItem(itemId);
+        if (found is null)
+        {
+            return;
+        }
+
+        var item = found.Value.Item;
+        if (note is not null)
+        {
+            item.Note = note;
+        }
+
+        if (text is not null)
+        {
+            item.Text = text;
+        }
+
+        Save();
+    }
+
+    private static void RenumberTextItems(TabModel tab)
+    {
+        if (tab.TextItems is not { } items)
+        {
+            return;
+        }
+
+        for (int i = 0; i < items.Count; i++)
+        {
+            items[i].SortOrder = i;
+        }
+    }
+
     // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
 
     /// <summary>
@@ -755,6 +864,14 @@ public sealed class DataStore
         if (payload.Kind == DragItemKind.ListItem && !targetTab.IsListTab)
         {
             return DragDropResult.Fail(I18n.T("drag.error.list_to_grid"), request);
+        }
+
+        // ⚠️ 文本页**两类东西都不收**（它没有拖拽；判据是"目标页本身是文本页"，
+        //    与上面两条按载荷类型分的判据正交 —— 不能只靠"图标只能进网格页"推导：
+        //    那一条只拦住了 IsListTab，文本页会被当成网格页放行，落进一个根本不显示的集合里）。
+        if (targetTab.IsTextTab)
+        {
+            return DragDropResult.Fail(I18n.T("drag.error.target_not_grid"), request);
         }
 
         return payload.Kind == DragItemKind.Icon

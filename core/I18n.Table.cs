@@ -14,7 +14,7 @@ namespace ToolboxPanel.Core;
 
 public static partial class I18n
 {
-    /// <summary>全部文案：key → (中文, 英文)。共 391 条。</summary>
+    /// <summary>全部文案：key → (中文, 英文)。共 411 条。</summary>
     internal static readonly Dictionary<string, (string Zh, string En)> Table = new(StringComparer.Ordinal)
     {
 
@@ -409,5 +409,25 @@ public static partial class I18n
         ["shortcut.check"]                  = ("检测冲突", "Check conflicts"),
         ["shortcut.check_done"]             = ("已检测 {total} 条：{issues} 条有问题", "Checked {total}: {issues} issue(s)"),
         ["shortcut.check_clean"]            = ("未发现冲突", "No conflicts found"),
+        ["text.new_tab"]                    = ("新建文本标签页", "New Text Tab"),
+        ["text.default_name"]               = ("文本", "Text"),
+        ["text.new_item"]                   = ("新建文本项", "New Text Item"),
+        ["text.edit_item"]                  = ("编辑文本项", "Edit Text Item"),
+        ["text.col.note"]                   = ("备注", "Note"),
+        ["text.col.text"]                   = ("文本", "Text"),
+        ["text.note_ph"]                    = ("这条文本是做什么用的", "What is this text for"),
+        ["text.text_ph"]                    = ("要复制的内容", "Content to copy"),
+        ["text.menu.copy"]                  = ("复制", "Copy"),
+        ["text.empty_title"]                = ("这一页还没有文本", "This tab has no text yet"),
+        ["text.empty_hint"]                 = ("空白处右键可新建文本项", "Right-click empty area to add an item"),
+        ["text.delete_title"]               = ("删除文本项", "Delete Text Item"),
+        ["text.confirm_delete"]             = ("确定要删除文本项「{note}」吗？", "Delete text item '{note}'?"),
+        ["text.this_item"]                  = ("此项", "this item"),
+        ["text.unnamed"]                    = ("(无备注)", "(no note)"),
+        ["text.copied"]                     = ("已复制到剪贴板", "Copied to clipboard"),
+        ["text.action.copy"]                = ("复制", "Copy"),
+        ["text.error.text_required"]        = ("文本不能为空", "Text cannot be empty"),
+        ["text.copy_hint"]                  = ("点击一行即可复制它的文本", "Click a row to copy its text"),
+        ["search.no_result_text"]           = ("没有匹配的文本项", "No matching text items"),
     };
 }

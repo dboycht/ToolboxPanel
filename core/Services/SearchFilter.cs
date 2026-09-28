@@ -9,6 +9,7 @@
 // 本项目取的口径（用户 2026-09-16 选择题确认「按名称 / 路径过滤当前页」）：
 //   · 图标：display_name **或** source_path **或** target_path 命中即可；
 //   · 列表项：description **或** path 命中即可；
+//   · 文本项（WinUI 线新增的文本页）：note **或** text 命中即可；
 //   · 空查询 = 不过滤（全部可见）；查询首尾空白忽略；大小写不敏感（Ordinal，与 Windows 路径语义一致）。
 //   ⚠️ 图标多出"按路径"这一条是**有意比 v1.11.6 宽**（与 QML 版的列表项口径对齐）：
 //      用户的图标名常常是"记事本"这类中文简名，光按名字搜不到路径里的 `notepad`。
@@ -33,6 +34,9 @@ public static class SearchFilter
 
     /// <summary>列表页"一个都没命中"的提示（WinUI 线新增 key <c>search.no_result_list</c>）。</summary>
     public static string NoResultListText => I18n.T("search.no_result_list");
+
+    /// <summary>文本页"一个都没命中"的提示（WinUI 线新增 key <c>search.no_result_text</c>）。</summary>
+    public static string NoResultTextText => I18n.T("search.no_result_text");
 
     /// <summary>查询是否生效（空 / 全空白 = 不过滤）。</summary>
     public static bool IsActive(string? query) => !string.IsNullOrWhiteSpace(query);
@@ -64,6 +68,18 @@ public static class SearchFilter
         }
 
         return Contains(item.Description, needle) || Contains(item.Path, needle);
+    }
+
+    /// <summary>这一行文本项命不命中查询（备注 / 文本内容，任一含子串即可；大小写不敏感）。</summary>
+    public static bool Matches(TextItemModel item, string? query)
+    {
+        var needle = query?.Trim();
+        if (string.IsNullOrEmpty(needle))
+        {
+            return true;
+        }
+
+        return Contains(item.Note, needle) || Contains(item.Text, needle);
     }
 
     /// <summary>

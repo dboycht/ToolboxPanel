@@ -28,6 +28,7 @@ using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
 using ToolboxPanel.Views;
+using Windows.ApplicationModel.DataTransfer;   // 文本页「点击即复制」用的 Clipboard / DataPackage
 using Windows.Graphics;
 using Windows.UI;
 
@@ -1335,11 +1336,15 @@ public sealed partial class MainWindow : Window
         switch (action)
         {
             case ShortcutAction.NewTab:
-                _ = ShowCreateTabAsync(isList: false);
+                _ = ShowCreateTabAsync(TabModel.TypeGrid);
                 break;
 
             case ShortcutAction.NewListTab:
-                _ = ShowCreateTabAsync(isList: true);
+                _ = ShowCreateTabAsync(TabModel.TypeList);
+                break;
+
+            case ShortcutAction.NewTextTab:
+                _ = ShowCreateTabAsync(TabModel.TypeText);
                 break;
 
             case ShortcutAction.RenameTab:
@@ -2149,11 +2154,15 @@ public sealed partial class MainWindow : Window
             switch (request.Action)
             {
                 case TabMenuAction.NewTab:
-                    await ShowCreateTabAsync(isList: false);
+                    await ShowCreateTabAsync(TabModel.TypeGrid);
                     break;
 
                 case TabMenuAction.NewListTab:
-                    await ShowCreateTabAsync(isList: true);
+                    await ShowCreateTabAsync(TabModel.TypeList);
+                    break;
+
+                case TabMenuAction.NewTextTab:
+                    await ShowCreateTabAsync(TabModel.TypeText);
                     break;
 
                 case TabMenuAction.Rename when request.Tab is { } renameTarget:
@@ -2173,8 +2182,11 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    /// <summary>新建标签页（原版 文件菜单「新建标签页」/「新建列表标签页」，预填默认页名）。</summary>
-    private async Task ShowCreateTabAsync(bool isList)
+    /// <summary>
+    /// 新建标签页（原版 文件菜单「新建标签页」/「新建列表标签页」，预填默认页名）。
+    /// <para>🆕 文本页（<see cref="TabModel.TypeText"/>）走同一条路，只是页类型不同。</para>
+    /// </summary>
+    private async Task ShowCreateTabAsync(string tabType)
     {
         if (_isDemo)
         {
@@ -2182,7 +2194,7 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var dialog = TabNameDialog.CreateForNew(isList);
+        var dialog = TabNameDialog.CreateForNew(tabType);
         dialog.XamlRoot = RootGrid.XamlRoot;
         dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18）
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.NewName is not { } typed)
@@ -2190,7 +2202,7 @@ public sealed partial class MainWindow : Window
             return;   // 取消 ⇒ 什么都不做（与原版 `_on_new_tab` 一致）
         }
 
-        var edit = TabEditor.Create(typed, isList);
+        var edit = TabEditor.Create(typed, tabType);
         if (!edit.Success)
         {
             ReportTransient(edit.ErrorMessage ?? I18n.T("status.action_failed", ("action", I18n.T("action.create"))));
@@ -2204,13 +2216,21 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        _log.AppendLine($"新建标签页：{edit.Name}（{(isList ? "列表" : "网格")}）");
+        _log.AppendLine($"新建标签页：{edit.Name}（{DescribeTabType(edit.TabType)}）");
         ReportTransient(TabContextMenu.CreatedStatus(edit.Name));
 
         // 新建后直接切过去（原版 `add_tab_page` 也是立刻选中新页）
         TabStrip.SelectedTab = created;
         ShowTab(created);
     }
+
+    /// <summary>日志里给页类型一个中文说法（只进自检文件，不占 i18n key）。</summary>
+    private static string DescribeTabType(string tabType) => tabType switch
+    {
+        TabModel.TypeList => "列表",
+        TabModel.TypeText => "文本",
+        _ => "网格",
+    };
 
     /// <summary>重命名标签页（原版 标签栏右键 →「重命名」，用同一个"名字输入框"）。</summary>
     private async Task ShowRenameTabAsync(TabItemViewModel tab)
@@ -2496,6 +2516,16 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        if (tab.IsText)
+        {
+            var textPage = new TextPage(tab);
+            textPage.TextItemActivated += OnTextItemActivated;
+            textPage.TextItemMenuActionRequested += OnTextItemMenuActionRequested;
+            textPage.NewTextItemRequested += async (_, _) => await ShowCreateTextItemAsync(textPage);
+            ApplyThemeIfAnimated(textPage);
+            return textPage;
+        }
+
         if (tab.IsList)
         {
             var listPage = new ListViewPage(tab) { DragDropEnabled = !_isDemo };
@@ -2694,6 +2724,185 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.ConfirmRemoveListItemAsync", ex);
+        }
+    }
+
+    // ────────────────────────────── 文本页（第三种页：点击即复制）──────────────────────────────
+    //
+    // 分工与图块 / 列表项完全一致：**页面只发事件**，剪贴板、弹对话框、落库都在这里。
+    // 规则的"唯一来源"仍然是 Core：字段语义与文案在 `TextItemEditor`、
+    // 菜单规格在 `TextItemContextMenu`（都有单测）。
+
+    /// <summary>
+    /// 点了一行 = **复制它的文本**（这一页的核心动作）。
+    ///
+    /// <para>⚠️ 复制的是**模型里的原文**（多行 / 制表符一个不少），不是屏幕上那行压扁的预览。</para>
+    ///
+    /// <para>⚠️ <c>Clipboard.Flush()</c> 不能省：WinUI 的剪贴板默认是**延迟渲染**的
+    /// （数据由我们的进程在别的程序来取时才提供），本程序一退出剪贴板就空了。
+    /// <c>Flush()</c> 让系统立刻把内容拷进剪贴板 —— 这正是"复制一段东西去别处粘贴"的期望行为。</para>
+    /// </summary>
+    private void OnTextItemActivated(object? sender, TextItemModel item)
+    {
+        if (!TextItemEditor.CanCopy(item))
+        {
+            // 理论上到不了这里（新建/编辑都要求文本非空）；真到了就明确说出来，别静默
+            ReportTransient(TextItemEditor.ErrorTextRequired);
+            return;
+        }
+
+        try
+        {
+            var package = new DataPackage { RequestedOperation = DataPackageOperation.Copy };
+            package.SetText(item.Text);
+            Clipboard.SetContent(package);
+            Clipboard.Flush();   // 见上面的说明：不 Flush 的话本程序退出后剪贴板就空了
+
+            _log.AppendLine($"复制文本项：{TextItemEditor.DisplayNote(item.Note, item.Text)}"
+                            + $"（{item.Text.Length} 个字符）");
+            ReportTransient(TextItemEditor.CopiedText);
+        }
+        catch (Exception ex)
+        {
+            // 剪贴板被别的程序独占时 SetContent 会抛（实测会遇到）—— 软着陆，别让整窗口崩
+            App.WriteCrash("MainWindow.OnTextItemActivated", ex);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", TextItemEditor.CopyActionName), ("err", ex.Message)));
+        }
+    }
+
+    private async void OnTextItemMenuActionRequested(object? sender, TextItemMenuRequest request)
+    {
+        if (_viewModel is null || sender is not TextPage page)
+        {
+            return;
+        }
+
+        switch (request.Action)
+        {
+            case TextItemMenuAction.EditProperties:
+                await ShowEditTextItemAsync(page, request.Item);
+                return;
+
+            case TextItemMenuAction.Copy:
+                OnTextItemActivated(page, request.Item);   // 与点击同一个动作，只有一份实现
+                return;
+
+            case TextItemMenuAction.Remove:
+                await ConfirmRemoveTextItemAsync(page, request.Item);
+                return;
+        }
+    }
+
+    /// <summary>空白处右键 → 新建文本项（原版语义：直接弹对话框）。</summary>
+    private async Task ShowCreateTextItemAsync(TextPage page)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        try
+        {
+            var dialog = TextItemEditDialog.CreateForNew();
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;   // ⚠️ 不设就永远用系统主题（E18）
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Result is not { } values)
+            {
+                return;
+            }
+
+            var item = TextItemEditor.Create(values.Note, values.Text);
+            if (item is null || _viewModel?.AddTextItem(page.Tab.Id, item) != true)
+            {
+                ReportTransient(TextItemEditor.ErrorTextRequired);
+                return;
+            }
+
+            var name = TextItemEditor.DisplayNote(item.Note, item.Text);
+            _log.AppendLine($"新建文本项：{name}");
+            ReportTransient(TextItemEditor.ItemAddedText(name));
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ShowCreateTextItemAsync", ex);
+        }
+    }
+
+    /// <summary>编辑属性…：改备注与文本（两个字段都写 —— 包括把备注清空）。</summary>
+    private async Task ShowEditTextItemAsync(TextPage page, TextItemModel item)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        try
+        {
+            var dialog = TextItemEditDialog.CreateForEdit(item.Note, item.Text);
+            dialog.XamlRoot = RootGrid.XamlRoot;
+            dialog.RequestedTheme = CurrentElementTheme;
+
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary || dialog.Result is not { } values)
+            {
+                return;
+            }
+
+            // 文本为空 ⇒ 不改（规则只在 Core 里判一份）
+            if (!TextItemEditor.TryApplyEdit(item, values.Note, values.Text))
+            {
+                ReportTransient(TextItemEditor.ErrorTextRequired);
+                return;
+            }
+
+            _viewModel?.UpdateTextItem(item);
+            page.Tab.TextItems.FirstOrDefault(row => row.Model.Id == item.Id)?.Refresh();
+
+            _log.AppendLine($"编辑文本项：{TextItemEditor.DisplayNote(item.Note, item.Text)}");
+            ReportTransient(I18n.T("status.edited", ("name", TextItemEditor.DisplayNote(item.Note, item.Text))));
+            FlushLog();
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ShowEditTextItemAsync", ex);
+        }
+    }
+
+    /// <summary>删除：二次确认（备注为空时文案用文本预览 / 「此项」兜底）。</summary>
+    private async Task ConfirmRemoveTextItemAsync(TextPage page, TextItemModel item)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        try
+        {
+            var confirmed = await ConfirmAsync(
+                TextItemEditor.DeleteTitle,
+                TextItemEditor.DeleteConfirmText(TextItemEditor.DisplayNote(item.Note, item.Text)),
+                TextItemContextMenu.LabelRemove);
+            if (!confirmed)
+            {
+                return;
+            }
+
+            var name = TextItemEditor.DisplayNote(item.Note, item.Text);
+            if (_viewModel?.RemoveTextItem(item) == true)
+            {
+                _log.AppendLine($"删除文本项：{name}");
+                ReportTransient(TextItemEditor.RemovedText(name));
+                FlushLog();
+            }
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.ConfirmRemoveTextItemAsync", ex);
         }
     }
 

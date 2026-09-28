@@ -177,26 +177,34 @@ public class TabEditorTests
     // ────────────────────────────── 菜单规格 ──────────────────────────────
 
     [Fact]
-    public void 标签上的菜单_五项且删除前有分隔线()
+    public void 标签上的菜单_六项且删除前有分隔线()
     {
         var items = TabContextMenu.BuildForTab();
 
+        // ⚠️ 原版是五项；第 3 项「新建文本标签页」是 WinUI 线新增的第三种页（见 TabModel.TypeText）
         Assert.Equal(
-            new[] { TabMenuAction.NewTab, TabMenuAction.NewListTab, TabMenuAction.Rename, TabMenuAction.Remove },
+            new[]
+            {
+                TabMenuAction.NewTab, TabMenuAction.NewListTab, TabMenuAction.NewTextTab,
+                TabMenuAction.Rename, TabMenuAction.Remove,
+            },
             items.Select(i => i.Action));
         Assert.False(items[0].SeparatorBefore);
         Assert.False(items[1].SeparatorBefore);
         Assert.False(items[2].SeparatorBefore);
-        Assert.True(items[3].SeparatorBefore);   // 原版：管理类之前画一条线
+        Assert.False(items[3].SeparatorBefore);
+        Assert.True(items[4].SeparatorBefore);   // 原版：管理类之前画一条线
     }
 
     [Fact]
-    public void 空白处的菜单_只出两个新建()
+    public void 空白处的菜单_只出三个新建()
     {
         // "管理"类动作没有作用对象 ⇒ 空白处只给"新建"（本项目"右键即菜单"的一致做法）
         var items = TabContextMenu.BuildForEmptyArea();
 
-        Assert.Equal(new[] { TabMenuAction.NewTab, TabMenuAction.NewListTab }, items.Select(i => i.Action));
+        Assert.Equal(
+            new[] { TabMenuAction.NewTab, TabMenuAction.NewListTab, TabMenuAction.NewTextTab },
+            items.Select(i => i.Action));
         Assert.DoesNotContain(items, i => i.Action is TabMenuAction.Rename or TabMenuAction.Remove);
     }
 

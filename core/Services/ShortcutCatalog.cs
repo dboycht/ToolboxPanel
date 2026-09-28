@@ -27,6 +27,10 @@ public enum ShortcutAction
 {
     NewTab,
     NewListTab,
+
+    /// <summary>新建文本标签页（<b>WinUI 线新增</b>：原版没有文本页，键位也是新定的）。</summary>
+    NewTextTab,
+
     CloseTab,
     RenameTab,
     PrevTab,
@@ -148,6 +152,10 @@ public static class ShortcutCatalog
         // ── 标签页 ──（Ctrl+Shift+T 是原版菜单里的键位；顺带补进了原版那张参考表漏掉的一行）
         new(ShortcutAction.NewTab, "shortcut.new_tab", new ShortcutGesture("T", Ctrl: true), ShortcutKind.App),
         new(ShortcutAction.NewListTab, "list.new_tab", new ShortcutGesture("T", Ctrl: true, Shift: true), ShortcutKind.App),
+        // ⚠️ 文本页是 WinUI 线新增的第三种页，**键位是新定的**（原版没有这一条）：
+        //    取 X 是因为 `Ctrl+Shift+T`（列表页）与 F/O/L/U/P（五类图标）、R/E/I（数据）都已被占用，
+        //    而 `Ctrl+Shift+X` 在 Windows 与常见应用里都不是保留组合（键位唯一性由单测钉住）。
+        new(ShortcutAction.NewTextTab, "text.new_tab", new ShortcutGesture("X", Ctrl: true, Shift: true), ShortcutKind.App),
         new(ShortcutAction.RenameTab, "shortcut.rename_tab", new ShortcutGesture("R", Ctrl: true), ShortcutKind.App),
         new(ShortcutAction.CloseTab, "shortcut.close_tab", new ShortcutGesture("W", Ctrl: true), ShortcutKind.App),
         new(ShortcutAction.PrevTab, "shortcut.prev_tab", new ShortcutGesture("Tab", Ctrl: true, Shift: true), ShortcutKind.App),

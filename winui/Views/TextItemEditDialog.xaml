@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    TextItemEditDialog.xaml —— 文本页条目的「新建 / 编辑属性…」对话框
+
+    形态照列表项的 `ListItemEditDialog`（说明 + 路径），字段换成 **备注 + 文本**：
+      · 备注：单行（左列，给人看的标签，可以留空）；
+      · 文本：多行（右列，点一下复制的**就是它**，必填）。
+    规则与文案都来自 Core 的 `TextItemEditor`（有单测），UI 不另写一份。
+
+    ⚠️ 文案（i18n）：静态标签走 `ui:Tr.Key`；标题与对话框按钮文字在构造函数里设
+       （`ContentDialog` 的 Title / 按钮属性 `Tr` 管不到）。
+-->
+<ContentDialog
+    x:Class="ToolboxPanel.Views.TextItemEditDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:ui="using:ToolboxPanel"
+    DefaultButton="Primary"
+    PrimaryButtonClick="OnPrimaryButtonClick">
+
+    <StackPanel Spacing="10" MinWidth="440">
+        <TextBox x:Name="NoteBox" ui:Tr.Header="text.col.note" ui:Tr.Tip="text.note_ph" />
+
+        <!--
+            文本是多行输入：`AcceptsReturn` 才能真的换行；`TextWrapping` 让长文本在框内折行。
+            高度给个下限（否则一行高的框里编辑多行文本非常难受），ContentDialog 会在超长时自己滚动。
+        -->
+        <TextBox x:Name="TextBoxInput" ui:Tr.Header="text.col.text" ui:Tr.Tip="text.text_ph"
+                 AcceptsReturn="True" TextWrapping="Wrap"
+                 Height="140" VerticalAlignment="Top" />
+
+        <TextBlock x:Name="ErrorText" FontSize="12" TextWrapping="Wrap"
+                   Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                   Visibility="Collapsed" />
+    </StackPanel>
+</ContentDialog>

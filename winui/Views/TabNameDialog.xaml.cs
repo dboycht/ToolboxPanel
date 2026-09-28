@@ -39,8 +39,12 @@ public sealed partial class TabNameDialog : ContentDialog
 
     /// <summary>新建标签页（预填该类型的默认页名）。</summary>
     public static TabNameDialog CreateForNew(bool isList)
+        => CreateForNew(isList ? Core.Models.TabModel.TypeList : Core.Models.TabModel.TypeGrid);
+
+    /// <summary>新建标签页，按**页类型字符串**（<c>grid</c> / <c>list</c> / <c>text</c>）预填默认页名。</summary>
+    public static TabNameDialog CreateForNew(string tabType)
         => new(TabContextMenu.RenameTitle, TabContextMenu.RenamePrompt,
-               TabContextMenu.DefaultNameFor(isList));
+               TabContextMenu.DefaultNameFor(tabType));
 
     /// <summary>重命名（预填当前页名）。</summary>
     public static TabNameDialog CreateForRename(string? currentName)

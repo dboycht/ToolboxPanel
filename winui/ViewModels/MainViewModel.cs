@@ -199,12 +199,16 @@ public sealed class MainViewModel
     /// <summary>
     /// 按**当前** `Tabs` 重算状态栏计数并重排文案（增删标签页后调用；不读盘）。
     /// 语言切换那条路仍然走 <see cref="RebuildStatusText"/>（只重排文案、不动计数）。
+    ///
+    /// <para>⚠️ "条目数"（<c>items</c>）把**列表项与文本项合在一起**数：状态栏那一行只有
+    /// "N 个标签页 · N 个图标 · N 个列表项"三个坑位，为文本页再挤一个会改掉已发布版本的文案格式
+    /// （原版 key 的逐字保真），收益不抵成本。两类都是"非图标的条目"。</para>
     /// </summary>
     private void RefreshStatusCounts()
     {
         _statusTabCount = Tabs.Count;
-        _statusIconCount = Tabs.Where(t => !t.IsList).Sum(t => t.Icons.Count);
-        _statusListItemCount = Tabs.Where(t => t.IsList).Sum(t => t.ListItems.Count);
+        _statusIconCount = Tabs.Where(t => !t.IsList && !t.IsText).Sum(t => t.Icons.Count);
+        _statusListItemCount = Tabs.Sum(t => t.ListItems.Count + t.TextItems.Count);
         RebuildStatusText();
     }
 
@@ -230,13 +234,25 @@ public sealed class MainViewModel
 
         int iconCount = 0;
         int listItemCount = 0;
+        int textItemCount = 0;
         int extracted = 0;
 
         foreach (var tab in tabs)
         {
             var tabViewModel = new TabItemViewModel(tab);
 
-            if (tab.IsListTab)
+            if (tab.IsTextTab)
+            {
+                // 文本页：没有任何图标缓存要提取，直接把条目铺进行集合。
+                // ⚠️ 读 EffectiveTextItems（模型里那个字段为 null 表示"从没有过文本项"）。
+                foreach (var item in tab.EffectiveTextItems)
+                {
+                    tabViewModel.TextItems.Add(new TextRowViewModel(item));
+                }
+
+                textItemCount += tab.TextItems?.Count ?? 0;
+            }
+            else if (tab.IsListTab)
             {
                 foreach (var item in tab.ListItems)
                 {
@@ -291,7 +307,7 @@ public sealed class MainViewModel
         _statusIsDemoSummary = false;
         _statusTabCount = tabs.Count;
         _statusIconCount = iconCount;
-        _statusListItemCount = listItemCount;
+        _statusListItemCount = listItemCount + textItemCount;
         _statusExtractedCount = extracted;
         _statusDirectory = _store.DataDirectory;
         RebuildStatusText();
@@ -446,6 +462,71 @@ public sealed class MainViewModel
     private void RefreshRowOf(string itemId)
         => FindListItemOwner(itemId)?.ListItems.FirstOrDefault(row => row.Model.Id == itemId)?.Refresh();
 
+    // ────────────────────────────── 文本页的条目（新功能）──────────────────────────────
+    //
+    // 与列表项那三个方法**同一套分工**（校验在 Core 的 `TextItemEditor`、先落库再改界面集合、
+    // 演示模式什么都不写）—— 文本页只是"第二列的含义不同"，数据层的形状完全一致。
+
+    /// <summary>往文本页加一条（页不存在或不是文本页 ⇒ 什么都不做）。</summary>
+    public bool AddTextItem(string tabId, TextItemModel item)
+    {
+        if (_store is null || FindTab(tabId) is not { IsText: true } tab)
+        {
+            return false;
+        }
+
+        if (!_store.AddTextItem(tabId, item))
+        {
+            return false;
+        }
+
+        tab.TextItems.Add(new TextRowViewModel(item));
+        tab.NotifyCountLabel();
+        return true;
+    }
+
+    /// <summary>编辑属性：改备注与文本（两个字段都写 —— 包括把备注清空）。</summary>
+    public bool UpdateTextItem(TextItemModel item)
+    {
+        if (_store is null)
+        {
+            return false;
+        }
+
+        _store.UpdateTextItem(item.Id, item.Note, item.Text);
+        RefreshTextRowOf(item.Id);
+        FindTextItemOwner(item.Id)?.ReapplyFilter();   // 备注/文本变了 ⇒ 重新判定过滤
+        return true;
+    }
+
+    /// <summary>删掉一条文本项。</summary>
+    public bool RemoveTextItem(TextItemModel item)
+    {
+        if (_store is null || FindTextItemOwner(item.Id) is not { } owner)
+        {
+            return false;
+        }
+
+        _store.RemoveTextItem(item.Id);
+
+        var row = owner.TextItems.FirstOrDefault(r => r.Model.Id == item.Id);
+        if (row is not null)
+        {
+            owner.TextItems.Remove(row);
+        }
+
+        owner.NotifyCountLabel();
+        return true;
+    }
+
+    /// <summary>哪一页持有这个文本项（找不到返回 null）。</summary>
+    private TabItemViewModel? FindTextItemOwner(string itemId)
+        => Tabs.FirstOrDefault(tab => tab.TextItems.Any(row => row.Model.Id == itemId));
+
+    /// <summary>模型字段改过之后让那一行就地刷新（不重建整行，保住滚动位置）。</summary>
+    private void RefreshTextRowOf(string itemId)
+        => FindTextItemOwner(itemId)?.TextItems.FirstOrDefault(row => row.Model.Id == itemId)?.Refresh();
+
     /// <summary>
     /// 「删除」：Core 落库（连带删掉图标缓存文件）→ 从界面集合里移除 → 刷新标签栏数量。
     /// 返回 false 表示演示模式或找不到该图标（此时**什么都不做**）。
@@ -537,8 +618,15 @@ public sealed class MainViewModel
     /// </summary>
     internal DataStore? Store => _store;
 
-    /// <summary>数据里有没有可显示的内容（所有内容页加起来至少一个图标）。</summary>
-    public bool HasAnyIcon => Tabs.Any(tab => tab.Icons.Count > 0);
+    /// <summary>
+    /// 数据里有没有可显示的内容（任意一页有图标 / 列表项 / 文本项）。
+    ///
+    /// <para>⚠️ 口径是"**任何一页有任何内容**"，不是"只有图标"：它唯一的作用是决定
+    /// "启动时要不要塞一批示例图标"（见 MainWindow.LoadData）。要是只看图标，
+    /// 那么一个只用列表页与文本页的用户会被硬塞进来一个"示例"图标页。</para>
+    /// </summary>
+    public bool HasAnyIcon
+        => Tabs.Any(tab => tab.Icons.Count > 0 || tab.ListItems.Count > 0 || tab.TextItems.Count > 0);
 
     // ────────────────────────────── 拖拽排序（W3）──────────────────────────────
 
@@ -889,8 +977,23 @@ public sealed class MainViewModel
 
         Tabs.Add(tools);
 
-        var iconTotal = Tabs.Where(t => !t.IsList).Sum(t => t.Icons.Count);
-        var itemTotal = Tabs.Where(t => t.IsList).Sum(t => t.ListItems.Count);
+        // ④ 文本页：粘贴板式的"点击即复制"（第三种页，WinUI 线新增）
+        var notes = new TabItemViewModel(new TabModel { Name = "文本", Order = 3, TabType = "text" });
+        foreach (var (note, text) in new[]
+        {
+            ("邮箱签名", "此致\r\n敬礼\r\ndboycht"),
+            ("项目地址", "https://github.com/dboycht/ToolboxPanel"),
+            ("常用命令", "dotnet build ToolboxPanel.WinUI.csproj -p:Platform=x64"),
+            ("数据目录", @"%APPDATA%\ToolboxPanel\data"),
+        })
+        {
+            notes.TextItems.Add(new TextRowViewModel(new TextItemModel { Note = note, Text = text }));
+        }
+
+        Tabs.Add(notes);
+
+        var iconTotal = Tabs.Where(t => !t.IsList && !t.IsText).Sum(t => t.Icons.Count);
+        var itemTotal = Tabs.Sum(t => t.ListItems.Count + t.TextItems.Count);
 
         _statusIsDemoSummary = true;
         _statusTabCount = Tabs.Count;

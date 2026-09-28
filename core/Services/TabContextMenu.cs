@@ -8,10 +8,14 @@
 //   ─────────
 //   删除              （tab.menu.delete）
 //
-// ⚠️ 原版是**菜单栏**（文件菜单里"新建标签页"，标签栏右键出上面这五项）；
+// 🆕 **WinUI 线新增一项**：`新建文本标签页`（<c>text.new_tab</c>）—— 原版只有 grid / list 两种页，
+//    文本页是这一版新增的第三种（见 `TabModel.TypeText`）。它排在两个「新建」之后、
+//    「重命名」之前，把"新建"三兄弟放在一起，分隔线仍然只在"管理类动作"之前。
+//
+// ⚠️ 原版是**菜单栏**（文件菜单里"新建标签页"，标签栏右键出上面那五项）；
 //    WinUI 线没有菜单栏（见 HANDOVER §2.2 的说明），所以：
-//      · 标签上右键 → 上面五项（与原版右键菜单逐项一致）
-//      · 标签栏空白处右键 → **只出两个「新建」**（"右键即菜单"是本项目一致的做法）
+//      · 标签上右键 → 上面几项（与原版右键菜单逐项一致，只多一个文本页）
+//      · 标签栏空白处右键 → **只出"新建"**（"右键即菜单"是本项目一致的做法）
 //
 // 与图块菜单（`IconContextMenu`）同一套写法：顺序 / 分隔线 / 文案都进 Core，被单测钉住。
 
@@ -26,6 +30,9 @@ public enum TabMenuAction
     /// <summary>新建列表标签页（原版 <c>list.new_tab</c>）。</summary>
     NewListTab,
 
+    /// <summary>新建文本标签页（<b>WinUI 线新增</b>；原版没有这种页，key <c>text.new_tab</c> 也是新增的）。</summary>
+    NewTextTab,
+
     Rename,
 
     Remove,
@@ -39,26 +46,39 @@ public static class TabContextMenu
 {
     public static string LabelNewTab => I18n.T("tab.menu.new");
     public static string LabelNewListTab => I18n.T("list.new_tab");
+    public static string LabelNewTextTab => I18n.T("text.new_tab");
     public static string LabelRename => I18n.T("tab.menu.rename");
     public static string LabelRemove => I18n.T("tab.menu.delete");
 
-    /// <summary>默认页名：网格页 <c>tab.default_name</c>、列表页 <c>list.default_name</c>（原版同源）。</summary>
-    public static string DefaultNameFor(bool isList) => I18n.T(isList ? "list.default_name" : "tab.default_name");
+    /// <summary>默认页名：网格页 <c>tab.default_name</c>、列表页 <c>list.default_name</c>、文本页 <c>text.default_name</c>。</summary>
+    public static string DefaultNameFor(string tabType)
+        => I18n.T(tabType switch
+        {
+            Models.TabModel.TypeList => "list.default_name",
+            Models.TabModel.TypeText => "text.default_name",
+            _ => "tab.default_name",
+        });
 
-    /// <summary>**标签上**右键：五项，顺序与原版一致（删除前有分隔线）。</summary>
+    /// <summary>按"是不是列表页"取默认页名（保留原签名，行为不变）。</summary>
+    public static string DefaultNameFor(bool isList)
+        => DefaultNameFor(isList ? Models.TabModel.TypeList : Models.TabModel.TypeGrid);
+
+    /// <summary>**标签上**右键：六项，顺序与原版一致（删除前有分隔线；文本页那一项是新加的）。</summary>
     public static IReadOnlyList<TabMenuItem> BuildForTab() => new List<TabMenuItem>
     {
         new(TabMenuAction.NewTab, LabelNewTab),
         new(TabMenuAction.NewListTab, LabelNewListTab),
+        new(TabMenuAction.NewTextTab, LabelNewTextTab),
         new(TabMenuAction.Rename, LabelRename),
         new(TabMenuAction.Remove, LabelRemove, SeparatorBefore: true),
     };
 
-    /// <summary>**标签栏空白处**右键：只出两个「新建」（"管理"类动作没有作用对象）。</summary>
+    /// <summary>**标签栏空白处**右键：只出三个「新建」（"管理"类动作没有作用对象）。</summary>
     public static IReadOnlyList<TabMenuItem> BuildForEmptyArea() => new List<TabMenuItem>
     {
         new(TabMenuAction.NewTab, LabelNewTab),
         new(TabMenuAction.NewListTab, LabelNewListTab),
+        new(TabMenuAction.NewTextTab, LabelNewTextTab),
     };
 
     // ── 各处提示文案（原版 i18n 的 tab.* / reset.*）──

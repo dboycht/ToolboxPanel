@@ -561,5 +561,30 @@ TEXTS: dict[str, dict[str, str]] = {
     "shortcut.check_done":         {"zh": "已检测 {total} 条：{issues} 条有问题",
                                                                            "en": "Checked {total}: {issues} issue(s)"},
     "shortcut.check_clean":        {"zh": "未发现冲突",                     "en": "No conflicts found"},
+
+    # ⚠️ 下面这一段是 **WinUI 线新增的「文本页（粘贴板式表格页）」文案**（原版 Python 只有
+    #    网格页与列表页，没有这种页）。与上面两段同样的纪律：**加在这里而不是只加 C# 侧**，
+    #    因为 `tests/I18nTests.cs` 的保真测试要求两边 key 集合完全一致；
+    #    改完必须重跑 `python gen-i18n-table.py` 重新生成 `core/I18n.Table.cs`。
+    "text.new_tab":                {"zh": "新建文本标签页",                 "en": "New Text Tab"},
+    "text.default_name":           {"zh": "文本",                           "en": "Text"},
+    "text.new_item":               {"zh": "新建文本项",                     "en": "New Text Item"},
+    "text.edit_item":              {"zh": "编辑文本项",                     "en": "Edit Text Item"},
+    "text.col.note":               {"zh": "备注",                           "en": "Note"},
+    "text.col.text":               {"zh": "文本",                           "en": "Text"},
+    "text.note_ph":                {"zh": "这条文本是做什么用的",           "en": "What is this text for"},
+    "text.text_ph":                {"zh": "要复制的内容",                   "en": "Content to copy"},
+    "text.menu.copy":              {"zh": "复制",                           "en": "Copy"},
+    "text.empty_title":            {"zh": "这一页还没有文本",               "en": "This tab has no text yet"},
+    "text.empty_hint":             {"zh": "空白处右键可新建文本项",         "en": "Right-click empty area to add an item"},
+    "text.delete_title":           {"zh": "删除文本项",                     "en": "Delete Text Item"},
+    "text.confirm_delete":         {"zh": "确定要删除文本项「{note}」吗？", "en": "Delete text item '{note}'?"},
+    "text.this_item":              {"zh": "此项",                           "en": "this item"},
+    "text.unnamed":                {"zh": "(无备注)",                       "en": "(no note)"},
+    "text.copied":                 {"zh": "已复制到剪贴板",                 "en": "Copied to clipboard"},
+    "text.action.copy":            {"zh": "复制",                           "en": "Copy"},
+    "text.error.text_required":    {"zh": "文本不能为空",                   "en": "Text cannot be empty"},
+    "text.copy_hint":              {"zh": "点击一行即可复制它的文本",       "en": "Click a row to copy its text"},
+    "search.no_result_text":       {"zh": "没有匹配的文本项",               "en": "No matching text items"},
 }
 # fmt: on

@@ -52,7 +52,9 @@ public static class BulkDelete
     /// </summary>
     public static IReadOnlyList<string> ResolveSelection(TabModel? tab, IEnumerable<string>? checkedIds)
     {
-        if (tab is null || tab.IsListTab || checkedIds is null)
+        // ⚠️ 判据是"**不是网格页就拒**"（而不是"是列表页就拒"）：文本页同样没有批量删除
+        //    （它连图标都没有），漏掉它会让这类页悄悄拿到一份"有 id 但页里没有"的清单。
+        if (tab is null || tab.IsListTab || tab.IsTextTab || checkedIds is null)
         {
             return Array.Empty<string>();
         }

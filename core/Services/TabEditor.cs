@@ -40,7 +40,8 @@ public sealed class TabEditResult
     public string Name { get; }
 
     /// <summary>
-    /// 成功时该用哪个页类型（<see cref="Models.TabModel.TypeGrid"/> / <see cref="Models.TabModel.TypeList"/>）。
+    /// 成功时该用哪个页类型（<see cref="Models.TabModel.TypeGrid"/> / <see cref="Models.TabModel.TypeList"/> /
+    /// <see cref="Models.TabModel.TypeText"/>）。
     /// <para>⚠️ **只在"新建"时有意义**：重命名不涉及页类型（原名那页是什么类型就还是什么类型），
     /// 所以 <see cref="Rename"/> 的结果里这个字段是占位值，调用方**不要读它**。</para>
     /// </summary>
@@ -79,10 +80,33 @@ public static class TabEditor
     /// 新建的校验 + 归一化。**创建动作本身由调用方做**（`DataStore.AddTab(name, type)`）。
     /// </summary>
     public static TabEditResult Create(string? input, bool isList)
+        => Create(input, isList ? Models.TabModel.TypeList : Models.TabModel.TypeGrid);
+
+    /// <summary>
+    /// 同上，按**页类型字符串**新建（<c>grid</c> / <c>list</c> / <c>text</c>；
+    /// 认不出的类型一律当网格页 —— 与 <see cref="Models.TabModel.IsListTab"/> 的宽容口径一致）。
+    ///
+    /// <para>🆕 文本页（<see cref="Models.TabModel.TypeText"/>，WinUI 线新增）走这一条：
+    /// 它既不是列表页也不是网格页，用 <c>bool isList</c> 表达不了第三种，
+    /// 再叠一个 <c>bool isText</c> 会让调用方开始拼"哪两个 bool 是真的"——
+    /// 直接收页类型字符串最省事，且与 `DataStore.AddTab(name, tabType)` 的参数同一口径。</para>
+    /// </summary>
+    public static TabEditResult Create(string? input, string tabType)
     {
-        var name = ResolveCreateName(input, isList);
-        return TabEditResult.Ok(name, isList ? Models.TabModel.TypeList : Models.TabModel.TypeGrid);
+        var normalized = NormalizeTabType(tabType);
+        var name = Trim(input) is { Length: > 0 } typed ? typed : TabContextMenu.DefaultNameFor(normalized);
+        return TabEditResult.Ok(name, normalized);
     }
+
+    /// <summary>把外部传进来的页类型收敛成三种合法值之一（认不出 ⇒ 网格页）。</summary>
+    public static string NormalizeTabType(string? tabType) => tabType switch
+    {
+        var t when string.Equals(t, Models.TabModel.TypeList, StringComparison.OrdinalIgnoreCase)
+            => Models.TabModel.TypeList,
+        var t when string.Equals(t, Models.TabModel.TypeText, StringComparison.OrdinalIgnoreCase)
+            => Models.TabModel.TypeText,
+        _ => Models.TabModel.TypeGrid,
+    };
 
     /// <summary>
     /// 重命名的校验：**名字必填**（原版内联编辑同样不接受空名，空名会被丢弃）。

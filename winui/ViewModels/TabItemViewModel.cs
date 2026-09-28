@@ -29,11 +29,13 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
         Id = model.Id;
         _name = string.IsNullOrEmpty(model.Name) ? I18n.T("tab.unnamed") : model.Name;
         IsList = model.IsListTab;
+        IsText = model.IsTextTab;
 
         // 集合一变（新建 / 删除 / 拖拽重排 / 导入后重建）可见视图跟着重算 ——
         // 少了这一条就会出现"过滤着新建了一个图标，界面却什么都不动"。
         Icons.CollectionChanged += (_, _) => RebuildVisible();
         ListItems.CollectionChanged += (_, _) => RebuildVisible();
+        TextItems.CollectionChanged += (_, _) => RebuildVisible();
         RebuildVisible();
     }
 
@@ -64,11 +66,21 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
 
     public bool IsList { get; }
 
+    /// <summary>是不是文本页（第三种页：左列备注 + 右列文本，点击即复制）。</summary>
+    public bool IsText { get; }
+
     /// <summary>
     /// 拖拽用：这一页收哪一类东西。
     /// 界面靠它判断"这次拖放我接不接受"（网格页只收图标、列表页只收列表项）。
+    ///
+    /// <para>⚠️ 文本页**不收任何东西**（它没有拖拽）：这里回 <see cref="DragItemKind.Icon"/> 只是
+    /// "没有第三种载荷"的占位，真正的门控在 Core（<c>DataStore.ApplyDragDrop</c> 按目标页类型拒收）
+    /// 与页面本身（<c>TextPage</c> 的 <c>AllowDrop=False</c>）——
+    /// 别把这一行当成"文本页能收图标"的依据。</para>
     /// </summary>
-    public DragItemKind DraggableKind => IsList ? DragItemKind.ListItem : DragItemKind.Icon;
+    public DragItemKind DraggableKind => IsText
+        ? DragItemKind.Icon
+        : IsList ? DragItemKind.ListItem : DragItemKind.Icon;
 
     /// <summary>是否选中（标签栏用它显示底部强调条）。</summary>
     public bool IsSelected
@@ -88,18 +100,24 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     /// 标签类型字形。
     /// ⚠️ 选字形**必须实际渲染出来看**：`\uE71D`（名字叫 AllApps）实际画出来是「缩略图列表」，
     /// 跟 `\uE8FD`(List) 几乎分不出来（用户实测反馈"两种标签图标一样"）。
-    /// 现在改用 `\uE80A`（密集方格 = 网格页）与 `\uE8FD`（项目符号列表 = 列表页），区分明显。
+    /// 现在改用 `\uE80A`（密集方格 = 网格页）、`\uE8FD`（项目符号列表 = 列表页）
+    /// 与 `\uE8C8`（复制 = 文本页：这一页点一下就是复制）。
     /// </summary>
-    public string Glyph => IsList ? "\uE8FD" : "\uE80A";
+    public string Glyph => IsText ? "\uE8C8" : IsList ? "\uE8FD" : "\uE80A";
 
     public ObservableCollection<IconTileViewModel> Icons { get; } = new();
 
     public ObservableCollection<ListRowViewModel> ListItems { get; } = new();
 
+    /// <summary>文本页的行（左列备注 + 右列文本）。</summary>
+    public ObservableCollection<TextRowViewModel> TextItems { get; } = new();
+
     /// <summary>标签栏上的数量文字（如「20 个图标」）。语言切换后由页面/窗口调 <see cref="NotifyCountLabel"/> 重算。</summary>
-    public string CountLabel => IsList
-        ? I18n.T("tab.count.items", ("count", ListItems.Count))
-        : I18n.T("tab.count.icons", ("count", Icons.Count));
+    public string CountLabel => IsText
+        ? I18n.T("tab.count.items", ("count", TextItems.Count))
+        : IsList
+            ? I18n.T("tab.count.items", ("count", ListItems.Count))
+            : I18n.T("tab.count.icons", ("count", Icons.Count));
 
     /// <summary>数量变了（拖拽搬走/搬来图标）之后刷新标签栏上的数量文字。</summary>
     public void NotifyCountLabel() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CountLabel)));
@@ -121,16 +139,23 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     /// <summary>过滤后仍然显示的行（列表页的 ItemsSource）。</summary>
     public ObservableCollection<ListRowViewModel> VisibleListItems { get; } = new();
 
+    /// <summary>过滤后仍然显示的文本行（文本页的 ItemsSource）。</summary>
+    public ObservableCollection<TextRowViewModel> VisibleTextItems { get; } = new();
+
     /// <summary>当前查询（空 / 全空白 = 不过滤）。</summary>
     public string Filter { get; private set; } = string.Empty;
 
     public bool IsFilterActive => SearchFilter.IsActive(Filter);
 
     /// <summary>可见项数量（搜索栏上的「匹配 N / M」）。</summary>
-    public int VisibleCount => IsList ? VisibleListItems.Count : VisibleIcons.Count;
+    public int VisibleCount => IsText
+        ? VisibleTextItems.Count
+        : IsList ? VisibleListItems.Count : VisibleIcons.Count;
 
     /// <summary>这一页真实持有的项数（与可见数无关）。</summary>
-    public int TotalCount => IsList ? ListItems.Count : Icons.Count;
+    public int TotalCount => IsText
+        ? TextItems.Count
+        : IsList ? ListItems.Count : Icons.Count;
 
     /// <summary>套用查询（幂等：同一查询重复下发什么都不做）。</summary>
     public void SetFilter(string? query)
@@ -175,6 +200,7 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     {
         SyncVisible(Icons, VisibleIcons, tile => SearchFilter.Matches(tile.Model, Filter));
         SyncVisible(ListItems, VisibleListItems, row => SearchFilter.Matches(row.Model, Filter));
+        SyncVisible(TextItems, VisibleTextItems, row => SearchFilter.Matches(row.Model, Filter));
     }
 
     /// <summary>
@@ -261,6 +287,39 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
         }
 
         ReorderObservable(ListItems, ordered);
+        NotifyCountLabel();
+    }
+
+    /// <summary>
+    /// 文本页版本（从 Core 的 <c>text_items</c> 重建行）。
+    ///
+    /// <para>⚠️ 文本页**没有拖拽排序**（本轮有意不做，见 HANDOVER 的记录），所以这个方法只在
+    /// "编辑属性 / 新建 / 删除"这类**内容变化**后被调用，不参与拖放落库 ——
+    /// 但仍然照"Core 是唯一事实源、界面跟着它走"的同一套写法，避免两处各自维护顺序。</para>
+    ///
+    /// <para>⚠️ 读的是 <see cref="TabModel.EffectiveTextItems"/>（不是 <c>TextItems</c>）：
+    /// 那个字段为 null 时表示"这一页从没有过文本项"，直接解引用会抛空引用。</para>
+    /// </summary>
+    public void SyncTextItemsFromModel()
+    {
+        var source = Model.EffectiveTextItems;
+        var viewById = ToFirstById(TextItems, row => row.Model.Id);
+        var ordered = new List<TextRowViewModel>(source.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var item in source)
+        {
+            if (!seen.Add(item.Id))
+            {
+                continue;   // 模型里的重复 id：只处理第一个
+            }
+
+            ordered.Add(viewById.TryGetValue(item.Id, out var row)
+                ? row
+                : new TextRowViewModel(item));
+        }
+
+        ReorderObservable(TextItems, ordered);
         NotifyCountLabel();
     }
 
@@ -546,5 +605,44 @@ public sealed class ListRowViewModel : INotifyPropertyChanged
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Description)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Path)));
+    }
+}
+
+/// <summary>
+/// 文本页里的一行（第 1 列备注，第 2 列文本预览）。
+///
+/// <para>与 <see cref="ListRowViewModel"/> 同一套写法：**透读模型** + <see cref="Refresh"/>
+/// 通知，这样"编辑属性"之后就地刷新、不重建整行（也不丢滚动位置）。</para>
+///
+/// <para>右列显示的是**压缩成一行**的预览（换行会毁掉行高与列对齐，见 <see cref="TextItemEditor.Preview"/>）；
+/// 复制进剪贴板的永远是模型里的**原文**（多行 / 制表符一个不少）——
+/// "显示"与"复制"两份内容刻意不同，别把 <see cref="Text"/> 当成要复制的东西。</para>
+/// </summary>
+public sealed class TextRowViewModel : INotifyPropertyChanged
+{
+    public TextRowViewModel(TextItemModel model)
+    {
+        Model = model;
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public TextItemModel Model { get; }
+
+    /// <summary>左列：备注（为空时显示「(无备注)」占位，与标签页/图块的兜底口径一致）。</summary>
+    public string Note => string.IsNullOrWhiteSpace(Model.Note) ? TextItemEditor.UnnamedNote : Model.Note;
+
+    /// <summary>右列：压成一行的文本预览（**不是**要复制的内容）。</summary>
+    public string Text => TextItemEditor.Preview(Model.Text);
+
+    /// <summary>这一行现在能不能复制（文本非空）。</summary>
+    public bool CanCopy => TextItemEditor.CanCopy(Model);
+
+    /// <summary>模型字段被改过之后刷新显示。</summary>
+    public void Refresh()
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Note)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Text)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanCopy)));
     }
 }
