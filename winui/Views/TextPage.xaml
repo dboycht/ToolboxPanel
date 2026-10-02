@@ -27,6 +27,12 @@
             <Setter Property="Margin" Value="0" />
             <Setter Property="CornerRadius" Value="4" />
             <!--
+                ⚠️⚠️ 2026-10-02：与列表页同一条修正 —— `ListViewItem` 默认水平对齐是 **Left**，
+                行只占"自己内容的宽度" ⇒ 星号列按每行各自宽度分 ⇒ **第二列参差不齐**。
+                Stretch 之后所有行同宽，分界点统一 = 表格观感（用户实测反馈的那一条）。
+            -->
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <!--
                 ⚠️ 文本页**刻意不开 CanDrag**（与列表页相反）：
                 这一页本轮不做拖拽排序，开了只会让"想选中/点一下复制"变成"莫名其妙拖起来"。
                 要加拖拽时记得三件事一起做：载荷类型、目标页门控、Core 的落库入口。
@@ -37,9 +43,11 @@
         <!--
             两列的列宽定义在**表头与行模板里各写一份**（XAML 没有"共享列宽"的机制）：
             值必须逐字一致，否则表头与内容会错位。改宽度请改两处。
+            ⚠️ 表头与行**都必须撑满宽度**：行靠容器的 HorizontalContentAlignment=Stretch（见上），
+               表头靠这里显式 Stretch（它不在行容器里，走的是另一条宿主）。
         -->
         <DataTemplate x:Key="TextRowTemplate" x:DataType="vm:TextRowViewModel">
-            <Grid ColumnSpacing="10">
+            <Grid ColumnSpacing="10" HorizontalAlignment="Stretch">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" />
                     <ColumnDefinition Width="3*" />
@@ -61,6 +69,7 @@
         <ListView x:Name="Rows"
                   ItemTemplate="{StaticResource TextRowTemplate}"
                   ItemContainerStyle="{StaticResource CompactTextRowStyle}"
+                  HorizontalContentAlignment="Stretch"
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnRowClick"
@@ -70,7 +79,7 @@
 
             <!-- 表头：两列的含义不像"说明 / 路径"那么自明，所以给它一行标题 + 一句怎么用 -->
             <ListView.Header>
-                <Grid ColumnSpacing="10" Padding="8,2" Margin="0,0,0,4">
+                <Grid ColumnSpacing="10" Padding="8,2" Margin="0,0,0,4" HorizontalAlignment="Stretch">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="2*" />
                         <ColumnDefinition Width="3*" />

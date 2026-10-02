@@ -23,6 +23,14 @@
             <Setter Property="Margin" Value="0" />
             <Setter Property="CornerRadius" Value="4" />
             <!--
+                ⚠️⚠️ 2026-10-02：**这一行是"两列对齐"的关键**。
+                `ListViewItem` 的默认水平对齐是 **Left** ⇒ 行内容只占"自己内容的宽度" ⇒
+                行模板里的星号列（2*:3*）按**每行各自的宽度**去分 ⇒ 第二列在每行都从不同的 x 开始
+                （用户实测反馈："参差不齐，我想要表格对齐的样子"）。
+                改成 Stretch 之后所有行同宽，星号列的分界点也就统一了 = 表格观感。
+            -->
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <!--
                 拖拽排序：行容器可拖 ⇒ **按下拖动即起拖**（系统原生行为）。
                 ⚠️ 2026-09-14 用户明确要求取消长按门控。
                 ⚠️ 2026-09-15 用户明确要求取消"实时让位"：拖动时只显示插入横条，行不乱动。
@@ -31,7 +39,8 @@
         </Style>
 
         <DataTemplate x:Key="ListRowTemplate" x:DataType="vm:ListRowViewModel">
-            <Grid ColumnSpacing="10">
+            <!-- ⚠️ HorizontalAlignment=Stretch 是第二道保险（容器对齐若被别处覆盖，这里仍撑满） -->
+            <Grid ColumnSpacing="10" HorizontalAlignment="Stretch">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="2*" />
                     <ColumnDefinition Width="3*" />
