@@ -55,6 +55,14 @@ public sealed partial class TabStripView : UserControl
     private readonly HashSet<TabHiddenSlotView> _unloadHooked = new();
 
     /// <summary>
+    /// 已经挂过"就地改名"三个事件的插槽控件。
+    /// ⚠️ 与 <see cref="_unloadHooked"/> 不同：**这个表只增不减** ——
+    /// 插槽控件是"复用"而不是"销毁"，取消订阅会让复用到别处的控件失去响应；
+    /// 处理的是具名方法（不捕获循环变量），事件里一律从 `DataContext` 现取当前标签。
+    /// </summary>
+    private readonly HashSet<TabHiddenSlotView> _renameHooked = new();
+
+    /// <summary>
     /// 当前的图标形态（`static`）。
     ///
     /// <para>⚠️ 为什么是 static：`ApplySettings` 往往**早于**标签项的模板被实现
@@ -110,6 +118,13 @@ public sealed partial class TabStripView : UserControl
     /// 与图块菜单 / 列表行菜单同一分工（页面拿不到 DataStore）。</para>
     /// </summary>
     public event EventHandler<TabMenuRequest>? TabMenuActionRequested;
+
+    /// <summary>
+    /// 就地改名（双击标签文字）提交 —— 交给宿主窗口落库（页面不碰 DataStore）。
+    /// <para><see cref="TabRenameRequest.NewName"/> 已经过 Core 的 <c>InlineRename.Decide</c>：
+    /// 空输入与"没改"在标签栏这一层就被拦掉了，不会发出来。</para>
+    /// </summary>
+    public event EventHandler<TabRenameRequest>? TabRenameCommitted;
 
     // ⚠️ 2026-09-16：原来还有一个 `ItemDroppedOnTab`（松手在标签上直接落库）。
     //    现在"松手在标签上"由 `DragSession.ReportTarget` 登记落点、源端 `DragItemsCompleted` 统一收口，
@@ -352,6 +367,14 @@ public sealed partial class TabStripView : UserControl
             slot.Unloaded += OnHiddenSlotViewUnloaded;
         }
 
+        // 就地改名（双击标签文字）：**每个插槽只挂一次**，事件里按 DataContext 现取标签
+        if (_renameHooked.Add(slot))
+        {
+            slot.RenameRequested += OnSlotRenameRequested;
+            slot.RenameCommitted += OnSlotRenameCommitted;
+            slot.RenameCanceled += OnSlotRenameCanceled;
+        }
+
         // 初始态：按当前形态（text = 收起；always = 展开）就位，不做动画。
         // ⚠️ 用 CurrentIconMode（静态）而不是 _iconMode（实例）：模板加载可能早于/晚于设置下发。
         // ⚠️ 2026-09-21 修：还要认"**这一项正是当前悬停项**" —— 否则悬停期间容器被回收重建时，
@@ -376,6 +399,61 @@ public sealed partial class TabStripView : UserControl
         {
             _slots.Remove(key);
         }
+    }
+
+    // ────────────────────────────── 就地改名（双击标签文字，2026-10-02）──────────────────────────────
+
+    private void OnSlotRenameRequested(object? sender, EventArgs e)
+    {
+        if (sender is not TabHiddenSlotView slot || slot.DataContext is not TabItemViewModel tab)
+        {
+            return;
+        }
+
+        BeginInlineRename(tab);
+    }
+
+    /// <summary>进编辑：**同时只允许一个标签在编辑**（另一个正在编辑就先收掉，它的失焦会先提交）。</summary>
+    private void BeginInlineRename(TabItemViewModel tab)
+    {
+        foreach (var other in Tabs.Items.OfType<TabItemViewModel>())
+        {
+            if (!ReferenceEquals(other, tab) && other.IsEditing)
+            {
+                other.EndEdit();
+            }
+        }
+
+        tab.BeginEdit();
+    }
+
+    private void OnSlotRenameCommitted(object? sender, string text)
+    {
+        if (sender is not TabHiddenSlotView slot || slot.DataContext is not TabItemViewModel tab || !tab.IsEditing)
+        {
+            return;
+        }
+
+        // 先收编辑态（名字回显由模板的 OneWay 绑定负责），再按 Core 的决定要不要落库
+        tab.EndEdit();
+
+        var decision = InlineRename.Decide(tab.Model.Name, text);
+        if (decision.Outcome != InlineRenameOutcome.Commit)
+        {
+            return;   // 空名字 ⇒ 回退原值；没改 ⇒ 不落库、不提示
+        }
+
+        TabRenameCommitted?.Invoke(this, new TabRenameRequest(tab, decision.Name));
+    }
+
+    private void OnSlotRenameCanceled(object? sender, EventArgs e)
+    {
+        if (sender is not TabHiddenSlotView slot || slot.DataContext is not TabItemViewModel tab)
+        {
+            return;
+        }
+
+        tab.EndEdit();
     }
 
     private void ApplyIconModeToAll()
@@ -720,3 +798,9 @@ public sealed partial class TabStripView : UserControl
 /// <see cref="Tab"/> 为 null = 点在标签栏空白处（此时只可能是两个「新建」动作）。
 /// </summary>
 public sealed record TabMenuRequest(TabItemViewModel? Tab, TabMenuAction Action);
+
+/// <summary>
+/// 一次"标签名就地改名"提交（标签栏 → 宿主窗口）：双击标签文字 → 输入框 → Enter / 点别处。
+/// <para><see cref="NewName"/> 已 Trim、也**一定与原值不同**（空输入与没改在标签栏那一层就被 Core 的决定拦掉了）。</para>
+/// </summary>
+public sealed record TabRenameRequest(TabItemViewModel Tab, string NewName);

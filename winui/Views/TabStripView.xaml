@@ -59,6 +59,8 @@
                     Glyph="{x:Bind Glyph}"
                     CountLabel="{x:Bind CountLabel, Mode=OneWay}"
                     ShowCount="{x:Bind ShowCount, Mode=OneWay}"
+                    IsEditing="{x:Bind IsEditing, Mode=OneWay}"
+                    EditText="{x:Bind EditText, Mode=OneWay}"
                     Loaded="OnHiddenSlotViewLoaded" />
 
                 <!-- 选中态：底部 2px 强调条（颜色走主题令牌，见 TabStripView.ApplyTheme） -->

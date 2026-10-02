@@ -52,8 +52,24 @@
                             </StackPanel>
                         </Grid>
 
-                        <TextBlock Text="{TemplateBinding TabName}" FontSize="12" VerticalAlignment="Center"
-                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                        <!--
+                            名字：平时是 TextBlock；双击它进"就地改名"（2026-10-02），
+                            编辑时换成 TextBox（Enter / 点别处提交，Esc 取消）。
+
+                            ⚠️ 两个元素的可见性由**代码**在 ApplyEditState 里切，这里不写 TemplateBinding：
+                               ControlTemplate 所在的 ResourceDictionary 没有代码后置 ⇒
+                               **写不了事件处理器**；因此指针/键盘事件统一在 OnApplyTemplate 里
+                               用 GetTemplateChild 取到元素后再挂（见 .cs）。
+                        -->
+                        <Grid VerticalAlignment="Center">
+                            <TextBlock x:Name="NameText" Text="{TemplateBinding TabName}"
+                                       FontSize="12" VerticalAlignment="Center"
+                                       Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                            <TextBox x:Name="NameEditor" Text="{TemplateBinding EditText}"
+                                     FontSize="12" MinWidth="72" Padding="4,1"
+                                     VerticalAlignment="Center"
+                                     Visibility="Collapsed" />
+                        </Grid>
                     </StackPanel>
                 </ControlTemplate>
             </Setter.Value>

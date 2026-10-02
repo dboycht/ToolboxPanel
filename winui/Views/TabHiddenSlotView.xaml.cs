@@ -25,6 +25,7 @@
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 
 namespace ToolboxPanel.Views;
@@ -96,17 +97,154 @@ public sealed partial class TabHiddenSlotView : Control
     private Grid? _slotHost;
     private Storyboard? _storyboard;
 
+    private TextBlock? _nameText;
+    private TextBox? _nameEditor;
+
     public TabHiddenSlotView()
     {
         DefaultStyleKey = typeof(TabHiddenSlotView);
+    }
+
+    // ────────────────────────────── 就地改名（双击标签文字，2026-10-02）──────────────────────────────
+    //
+    // 与网格页的图块**刻意同一套语义**（进编辑 / Enter 或点别处提交 / Esc 取消 / 空名回退），
+    // 区别只有一个：标签是"单击即选中"，没有"点文字会误触发打开"那件事 ⇒ 不需要延后。
+    //
+    // 分工：本控件只管"元素与焦点"，**提交与否由 TabStripView 交给宿主窗口**（它才拿得到 DataStore）。
+
+    /// <summary>双击了名字：请求进入就地改名（调用方把 ViewModel 的 IsEditing 置上，状态再回流到这里）。</summary>
+    public event EventHandler? RenameRequested;
+
+    /// <summary>用户按了 Enter 或点到了别处：交上输入框里的字（是否真的要改由 Core 判）。</summary>
+    public event EventHandler<string>? RenameCommitted;
+
+    /// <summary>用户按了 Esc：放弃这次改名。</summary>
+    public event EventHandler? RenameCanceled;
+
+    public static readonly DependencyProperty IsEditingProperty = DependencyProperty.Register(
+        nameof(IsEditing), typeof(bool), typeof(TabHiddenSlotView),
+        new PropertyMetadata(false, (d, _) => ((TabHiddenSlotView)d).ApplyEditState()));
+
+    public static readonly DependencyProperty EditTextProperty = DependencyProperty.Register(
+        nameof(EditText), typeof(string), typeof(TabHiddenSlotView), new PropertyMetadata(string.Empty));
+
+    /// <summary>true = 正在就地改名（名字换成输入框）。</summary>
+    public bool IsEditing
+    {
+        get => (bool)GetValue(IsEditingProperty);
+        set => SetValue(IsEditingProperty, value);
+    }
+
+    /// <summary>进编辑那一刻要填进输入框的字（**模型里的原始名字**，不是带兜底的显示名）。</summary>
+    public string EditText
+    {
+        get => (string)GetValue(EditTextProperty);
+        set => SetValue(EditTextProperty, value);
     }
 
     protected override void OnApplyTemplate()
     {
         base.OnApplyTemplate();
 
+        // 模板可能被重新套用 ⇒ 先摘旧元素上的处理器（本项目踩过"处理器反复累加"）
+        if (_nameText is not null)
+        {
+            _nameText.DoubleTapped -= OnNameDoubleTapped;
+        }
+
+        if (_nameEditor is not null)
+        {
+            _nameEditor.KeyDown -= OnEditorKeyDown;
+            _nameEditor.LostFocus -= OnEditorLostFocus;
+        }
+
         _slotHost = GetTemplateChild("SlotHost") as Grid;
+        _nameText = GetTemplateChild("NameText") as TextBlock;
+        _nameEditor = GetTemplateChild("NameEditor") as TextBox;
+
+        if (_nameText is not null)
+        {
+            _nameText.DoubleTapped += OnNameDoubleTapped;
+        }
+
+        if (_nameEditor is not null)
+        {
+            _nameEditor.KeyDown += OnEditorKeyDown;
+            _nameEditor.LostFocus += OnEditorLostFocus;
+        }
+
         ApplyState(animate: false);
+        ApplyEditState();
+    }
+
+    private void OnNameDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (IsEditing)
+        {
+            return;
+        }
+
+        e.Handled = true;   // 别让这一下冒泡到标签项（避免被当成"又一次选中"之类的动作）
+        RenameRequested?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void OnEditorKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (!IsEditing)
+        {
+            return;
+        }
+
+        if (e.Key == Windows.System.VirtualKey.Enter)
+        {
+            e.Handled = true;
+            RenameCommitted?.Invoke(this, _nameEditor?.Text ?? string.Empty);
+        }
+        else if (e.Key == Windows.System.VirtualKey.Escape)
+        {
+            e.Handled = true;
+            RenameCanceled?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private void OnEditorLostFocus(object sender, RoutedEventArgs e)
+    {
+        // 点别处 = 提交；⚠️ 提交/取消之后会把输入框收起，那次失焦必须被这个判断挡掉（否则重复提交）
+        if (!IsEditing)
+        {
+            return;
+        }
+
+        RenameCommitted?.Invoke(this, _nameEditor?.Text ?? string.Empty);
+    }
+
+    /// <summary>在"名字 / 输入框"之间切换；进入编辑时聚焦并全选。</summary>
+    private void ApplyEditState()    {
+        if (_nameText is null || _nameEditor is null)
+        {
+            return;
+        }
+
+        var editing = IsEditing;
+        _nameText.Visibility = editing ? Visibility.Collapsed : Visibility.Visible;
+        _nameEditor.Visibility = editing ? Visibility.Visible : Visibility.Collapsed;
+
+        if (!editing)
+        {
+            return;
+        }
+
+        // 没名字的标签：给一句提示（用当前显示名当占位，不新增文案 key）
+        _nameEditor.PlaceholderText = TabName;
+
+        // 输入框先对齐名字的宽度，避免"进编辑时整条标签跳一下"
+        if (_nameText.ActualWidth > 0)
+        {
+            _nameEditor.MinWidth = Math.Max(72, _nameText.ActualWidth + 12);
+        }
+
+        _nameEditor.Focus(FocusState.Programmatic);
+        _nameEditor.SelectAll();
     }
 
     private void ApplyState(bool animate)
@@ -158,4 +296,5 @@ public sealed partial class TabHiddenSlotView : Control
         _storyboard.Children.Add(fade);
         _storyboard.Begin();
     }
+
 }

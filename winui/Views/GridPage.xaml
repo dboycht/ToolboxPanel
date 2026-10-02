@@ -71,14 +71,38 @@
                               HorizontalAlignment="Center"
                               Visibility="{x:Bind HasNoIcon, Mode=OneWay}" />
 
-                    <TextBlock Text="{x:Bind DisplayName, Mode=OneWay}"
-                               FontSize="{x:Bind FontSize, Mode=OneWay}"
-                               LineHeight="{x:Bind LineHeight, Mode=OneWay}"
-                               MaxLines="2"
-                               TextTrimming="CharacterEllipsis"
-                               TextWrapping="Wrap"
-                               TextAlignment="Center"
-                               HorizontalAlignment="Stretch" />
+                    <!--
+                        名字区（2026-10-02 新增「双击文字就地改名」）：
+                          · 平时 = TextBlock（双击它进编辑；单击仍走"延后打开"那条路，见 .cs 顶部说明）
+                          · 编辑时 = TextBox（Enter / 点别处提交，Esc 取消）
+                        ⚠️ 两个元素的可见性由 ViewModel 的 Visibility 属性直接给（省一个转换器），
+                           与批量勾选框 `BulkCheckVisibility` 同一套写法。
+                        ⚠️ 输入框的 Text 是**单向**取的（只用来回填"进编辑那一刻的名字"）：
+                           用户打的字由 .cs 在提交时直接读 `TextBox.Text`，不依赖双向绑定。
+                    -->
+                    <Grid HorizontalAlignment="Stretch">
+                        <TextBlock Text="{x:Bind DisplayName, Mode=OneWay}"
+                                   FontSize="{x:Bind FontSize, Mode=OneWay}"
+                                   LineHeight="{x:Bind LineHeight, Mode=OneWay}"
+                                   MaxLines="2"
+                                   TextTrimming="CharacterEllipsis"
+                                   TextWrapping="Wrap"
+                                   TextAlignment="Center"
+                                   HorizontalAlignment="Stretch"
+                                   Visibility="{x:Bind NameVisibility, Mode=OneWay}"
+                                   Tapped="OnNameTapped"
+                                   DoubleTapped="OnNameDoubleTapped" />
+
+                        <TextBox Text="{x:Bind EditText, Mode=OneWay}"
+                                 PlaceholderText="{x:Bind DisplayName, Mode=OneWay}"
+                                 FontSize="{x:Bind FontSize, Mode=OneWay}"
+                                 TextAlignment="Center"
+                                 Padding="3,0" MinWidth="0" MinHeight="0"
+                                 VerticalAlignment="Center"
+                                 Visibility="{x:Bind EditorVisibility, Mode=OneWay}"
+                                 KeyDown="OnNameEditorKeyDown"
+                                 LostFocus="OnNameEditorLostFocus" />
+                    </Grid>
                 </StackPanel>
             </Grid>
         </DataTemplate>

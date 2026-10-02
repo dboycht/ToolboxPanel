@@ -132,7 +132,9 @@ public sealed partial class MainWindow : Window
             DispatcherQueue.TryEnqueue(async () => await RunThemeSwitchProbeAsync());
         }
 
+
     }
+
 
     /// <summary>
     /// 开发/验证开关：`--probe-theme-switch`（**常驻**，与 `--diag` / `--probe-switch` 同类）。
@@ -2107,6 +2109,7 @@ public sealed partial class MainWindow : Window
             TabStrip.TabSelected += OnTabSelected;
             TabStrip.TabDraggedOver += OnTabDraggedOver;
             TabStrip.TabMenuActionRequested += OnTabMenuActionRequested;
+            TabStrip.TabRenameCommitted += OnTabRenameCommitted;
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");
             _log.AppendLine(_viewModel.StatusText);
@@ -2265,6 +2268,40 @@ public sealed partial class MainWindow : Window
         }
 
         _log.AppendLine($"重命名标签页：{oldName} → {edit.Name}");
+        ReportTransient(TabContextMenu.RenamedStatus(edit.Name));
+    }
+
+    /// <summary>
+    /// 标签名**就地改名**（双击标签文字那条路，2026-10-02）。
+    ///
+    /// <para>与上面那个对话框版本**共用同一套 Core 校验与状态栏文案**，差别只在"字从哪来"：
+    /// 对话框是 <c>dialog.NewName</c>，这里是输入框交上来的文本。空输入与"没改"在标签栏里
+    /// 已经由 <see cref="InlineRename.Decide"/> 拦掉，走到这里就是真要改。</para>
+    /// </summary>
+    private void OnTabRenameCommitted(object? sender, TabRenameRequest request)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        var oldName = request.Tab.Model.Name;
+
+        var edit = TabEditor.Rename(oldName, request.NewName);
+        if (!edit.Success)
+        {
+            ReportTransient(edit.ErrorMessage ?? I18n.T("status.action_failed", ("action", I18n.T("action.rename"))));
+            return;
+        }
+
+        // 双保险：Core 也判了一次"同名不动"（正常情况下标签栏那边已经拦过）
+        if (edit.Unchanged || !(_viewModel?.RenameTab(request.Tab, edit.Name) ?? false))
+        {
+            return;
+        }
+
+        _log.AppendLine($"就地改名标签页：{oldName} → {edit.Name}");
         ReportTransient(TabContextMenu.RenamedStatus(edit.Name));
     }
 
@@ -2542,6 +2579,7 @@ public sealed partial class MainWindow : Window
         gridPage.ItemDropped += OnItemDropped;
         gridPage.NewIconRequested += OnNewIconRequested;
         gridPage.IconMenuActionRequested += OnIconMenuActionRequested;
+        gridPage.IconRenameRequested += OnIconRenameRequested;
         gridPage.FilesDropped += OnFilesDropped;
         gridPage.BulkDeleteRequested += OnBulkDeleteRequested;
         gridPage.BulkModeChanged += OnBulkModeChanged;
@@ -3278,6 +3316,40 @@ public sealed partial class MainWindow : Window
         catch (Exception ex)
         {
             App.WriteCrash("MainWindow.ShowRenameIconAsync", ex);
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", I18n.T("action.rename")), ("err", ex.Message)));
+        }
+    }
+
+    /// <summary>
+    /// 图标名**就地改名**（双击图块名字那条路，2026-10-02）。
+    ///
+    /// <para>与「编辑属性 / 重命名」走同一个落库入口（<see cref="MainViewModel.RenameIcon"/>：
+    /// Core 校验 → 落库 → 图块就地刷新 → 重判搜索命中），所以三条路的行为不会各自长歪。</para>
+    /// </summary>
+    private void OnIconRenameRequested(object? sender, IconRenameRequest request)
+    {
+        if (_isDemo)
+        {
+            ReportTransient(I18n.T("demo.no_save"));
+            return;
+        }
+
+        try
+        {
+            var result = _viewModel!.RenameIcon(request.Icon, request.NewName);
+            if (!result.Success)
+            {
+                ReportTransient(result.ErrorMessage ?? I18n.T("status.rename_failed"));
+                return;
+            }
+
+            _log.AppendLine($"就地改名图标：{request.NewName}");
+            ReportTransient(IconContextMenu.RenamedStatus(request.NewName));
+        }
+        catch (Exception ex)
+        {
+            App.WriteCrash("MainWindow.OnIconRenameRequested", ex);
             ReportTransient(I18n.T("status.action_failed_detail",
                 ("action", I18n.T("action.rename")), ("err", ex.Message)));
         }

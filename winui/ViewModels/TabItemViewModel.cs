@@ -64,6 +64,53 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     public void ApplyRename(string? newName)
         => Name = string.IsNullOrEmpty(newName) ? I18n.T("tab.unnamed") : newName;
 
+    // ────────────────────────────── 就地改名（双击标签文字，2026-10-02）──────────────────────────────
+    //
+    // 与 `IconTileViewModel` 的那一套**刻意同名同形**（BeginEdit / EndEdit / EditText / 两个可见性），
+    // 这样标签栏与网格页两边不会各自长歪。区别只有一个：标签是"单击即选中"，没有"延后打开"那件事。
+
+    private bool _isEditing;
+    private string _editText = string.Empty;
+
+    /// <summary>是否正在就地改名。</summary>
+    public bool IsEditing
+    {
+        get => _isEditing;
+        private set
+        {
+            if (_isEditing == value)
+            {
+                return;
+            }
+
+            _isEditing = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEditing)));
+        }
+    }
+
+    /// <summary>
+    /// 输入框里的字（由标签模板单向取用；用户输入的新值由控件自己读输入框拿，
+    /// 不依赖双向绑定 —— 见 `TabHiddenSlotView`）。
+    ///
+    /// <para>⚠️ 填的是**模型里的原始名字**而不是带兜底的显示名：否则"没名字的标签"会把
+    /// 「(未命名标签页)」这个占位文案当成真名字提交上去。</para>
+    /// </summary>
+    public string EditText
+    {
+        get => _editText;
+        private set => SetField(ref _editText, value ?? string.Empty, nameof(EditText));
+    }
+
+    /// <summary>进入就地改名（空名字 ⇒ 输入框为空 + 提示文字）。</summary>
+    public void BeginEdit()
+    {
+        EditText = Model.Name ?? string.Empty;
+        IsEditing = true;
+    }
+
+    /// <summary>退出就地改名。</summary>
+    public void EndEdit() => IsEditing = false;
+
     public bool IsList { get; }
 
     /// <summary>是不是文本页（第三种页：左列备注 + 右列文本，点击即复制）。</summary>
@@ -544,6 +591,61 @@ public sealed class IconTileViewModel : INotifyPropertyChanged
 
     /// <summary>只改了名字（重命名）时刷新 —— 不动图标图片源，省一次无谓的图片重设。</summary>
     public void RefreshName() => DisplayName = ResolveName(Model);
+
+    // ────────────────────────────── 就地改名（双击文字，2026-10-02）──────────────────────────────
+    //
+    // 形态照旧版 v1.11.6 的 `IconLabel`：双击名字 → 原地变输入框 → Enter / 点别处提交、Esc 取消。
+    // 这里只存"在不在编辑态"和"输入框里的字"；**提交与否由宿主窗口决定**
+    // （它才拿得到 DataStore，结论也统一走 Core 的 `InlineRename.Decide`）。
+
+    private bool _isEditing;
+    private string _editText = string.Empty;
+
+    /// <summary>是否正在就地改名（模板据此在名字与输入框之间切换）。</summary>
+    public bool IsEditing
+    {
+        get => _isEditing;
+        private set
+        {
+            if (_isEditing == value)
+            {
+                return;
+            }
+
+            _isEditing = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsEditing)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(NameVisibility)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(EditorVisibility)));
+        }
+    }
+
+    /// <summary>名字的可见性（不给 x:Bind 塞转换器 —— 与 <see cref="BulkCheckVisibility"/> 同一套写法）。</summary>
+    public Visibility NameVisibility => _isEditing ? Visibility.Collapsed : Visibility.Visible;
+
+    /// <summary>输入框的可见性（与 <see cref="NameVisibility"/> 恰好相反）。</summary>
+    public Visibility EditorVisibility => _isEditing ? Visibility.Visible : Visibility.Collapsed;
+
+    /// <summary>
+    /// 输入框里的字（双向绑定）。
+    /// ⚠️ 进入编辑时填的是**模型里的原始名字**（不是带兜底的显示名）：
+    /// 否则"本来没名字、显示的是文件名"的图块会把那个兜底文字写成真名字，
+    /// 而"（未命名图标）"这种占位文案更是绝不能被提交。
+    /// </summary>
+    public string EditText
+    {
+        get => _editText;
+        set => SetField(ref _editText, value ?? string.Empty, nameof(EditText));
+    }
+
+    /// <summary>进入就地改名（名字可以为空 ⇒ 输入框为空，显示提示文字）。</summary>
+    public void BeginEdit()
+    {
+        EditText = Model.DisplayName ?? string.Empty;
+        IsEditing = true;
+    }
+
+    /// <summary>退出就地改名。显示名始终读模型 ⇒ 取消/空输入"回退原值"是自动的。</summary>
+    public void EndEdit() => IsEditing = false;
 
     /// <summary>没写名字时用路径/命令的第一段兜底（原版也是这么显示的）。</summary>
     private static string ResolveName(IconModel model)

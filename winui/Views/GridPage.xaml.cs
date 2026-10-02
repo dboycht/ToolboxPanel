@@ -67,6 +67,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
         _entrance = new EntranceAnimator(TileGrid);
 
+        // 「点名字 ⇒ 延后一个双击间隔再打开」的计时器（一次性；每次点名字都重启）
+        _deferredOpenTimer = DispatcherQueue.CreateTimer();
+        _deferredOpenTimer.Interval = DeferredOpenDelay;
+        _deferredOpenTimer.IsRepeating = false;
+        _deferredOpenTimer.Tick += OnDeferredOpenTick;
+
         // 图块容器尺寸由代码按档位设置（样式里那对 68×72 只是 medium 的默认值）：
         // 新实现/回收再利用的容器都要在这里补一次，否则换档后滚动出来的图块会是旧尺寸。
         TileGrid.ContainerContentChanging += (_, args) =>
@@ -99,6 +105,11 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     public void ApplySearch(string? query)
     {
         _tab.SetFilter(query);
+
+        // 过滤会让图块集合重建 ⇒ 那次"延后打开"的上下文已经变了，别再打开
+        StopDeferredOpen();
+        _textGate.Clear();
+
         RefreshRealizedContainers();
         HideDropIndicator();
         UpdateEmptyHints();
@@ -292,6 +303,13 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     public event EventHandler<DragDropRequest>? ItemDropped;
 
     /// <summary>
+    /// 就地改名（双击名字）提交 —— 交给宿主窗口落库（页面不碰 DataStore）。
+    /// <para>空输入（回退原值）与"没改"在页面里就被 <see cref="InlineRename.Decide"/> 拦掉了，
+    /// 所以收到这个事件就意味着"确实要改成一个新名字"。</para>
+    /// </summary>
+    public event EventHandler<IconRenameRequest>? IconRenameRequested;
+
+    /// <summary>
     /// 演示模式下不写盘：由宿主窗口置为 false 关掉拖拽（避免"看着能拖、其实存不下来"）。
     /// </summary>
     public bool DragDropEnabled
@@ -368,6 +386,19 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
         if (e.ClickedItem is IconTileViewModel tile)
         {
+            // 正在就地改名：这一下是"在输入框里点/选字"，不是"打开"（也绝不勾选）
+            if (tile.IsEditing)
+            {
+                return;
+            }
+
+            // 刚才点的是**名字**、打开已被延后 ⇒ 这次 ItemClick 不当成"打开"（等计时器到点再开）
+            if (_deferredOpenId is { } pendingId
+                && string.Equals(pendingId, tile.Model.Id, StringComparison.Ordinal))
+            {
+                return;
+            }
+
             // 批量管理模式：点图块 = 勾选/取消勾选（**不打开**）—— 原版 batch 模式同义
             if (IsBulkMode)
             {
@@ -378,6 +409,175 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
             IconActivated?.Invoke(this, tile.Model);
         }
+    }
+
+    // ────────────────────────────── 就地改名（双击名字，2026-10-02）──────────────────────────────
+    //
+    // 用户要求："双击文字进行修改"。难点是图块**单击即打开**，而双击的第一下也是一次单击。
+    // 折中（用户 2026-10-02 选定）：按在**名字**上时把打开延后一个双击间隔 ——
+    //   · 一个间隔内没有第二下 ⇒ 照常打开（单击语义不变，只是慢了几百毫秒）
+    //   · 期间来了第二下       ⇒ 取消待定的打开，进就地改名（绝不误开程序）
+    // 按在图标本体 ⇒ 不进这套逻辑，仍然立刻打开（元素级：只有名字那两个元素挂了指针事件）。
+    //
+    // ⚠️ 时序判定在 Core 的 `DeferredTextActivation`（有单测）；这里只负责计时器、焦点与落库事件。
+    // ⚠️ "延后多久"读系统双击间隔但夹在 250~500ms（Core 的 `InlineRename`）：系统调到 900ms 时
+    //    若照搬，单击文字打开会慢到像死机。
+
+    /// <summary>点名字时"延后打开"的等待时间。</summary>
+    private static readonly TimeSpan DeferredOpenDelay =
+        TimeSpan.FromMilliseconds(InlineRename.DelayFromSystemDoubleClickTime(GetDoubleClickTime()));
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int GetDoubleClickTime();
+
+    private readonly DeferredTextActivation _textGate = new();
+    private DispatcherQueueTimer? _deferredOpenTimer;
+
+    /// <summary>已登记"待延后打开"的图块 id（null = 没有）。</summary>
+    private string? _deferredOpenId;
+
+    /// <summary>从模板里的元素取回它所属的图块（模板里的事件处理器都能这么定位）。</summary>
+    private static IconTileViewModel? TileOf(object? sender)
+        => (sender as FrameworkElement)?.DataContext as IconTileViewModel;
+
+    private void OnNameTapped(object sender, TappedRoutedEventArgs e)
+    {
+        var tile = TileOf(sender);
+
+        // 批量模式下点图块 = 勾选（立刻生效），不要延后、也不要登记
+        if (tile is null || tile.IsEditing || IsBulkMode)
+        {
+            return;
+        }
+
+        _textGate.NoteTextTap(tile.Model.Id);
+        _deferredOpenId = tile.Model.Id;
+
+        _deferredOpenTimer?.Stop();
+        _deferredOpenTimer?.Start();
+    }
+
+    private void OnNameDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        var tile = TileOf(sender);
+        if (tile is null)
+        {
+            return;
+        }
+
+        var secondTapOnName = _textGate.CancelForDoubleTap();
+        StopDeferredOpen();
+
+        // 只有"名字上的第二下"才算双击改名（第一下点在图标本体时，那次双击照旧只打开）
+        if (!secondTapOnName || tile.IsEditing || !IconEditingEnabled)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        BeginInlineRename(tile, sender as FrameworkElement);
+    }
+
+    /// <summary>进就地改名：**同时只允许一个图块在编辑**，并把输入框聚焦、全选。</summary>
+    private void BeginInlineRename(IconTileViewModel tile, FrameworkElement? nameElement)
+    {
+        foreach (var other in _tab.Icons)
+        {
+            if (!ReferenceEquals(other, tile) && other.IsEditing)
+            {
+                other.EndEdit();
+            }
+        }
+
+        tile.BeginEdit();
+
+        // 输入框是名字的兄弟元素（同一个 Grid 里）⇒ 从名字元素往上找一层即可，
+        // 不用 FindName（DataTemplate 里按名字找会取到复用容器里的错误实例，本项目踩过）。
+        if (nameElement?.Parent is Panel host
+            && host.Children.OfType<TextBox>().FirstOrDefault() is { } box)
+        {
+            box.Focus(FocusState.Programmatic);
+            box.SelectAll();
+        }
+    }
+
+    private void OnNameEditorKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (sender is not TextBox box || TileOf(sender) is not { } tile || !tile.IsEditing)
+        {
+            return;
+        }
+
+        if (e.Key == Windows.System.VirtualKey.Enter)
+        {
+            e.Handled = true;
+            CommitInlineRename(tile, box.Text);
+        }
+        else if (e.Key == Windows.System.VirtualKey.Escape)
+        {
+            // Esc = 放弃这次改名：显示名始终读模型 ⇒ 什么都不用回滚
+            e.Handled = true;
+            tile.EndEdit();
+        }
+    }
+
+    private void OnNameEditorLostFocus(object sender, RoutedEventArgs e)
+    {
+        // 点别处 = 提交（与旧版 `QLineEdit.editingFinished` 同一语义）
+        // ⚠️ Esc / 提交之后会 `EndEdit()` 把输入框收起，那次失焦**必须**被这个判断挡掉，否则会重复提交
+        if (sender is not TextBox box || TileOf(sender) is not { } tile || !tile.IsEditing)
+        {
+            return;
+        }
+
+        CommitInlineRename(tile, box.Text);
+    }
+
+    private void CommitInlineRename(IconTileViewModel tile, string? typed)
+    {
+        tile.EndEdit();
+
+        var decision = InlineRename.Decide(tile.Model.DisplayName, typed);
+        if (decision.Outcome != InlineRenameOutcome.Commit)
+        {
+            return;   // 空名字 ⇒ 回退原值；没改 ⇒ 不落库、不提示（旧版内联编辑同义）
+        }
+
+        IconRenameRequested?.Invoke(this, new IconRenameRequest(tile.Model, decision.Name));
+    }
+
+    /// <summary>延后打开计时器到点：待定的还是同一项才真的打开（其余情况一律什么都不做）。</summary>
+    private void OnDeferredOpenTick(object? sender, object e)
+    {
+        var id = _deferredOpenId;
+        _deferredOpenId = null;
+
+        if (id is null || !_textGate.TryTakePending(id))
+        {
+            return;
+        }
+
+        var tile = _tab.Icons.FirstOrDefault(candidate => string.Equals(candidate.Model.Id, id, StringComparison.Ordinal));
+        if (tile is null || tile.IsEditing)
+        {
+            return;
+        }
+
+        if (IsBulkMode)
+        {
+            tile.IsChecked = !tile.IsChecked;
+            UpdateBulkBar();
+            return;
+        }
+
+        // 与"点一下图块"完全同一条路（宿主窗口去打开）
+        IconActivated?.Invoke(this, tile.Model);
+    }
+
+    private void StopDeferredOpen()
+    {
+        _deferredOpenTimer?.Stop();
+        _deferredOpenId = null;
     }
 
     // ────────────────────────────── 拖动链路（2026-09-16 第四次返工后的最终形态）──────────────────────────────
@@ -742,3 +942,9 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 /// 用"一个事件 + 动作枚举"而不是给每个动作开一个事件：菜单项以后再加也不会到处改签名。
 /// </summary>
 public sealed record IconMenuRequest(IconModel Icon, IconMenuAction Action);
+
+/// <summary>
+/// 一次"就地改名"提交（页面 → 宿主窗口）：双击名字 → 输入框 → Enter / 点别处。
+/// <para><see cref="NewName"/> 已经 Trim 过、也**一定与原值不同**（空输入与没改在页面里就被拦掉了）。</para>
+/// </summary>
+public sealed record IconRenameRequest(IconModel Icon, string NewName);
