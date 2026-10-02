@@ -37,6 +37,7 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | 🔗 **自定义图标** | 右键空白区域 → 新建文件/文件夹/快捷方式/网址/命令图标 |
 | ✅ **批量管理** | 文件 → 批量管理，勾选图标后批量删除 |
 | ✏️ **编辑属性** | 右键 → 编辑属性…，快捷方式支持描述与自定义图标 |
+| ✏️ **双击改名** | 双击**标签页标题**或**图标标题**就地改名（Enter / 点别处提交，Esc 取消，留空不改） |
 | 🖥️ **打开方式** | 右键 → 用其他应用打开…（Windows 打开方式对话框） |
 | 🔍 **图标搜索** | Ctrl+F 按名称过滤，Esc 关闭 |
 | 📋 **文本页（粘贴板）** | 一种标签页类型：左列备注 + 右列文本，**点一行即复制**，可增删改与搜索 |
@@ -56,6 +57,7 @@ Drag files, folders, or shortcuts onto the grid to create icons. Supports custom
 | 🔗 **Custom icons** | Right-click empty area → New File/Folder/Shortcut/URL/Command icon |
 | ✅ **Batch manage** | File → Batch Manage, check icons to bulk delete |
 | ✏️ **Edit properties** | Right-click → Edit…; shortcuts support description & custom icon |
+| ✏️ **Double-click rename** | Double-click a **tab title** or **icon label** to rename in place (Enter / click-away commits, Esc cancels, blank = no change) |
 | 🖥️ **Open With** | Right-click → Open With… (Windows dialog) |
 | 🔍 **Search icons** | Ctrl+F filters by name, Esc closes |
 | 📋 **Text tab (clipboard)** | A tab type with note + text columns; **click a row to copy**, plus add/edit/delete and search |
@@ -202,9 +204,10 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 
 ## 更新日志 · Changelog
 
-### v2.0.7 (开发中) — 文本页（粘贴板式表格页）
+### v2.0.7 (开发中) — 文本页（粘贴板式表格页）+ 双击文字就地改名
 
-> v2.0.6 定版发布后的下一轮开发。**本轮已做**：新增**第三种标签页类型「文本页」**。
+> v2.0.6 定版发布后的下一轮开发。**本轮已做**：新增**第三种标签页类型「文本页」**、
+> 以及**双击文字就地改名**（标签页标题 / 图标标题）。
 
 **📋 文本页（粘贴板）**
 
@@ -215,6 +218,14 @@ Icons use `sort_order` (not pixel coordinates) so resizing the window never brea
 - 搜索（`Ctrl+F`）按**备注或文本**过滤；
 - 文本页不参与图标拖拽（图标/列表项拖到文本页上会被拒绝）；
 - 中英双语齐备。
+
+**✏️ 双击文字就地改名**
+
+- **双击标签页标题**或**图标标题**即可当场改：文字**原地变成输入框**（自动全选）；
+- `Enter` 或**点别处**提交，`Esc` 取消；**留空 = 什么都不改**（回退原值），**没改也不会写盘**；
+- 图块本来是「单击即打开」，为了不误开程序：**按在文字上时把打开延后约半秒**
+  （读系统双击间隔，夹在 250~500ms）—— 单击仍照常打开，双击则只改名；按在**图标本体**上仍是**立刻打开**；
+- 右键菜单里的「重命名 / 编辑属性…」照旧可用（两条路共用同一套校验与提示）。
 
 > 其余候选（范围待与用户逐项确认，尚未开工）：代码体检轮留下的几项**数据安全加固**、
 > 标签页与文本页的拖动排序、以及原计划的「好用度」批次（批量导入快捷方式 / 频次排序 / 备份轮转）。
