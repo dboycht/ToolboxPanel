@@ -1,17 +1,18 @@
 // TextPage.xaml.cs —— 文本页（粘贴板式表格页）
 //
-// 职责：铺出该标签页的文本项、**点击一行即复制它的文本**、入场动效、右键菜单事件。
+// 职责：铺出该标签页的文本项、**点击一行即复制它的文本**、入场动效、右键菜单事件、
+//       **行拖拽排序（2026-10-03：页内重排 + 跨文本页搬）**。
 //
 // 与列表页（`ListViewPage`）的关系：形态与分工照抄它 ——
-//   · 页面只发事件（`TextItemActivated` / `TextItemMenuActionRequested` / `NewTextItemRequested`），
-//     弹对话框、落库、反馈全在宿主窗口（`MainWindow`），与图块/列表项同一套分工；
+//   · 页面只发事件（`TextItemActivated` / `TextItemMenuActionRequested` / `NewTextItemRequested` /
+//     `ItemDropped`），弹对话框、落库、反馈全在宿主窗口（`MainWindow`），与图块/列表项同一套分工；
 //   · 绑的是**可见集合** `VisibleTextItems`（搜索过滤后的子集，仍是 Core 顺序）。
 //
-// ⚠️ 本页**不做拖拽**（本轮有意）：`CanDrag=False`、不接 DragOver/Drop。
-//    理由见 HANDOVER：文本页是"点击复制"的取值页，排序需求弱；而拖拽链路在本项目是
-//    "目标端 DragOver 登记落点 + 源端 DragItemsCompleted 收口"那套（ERROR.md E25），
-//    要为它再造一套载荷类型 + 跨页门控 + Core 落库入口，风险大于收益。
-//    真要加时记得三件事一起做，并让用户手验。
+// ⚠️ 拖拽这条链路**必须照抄列表页那套实测形态**（ERROR.md E25）：
+//    起拖 / 指针事件在 WinUI 3 里全都收不到，唯一可靠的是
+//    "目标端 `DragOver` 登记落点 + 源端 `DragItemsCompleted` 收口"。
+//    载荷类型是第三种（`DragItemKind.TextItem`）⇒ 文本项拖到网格页/列表页会被拒收，
+//    反过来图标/列表项也进不了这一页（判据在 Core 的 `DataStore.ApplyDragDrop`，有单测）。
 
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -20,6 +21,7 @@ using Microsoft.UI.Xaml.Media;
 using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
 using ToolboxPanel.ViewModels;
+using Windows.ApplicationModel.DataTransfer;
 
 namespace ToolboxPanel.Views;
 
@@ -41,10 +43,30 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
 
         _entrance = new EntranceAnimator(Rows);
 
+        // 主题圆角（`radius` 参数）：新实现/回收再利用的行容器也要补一次，
+        // 否则"改了圆角之后才滚动出来"的行还是样式里那个旧值（与列表页同一套）。
+        Rows.ContainerContentChanging += (_, args) =>
+        {
+            if (!args.InRecycleQueue && args.ItemContainer is Control container)
+            {
+                container.CornerRadius = ThemeScale.Corners(DesignCornerRadius, _cornerScale);
+            }
+        };
+
         UpdateEmptyHints();
     }
 
     public TabItemViewModel Tab => _tab;
+
+    /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽（与列表页/网格页同一个开关）。</summary>
+    public bool DragDropEnabled
+    {
+        set
+        {
+            // ⚠️ 同列表页：不设 Rows.CanDrag（那样会让系统自己起拖、绕开行容器的门控）
+            Rows.AllowDrop = value;
+        }
+    }
 
     // ────────────────────────────── 搜索过滤 ──────────────────────────────
     //
@@ -53,6 +75,7 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
     public void ApplySearch(string? query)
     {
         _tab.SetFilter(query);
+        HideDropIndicator();
         UpdateEmptyHints();
     }
 
@@ -153,12 +176,164 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
 
     private void OnRowClick(object sender, ItemClickEventArgs e)
     {
+        // 长按（起拖）之后系统偶尔还会补一次 ItemClick —— 那次不能当成"复制"
+        if (_suppressNextClick)
+        {
+            _suppressNextClick = false;
+            return;
+        }
+
+        // 单纯点击 = 没拖动 ⇒ 顺手清掉落点登记
+        DragSession.ClearTarget();
+
         // ⚠️ 复制的是**模型里的原文**（多行 / 制表符一个不少），不是屏幕上那行压扁的预览。
         if (e.ClickedItem is TextRowViewModel row)
         {
             TextItemActivated?.Invoke(this, row.Model);
         }
     }
+
+    // ────────────────────────────── 拖动链路（与列表页同一套，ERROR.md E25）──────────────────────────────
+    //
+    // 收不到任何起拖/指针事件 ⇒ 只靠两个实测可靠的事件：
+    //   目标端 `DragOver` 登记落点 + 源端 `DragItemsCompleted`（带 args.Items / DropResult）收口。
+
+    private bool _suppressNextClick;
+    private int _lastTracedIndex = -1;
+    private bool _tracedDragOverEntry;
+    private bool _dropSeen;                    // 本次拖动是否真的落在本页（Drop 事件到场）
+
+    /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）。</summary>
+    private static void DragTrace(string message) => DragDropShared.Trace(message);
+
+    /// <summary>这次拖放带了什么（诊断用；读不到就当作没有）。</summary>
+    private static (bool HasText, string? Text, bool HasStorageItems) DescribeData(DragEventArgs e)
+        => DragDropShared.Describe(e, "TextPage.DescribeData");
+
+    /// <summary>拖放落下 —— 交给宿主窗口落库（与列表页同一个事件契约）。</summary>
+    public event EventHandler<DragDropRequest>? ItemDropped;
+
+    private void OnRowDragOver(object sender, DragEventArgs e)
+    {
+        var (hasText, text, hasStorage) = DescribeData(e);
+
+        if (!_tracedDragOverEntry)
+        {
+            _tracedDragOverEntry = true;
+            DragTrace($"DragOver 首次：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage} "
+                      + $"判定={(DragSession.LooksLikeInternalDrag(hasText, hasStorage) ? "内部拖动" : "非内部")}");
+        }
+
+        if (!DragSession.LooksLikeInternalDrag(hasText, hasStorage))
+        {
+            e.AcceptedOperation = DataPackageOperation.None;
+            HideDropIndicator();
+            return;
+        }
+
+        e.AcceptedOperation = DataPackageOperation.Move;
+        e.DragUIOverride.IsCaptionVisible = false;
+        _suppressNextClick = true;
+
+        var insertIndex = ComputeInsertIndex(e);
+        DragSession.ReportTarget(_tab.Id, DragItemKind.TextItem, insertIndex);
+
+        if (insertIndex != _lastTracedIndex)
+        {
+            _lastTracedIndex = insertIndex;
+            DragTrace($"DragOver：落点索引={insertIndex}（已登记）");
+        }
+
+        // 拖动中不移动任何行（与两外两页一致）：只在行与行之间画一根插入横条
+        ShowDropIndicator(insertIndex);
+    }
+
+    /// <summary>内部拖动不在 Drop 里做动作（Drop 不一定来、且不带"拖的是谁"）—— 统一留给 DragItemsCompleted。</summary>
+    private void OnRowDrop(object sender, DragEventArgs e)
+    {
+        var (hasText, text, hasStorage) = DescribeData(e);
+        DragTrace($"Drop：含文本={hasText} 文本=\"{text}\" 含StorageItems={hasStorage}");
+
+        if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
+        {
+            _dropSeen = true;
+            var dropIndex = ComputeInsertIndex(e);
+            DragSession.ReportTarget(_tab.Id, DragItemKind.TextItem, dropIndex);
+            HideDropIndicator();
+            DragTrace($"Drop（内部拖动）：落点={dropIndex} ⇒ 留给 DragItemsCompleted 收口");
+            return;
+        }
+
+        HideDropIndicator();
+    }
+
+    /// <summary>
+    /// ★ **一次内部拖动的收口点**（源端事件，实测可靠）：`args.Items` 给出被拖的行本身，
+    /// `args.DropResult` 给出落没落下，再加上目标端登记的落点 ⇒ 完整的一次重排 / 跨页移动。
+    /// </summary>
+    private void OnRowDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
+    {
+        HideDropIndicator();
+        _lastTracedIndex = -1;
+        _suppressNextClick = false;
+        _tracedDragOverEntry = false;   // 复位诊断标记（漏了它，日志从第二次拖动起就废了）
+
+        var target = DragSession.TakeTarget();
+        var row = args.Items.Count > 0 ? args.Items[0] as TextRowViewModel : null;
+        var dropResult = args.DropResult;
+        var dropSeen = _dropSeen;
+        _dropSeen = false;
+
+        DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
+                  + $"被拖={row?.Note ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
+                  + $"Drop到过本页={dropSeen}");
+
+        if (row is null || target is null)
+        {
+            return;
+        }
+
+        if (target.Value.Kind != DragItemKind.TextItem)
+        {
+            DragTrace("→ 落点不是文本页，文本项不进别的页 ⇒ 忽略");
+            return;
+        }
+
+        // ⚠️ 结算延后一拍（Drop 与 DragItemsCompleted 先后顺序不保证，同另外两页）。
+        //    ⚠️ 只认上面那个 `dropSeen` 快照，**不再二次读字段**（会把下一次拖动的标记误当本轮）。
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var landed = dropResult == DataPackageOperation.Move || dropSeen;
+
+            if (!landed)
+            {
+                DragTrace("→ 判定：拖动被取消 ⇒ 不落库");
+                return;
+            }
+
+            var payload = new DragPayload(DragItemKind.TextItem, _tab.Id, row.Model.Id);
+            DragTrace($"→ 落库：{row.Note} → 页 {target.Value.TabId} 第 {target.Value.InsertIndex} 位");
+            ItemDropped?.Invoke(this, new DragDropRequest(payload, target.Value.TabId, target.Value.InsertIndex));
+        });
+    }
+
+    // ────────────────────────────── 插入横条（与列表页同款）──────────────────────────────
+
+    /// <summary>把落点（相对本页的坐标）交给 Core 的几何计算，得到"插到第几个"。</summary>
+    private int ComputeInsertIndex(DragEventArgs e)
+        => DragDropShared.ComputeInsertIndex(e, this, CollectRowBounds());
+
+    /// <summary>
+    /// 已实现行的矩形（相对本页，DIP），顺序 = 从上到下。
+    /// ⚠️ 遍历的是**可见集合**（= ItemsSource）：落点是"可见位"，过滤态下由 MainViewModel 换算回 Core 下标。
+    /// </summary>
+    private List<ItemBounds> CollectRowBounds()
+        => DragDropShared.CollectBounds(Rows, _tab.VisibleTextItems.Count, this, "TextPage.CollectRowBounds");
+
+    private void ShowDropIndicator(int insertIndex)
+        => DragDropShared.ShowHorizontalIndicator(DropIndicator, CollectRowBounds(), insertIndex);
+
+    private void HideDropIndicator() => DragDropShared.HideIndicator(DropIndicator);
 
     // ────────────────────────────── 动画 / 主题钩子 ──────────────────────────────
 
@@ -170,17 +345,35 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
     /// <summary>等到"可以安全放行"（容器已就位或布局已跑过）再开始入场并放行整页。</summary>
     public void RevealWhenReady() => _entrance.RevealWhenReady();
 
+    /// <summary>列表行的设计圆角（DIP）—— `radius` 参数默认值时就是它本身（与列表页同值）。</summary>
+    private const double DesignCornerRadius = 4;
+
+    /// <summary>当前主题的圆角倍率（默认 1.0）。</summary>
+    private double _cornerScale = 1;
+
     /// <summary>
-    /// 套用主题 —— 本页**没有需要按令牌重绘的固定资源键**（落点指示线是拖拽页才有的东西，
-    /// 而这一页不做拖拽），所以这里是空实现。
-    ///
-    /// <para>⚠️ 不能因为"是空的"就把这个接口 implementation 摘掉：`MainWindow.ApplyAllSettings`
-    /// 是按 `IAnimatedPage` 逐页下发主题与动效的，少一层接口这一页就成"主题切换时唯一不被套用的页"；
-    /// 而且空实现本身是有信息的：它说明"这一页的所有颜色都走 ThemeResource，没有代码里写死的令牌"。</para>
+    /// 套用主题：① 把落点指示线刷成当前强调色（它是本项目注入的固定键 `AccentBrushDark`，
+    /// **不随主题变**，必须逐次赋值）；② 把圆角倍率落到列表行容器上（`radius` 参数，默认 1.0）。
     /// </summary>
     public void ApplyTheme(ThemePalette palette, double radiusScale)
     {
-        // 故意为空：见上面的说明。
+        var (a, r, g, b) = palette.Accent;
+        DropIndicator.Background = new SolidColorBrush(Windows.UI.Color.FromArgb(a, r, g, b));
+
+        _cornerScale = radiusScale;
+        ApplyCornerRadiusToRealizedRows();
+    }
+
+    /// <summary>把圆角写给"已经实现出来"的行容器（新实现/回收的走 ContainerContentChanging）。</summary>
+    private void ApplyCornerRadiusToRealizedRows()
+    {
+        for (int i = 0; i < _tab.VisibleTextItems.Count; i++)
+        {
+            if (Rows.ContainerFromIndex(i) is Control container)
+            {
+                container.CornerRadius = ThemeScale.Corners(DesignCornerRadius, _cornerScale);
+            }
+        }
     }
 }
 

@@ -117,16 +117,18 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     public bool IsText { get; }
 
     /// <summary>
-    /// 拖拽用：这一页收哪一类东西。
-    /// 界面靠它判断"这次拖放我接不接受"（网格页只收图标、列表页只收列表项）。
+    /// 拖拽用：这一页收哪一类东西（与 <see cref="TabModel.TabType"/> 严格对应）。
+    /// 界面靠它判断"这次拖放我接不接受"，宿主窗口的 <c>KindMatches</c> 与 Core 的
+    /// <c>DataStore.ApplyDragDrop</c> 用同一套判据（两边必须一致，否则会出现
+    /// "界面收了、Core 拒收"或反过来的哑体验）。
     ///
-    /// <para>⚠️ 文本页**不收任何东西**（它没有拖拽）：这里回 <see cref="DragItemKind.Icon"/> 只是
-    /// "没有第三种载荷"的占位，真正的门控在 Core（<c>DataStore.ApplyDragDrop</c> 按目标页类型拒收）
-    /// 与页面本身（<c>TextPage</c> 的 <c>AllowDrop=False</c>）——
-    /// 别把这一行当成"文本页能收图标"的依据。</para>
+    /// <para>⚠️ 2026-10-03 起文本页**有了自己的载荷**（<see cref="DragItemKind.TextItem"/>）：
+    /// 它仍然不收图标与列表项（那两类由这一条判据挡在宿主窗口那一层，Core 里还有第二道门），
+    /// 但它自己的行可以在页内重排、也可以跨文本页搬。原来的写法是"文本页一律回 Icon"
+    /// （当时文本页没有拖拽），那在现在会导致**文本项被当成图标**去落库。</para>
     /// </summary>
     public DragItemKind DraggableKind => IsText
-        ? DragItemKind.Icon
+        ? DragItemKind.TextItem
         : IsList ? DragItemKind.ListItem : DragItemKind.Icon;
 
     /// <summary>是否选中（标签栏用它显示底部强调条）。</summary>
@@ -305,13 +307,58 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
             }
 
             // 复用已有的实例（连同已提取好的图标位图）；没有就补建，绝不静默丢项
+            // ⚠️ 补建一律走 CreateTile：它会**立刻套上当前的图标大小档**（漏了它，
+            //    "设置里选大图标、拖上去的图标却还是小号"—— 2026-10-03 用户实测反馈的那条）。
             ordered.Add(viewById.TryGetValue(icon.Id, out var tile)
                 ? tile
-                : new IconTileViewModel(icon, null));
+                : CreateTile(icon, null));
         }
 
         ReorderObservable(Icons, ordered);
         NotifyCountLabel();
+    }
+
+    // ────────────────────────────── 图标大小档（新补建的图块必须跟当前档）──────────────────────────────
+    //
+    // 2026-10-03 用户实测反馈："设置里选中小/大图标，但**拖上去的**默认为小图标，
+    // 需要打开设置刷新一下（才对）"。
+    //
+    // 根因：`IconTileViewModel` 的尺寸字段自带默认值 `IconSizeMetrics.Medium`，
+    // 而尺寸是**页面**在 `ApplyIconSize` 里逐块下发的 —— 那次下发只覆盖"当时已经存在的图块"。
+    // 于是"拖放 / 新建 / 导入"这条路上**新补建的图块**没人给它下发尺寸，就停在默认档，
+    // 直到用户打开设置（触发一次整份重套）才被纠正。
+    //
+    // 修法：把"当前档"记在标签页上（它是所有图块的家），**补建图块的那一刻就顺手套上** ——
+    // 这样不必在每条"新增图标"的路径上都记得补一次（少一处记得，就少一次漏）。
+
+    /// <summary>当前图标大小档（默认 medium；由宿主窗口在设置变化时下发给**每一页**）。</summary>
+    private IconSizeMetrics _iconSize = IconSizeMetrics.Medium;
+
+    /// <summary>
+    /// 套用图标大小档：记下来（给之后补建的图块用）+ 立刻套到**已有的全部**图块上
+    /// （含被过滤隐藏的 —— 它们重新可见时不该是旧尺寸）。
+    /// </summary>
+    public void ApplyIconSize(IconSizeMetrics metrics)
+    {
+        _iconSize = metrics;
+
+        foreach (var tile in Icons)
+        {
+            tile.ApplySize(metrics);
+        }
+    }
+
+    /// <summary>
+    /// 补建图块时统一走这里：**构造完立刻套上当前档**（漏了它 = 新图块停在默认尺寸）。
+    ///
+    /// <para>⚠️ <c>internal</c> 是刻意的：<c>MainViewModel</c> 在"拖入文件 / 新建图标 / 补示例"
+    /// 那几条路上也会直接造图块，必须走同一个入口，否则又会漏掉尺寸（用户实测反馈的那条）。</para>
+    /// </summary>
+    internal IconTileViewModel CreateTile(IconModel icon, ImageSource? iconSource)
+    {
+        var tile = new IconTileViewModel(icon, iconSource);
+        tile.ApplySize(_iconSize);
+        return tile;
     }
 
     /// <summary>同上，列表页版本（补建逻辑与图标版对称，两条路不会各自长歪）。</summary>
@@ -340,9 +387,9 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     /// <summary>
     /// 文本页版本（从 Core 的 <c>text_items</c> 重建行）。
     ///
-    /// <para>⚠️ 文本页**没有拖拽排序**（本轮有意不做，见 HANDOVER 的记录），所以这个方法只在
-    /// "编辑属性 / 新建 / 删除"这类**内容变化**后被调用，不参与拖放落库 ——
-    /// 但仍然照"Core 是唯一事实源、界面跟着它走"的同一套写法，避免两处各自维护顺序。</para>
+    /// <para>与另外两个同步方法同形：拖拽落库后（同页重排 / 跨文本页移动）由
+    /// <c>MainViewModel.ApplyDrop</c> 调它把界面集合排成 Core 的顺序 ——
+    /// 文本页 2026-10-03 起支持拖拽排序，所以这个方法也进了拖放链路。</para>
     ///
     /// <para>⚠️ 读的是 <see cref="TabModel.EffectiveTextItems"/>（不是 <c>TextItems</c>）：
     /// 那个字段为 null 时表示"这一页从没有过文本项"，直接解引用会抛空引用。</para>

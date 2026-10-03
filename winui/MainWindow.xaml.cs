@@ -862,7 +862,16 @@ public sealed partial class MainWindow : Window
         }
 
         // 图标大小三档：只对网格页有意义（列表页没有图块，不实现这个契约）
+        //
+        // ⚠️ 两条都必须在（2026-10-03 用户实测反馈"选了大图标，拖上去的还是小图标"）：
+        //   ① `_viewModel.ApplyIconSize` —— 把当前档**记在数据层那一侧**，让之后新建的标签页、
+        //      之后补建的图块（拖放 / 新建 / 导入 / 补示例）一出生就是对的尺寸；
+        //   ② 逐页 `ApplyIconSize` —— 页面自己也要记住这一档（容器尺寸用它，与图块视图模型相互独立）。
+        //   只做 ② 的话，新来的图块停在默认的中号，直到用户打开设置（触发一次整份重套）才被纠正 ——
+        //   这正是用户报的那个现象。
         var iconSize = IconSizeMetrics.For(settings.IconSize);
+        _viewModel?.ApplyIconSize(iconSize);
+
         foreach (var page in _pages.Values.OfType<IIconSizedPage>())
         {
             page.ApplyIconSize(iconSize);
@@ -2555,10 +2564,11 @@ public sealed partial class MainWindow : Window
 
         if (tab.IsText)
         {
-            var textPage = new TextPage(tab);
+            var textPage = new TextPage(tab) { DragDropEnabled = !_isDemo };
             textPage.TextItemActivated += OnTextItemActivated;
             textPage.TextItemMenuActionRequested += OnTextItemMenuActionRequested;
             textPage.NewTextItemRequested += async (_, _) => await ShowCreateTextItemAsync(textPage);
+            textPage.ItemDropped += OnItemDropped;
             ApplyThemeIfAnimated(textPage);
             return textPage;
         }
@@ -3228,10 +3238,46 @@ public sealed partial class MainWindow : Window
                 await ShowRenameIconAsync(request.Icon);
                 return;
 
+            case IconMenuAction.Refresh:
+                RefreshIcon(request.Icon);
+                return;
+
             case IconMenuAction.Remove:
                 await ConfirmRemoveIconAsync(request.Icon);
                 return;
         }
+    }
+
+    /// <summary>
+    /// 「刷新图标」：**只重取图标缓存**（不改任何属性字段、不弹对话框、不需二次确认）。
+    ///
+    /// <para>为什么值得单独做一个菜单项：常规载入只在"缓存文件不存在"时才提取
+    /// （<c>IconModel.IconCacheFile</c> 记着旧文件名、文件也在）——
+    /// 于是"源文件换了内容、路径没变"（程序升级、.ico 被替换）这类情况用户会**一直看到旧图**，
+    /// 且没有任何正常入口能刷新它。这是用户 2026-10-03 明确要求补的功能。</para>
+    /// </summary>
+    private void RefreshIcon(IconModel icon)
+    {
+        if (_viewModel is null)
+        {
+            return;
+        }
+
+        var name = string.IsNullOrWhiteSpace(icon.DisplayName) ? icon.SourcePath : icon.DisplayName;
+        var result = _viewModel.RefreshIcon(icon);
+
+        if (!result.Success)
+        {
+            ReportTransient(I18n.T("status.action_failed_detail",
+                ("action", IconContextMenu.LabelRefresh),
+                ("err", result.Error ?? IconContextMenu.NoSourceMessage)));
+            _log.AppendLine($"刷新图标失败：{name} —— {result.Error}");
+            FlushLog();
+            return;
+        }
+
+        _log.AppendLine($"刷新图标：{name}");
+        ReportTransient(IconContextMenu.RefreshedStatus(name));
     }
 
     /// <summary>

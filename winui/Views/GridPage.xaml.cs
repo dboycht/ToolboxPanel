@@ -109,6 +109,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         // 过滤会让图块集合重建 ⇒ 那次"延后打开"的上下文已经变了，别再打开
         StopDeferredOpen();
         _textGate.Clear();
+        _nameTapGate.Clear();
 
         RefreshRealizedContainers();
         HideDropIndicator();
@@ -427,10 +428,24 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     private static readonly TimeSpan DeferredOpenDelay =
         TimeSpan.FromMilliseconds(InlineRename.DelayFromSystemDoubleClickTime(GetDoubleClickTime()));
 
+    /// <summary>
+    /// 系统双击间隔（毫秒，原样读、**不夹取**）—— 给 <see cref="TapGestureGate"/> 判定
+    /// "这一下是不是双击手势的一部分"用。
+    ///
+    /// <para>⚠️ 与上面的 <see cref="DeferredOpenDelay"/> 是两个用途，别合并：
+    /// 那个是"单击要等多久才敢打开"（夹在 250~500ms，太长会像卡住）；
+    /// 这个是"双击手势到哪一刻才算结束"（必须用系统的真实值，否则慢速双击的第三下会漏进来）。</para>
+    /// </summary>
+    private static readonly int SystemDoubleClickMs = GetDoubleClickTime();
+
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern int GetDoubleClickTime();
 
     private readonly DeferredTextActivation _textGate = new();
+
+    /// <summary>防误开闸门（2026-10-03）：双击之后的第一个单击不许重新登记"延后打开"。</summary>
+    private readonly TapGestureGate _nameTapGate = new();
+
     private DispatcherQueueTimer? _deferredOpenTimer;
 
     /// <summary>已登记"待延后打开"的图块 id（null = 没有）。</summary>
@@ -447,6 +462,15 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         // 批量模式下点图块 = 勾选（立刻生效），不要延后、也不要登记
         if (tile is null || tile.IsEditing || IsBulkMode)
         {
+            return;
+        }
+
+        // ★ 2026-10-03：双击手势尾巴上那一下**绝不能**再登记打开
+        //   （不然就是用户报的"双击文字 → 闪一下编辑 → 然后又把程序打开了"）。
+        //   判据见 Core 的 `TapGestureGate`：距上一次 DoubleTapped 还在系统双击间隔内 ⇒ 丢弃。
+        if (!_nameTapGate.NoteTextTap(Environment.TickCount64, SystemDoubleClickMs))
+        {
+            App.ProbeLog($"[点文字] 忽略：距上次双击不足 {SystemDoubleClickMs}ms（双击手势的一部分）");
             return;
         }
 
@@ -468,13 +492,20 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         var secondTapOnName = _textGate.CancelForDoubleTap();
         StopDeferredOpen();
 
+        // ★ 无论这一下算不算"名字上的第二下"，都要记下"刚刚发生过一次双击" ——
+        //   紧随其后的那个 Tapped 可能是同一次手势的尾巴，它会把程序误打开。
+        _nameTapGate.NoteDoubleTap(Environment.TickCount64);
+
         // 只有"名字上的第二下"才算双击改名（第一下点在图标本体时，那次双击照旧只打开）
         if (!secondTapOnName || tile.IsEditing || !IconEditingEnabled)
         {
+            App.ProbeLog($"[点文字] 双击未进入改名：第二下在名字上={secondTapOnName} "
+                         + $"已在编辑={tile.IsEditing} 允许编辑={IconEditingEnabled}");
             return;
         }
 
         e.Handled = true;
+        App.ProbeLog($"[点文字] 双击改名 → {tile.DisplayName}");
         BeginInlineRename(tile, sender as FrameworkElement);
     }
 
@@ -571,6 +602,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         }
 
         // 与"点一下图块"完全同一条路（宿主窗口去打开）
+        App.ProbeLog($"[点文字] 延后打开到点 → {tile.DisplayName}");
         IconActivated?.Invoke(this, tile.Model);
     }
 

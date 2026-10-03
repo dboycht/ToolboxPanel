@@ -162,6 +162,9 @@ TEXTS: dict[str, dict[str, str]] = {
     "status.edit_invalid":         {"zh": "名称不能为空",                   "en": "Name cannot be empty"},
     "icon.menu.open_location":     {"zh": "打开文件位置",                   "en": "Open File Location"},
     "icon.menu.rename":            {"zh": "重命名",                         "en": "Rename"},
+    # ⚠️ WinUI 线新增（原版没有这个菜单项）：图标源文件换过内容时"再抓一次图"，
+    #    放在「重命名」与「删除」之间（都属"管理类"，与 编辑属性… 之间那条分隔线不受影响）。
+    "icon.menu.refresh":           {"zh": "刷新图标",                       "en": "Refresh Icon"},
     "icon.menu.remove":            {"zh": "删除",                           "en": "Remove"},
     "icon.remove.title":           {"zh": "删除图标",                       "en": "Remove Icon"},
     "icon.remove.confirm":         {"zh": "确定要从当前标签页中删除「{name}」吗？",
@@ -591,5 +594,11 @@ TEXTS: dict[str, dict[str, str]] = {
     "text.error.text_required":    {"zh": "文本不能为空",                   "en": "Text cannot be empty"},
     "text.copy_hint":              {"zh": "点击一行即可复制它的文本",       "en": "Click a row to copy its text"},
     "search.no_result_text":       {"zh": "没有匹配的文本项",               "en": "No matching text items"},
+
+    # ⚠️ 下面这一段是 **WinUI 线新增的「刷新图标」文案**（原版没有这个菜单项；
+    #    菜单标签 `icon.menu.refresh` 加在上面图标菜单那一段里）：
+    #    图标源文件换过内容（或换了别的图）时，用户想"再抓一次图"而不改任何属性。
+    "status.icon_refreshed":       {"zh": "已刷新图标: {name}",             "en": "Icon refreshed: {name}"},
+    "icon.error.no_source":        {"zh": "这个图标没有可重新提取的来源",   "en": "This icon has no source to re-extract from"},
 }
 # fmt: on

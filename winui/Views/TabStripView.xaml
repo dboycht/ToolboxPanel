@@ -73,7 +73,13 @@
 
         <Style x:Key="CompactTabItemStyle" TargetType="ListViewItem">
             <Setter Property="MinHeight" Value="0" />
-            <Setter Property="MinWidth" Value="0" />
+            <!--
+                ⚠️ 2026-10-03：`MinWidth` 不能再是 0 —— 标签比底部那条选中条（`SelectionBar`，宽 16）
+                **还窄**时，条子会把标签项撑开 ⇒ 选中/取消选中时左右各抽动一下（用户实测反馈）。
+                24 = 条的 16 + 两侧各留 4 的余量；短名字（如「AI」）的标签本来就空得很，不会显得挤。
+                ⚠️ 改这里要连着 `SelectionBar` 的 Width 一起想：条的宽度一旦超过它，抽动会回来。
+            -->
+            <Setter Property="MinWidth" Value="24" />
             <Setter Property="Padding" Value="9,3" />
             <Setter Property="Margin" Value="0,0,3,0" />
             <Setter Property="CornerRadius" Value="5" />

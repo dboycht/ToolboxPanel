@@ -14,7 +14,7 @@ namespace ToolboxPanel.Core;
 
 public static partial class I18n
 {
-    /// <summary>全部文案：key → (中文, 英文)。共 415 条。</summary>
+    /// <summary>全部文案：key → (中文, 英文)。共 418 条。</summary>
     internal static readonly Dictionary<string, (string Zh, string En)> Table = new(StringComparer.Ordinal)
     {
 
@@ -87,6 +87,7 @@ public static partial class I18n
         ["status.edit_invalid"]             = ("名称不能为空", "Name cannot be empty"),
         ["icon.menu.open_location"]         = ("打开文件位置", "Open File Location"),
         ["icon.menu.rename"]                = ("重命名", "Rename"),
+        ["icon.menu.refresh"]               = ("刷新图标", "Refresh Icon"),
         ["icon.menu.remove"]                = ("删除", "Remove"),
         ["icon.remove.title"]               = ("删除图标", "Remove Icon"),
         ["icon.remove.confirm"]             = ("确定要从当前标签页中删除「{name}」吗？", "Remove '{name}' from this tab?"),
@@ -433,5 +434,7 @@ public static partial class I18n
         ["text.error.text_required"]        = ("文本不能为空", "Text cannot be empty"),
         ["text.copy_hint"]                  = ("点击一行即可复制它的文本", "Click a row to copy its text"),
         ["search.no_result_text"]           = ("没有匹配的文本项", "No matching text items"),
+        ["status.icon_refreshed"]           = ("已刷新图标: {name}", "Icon refreshed: {name}"),
+        ["icon.error.no_source"]            = ("这个图标没有可重新提取的来源", "This icon has no source to re-extract from"),
     };
 }

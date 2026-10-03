@@ -41,6 +41,17 @@ public sealed class MainViewModel
     /// <summary>本次载入**需要**重提的图标缓存个数（用来判断"是不是全都成功了"）。</summary>
     private int _iconsNeedingRefresh;
 
+    /// <summary>
+    /// 当前图标大小档（设置项「图标大小」的解析结果）。
+    ///
+    /// <para>⚠️ 它存在的唯一理由是**新建的标签页**：已有页由宿主窗口逐页下发尺寸
+    /// （<c>MainWindow.ApplyAllSettings</c>），而"用户在设置之外新建一页"这条路上
+    /// 新页构造出来时没人给它尺寸 ⇒ 上面拖进来的图块会停在中号
+    /// （2026-10-03 用户实测："设置里选大图标，拖上去的却是小图标"）。
+    /// 这里存一份，<see cref="AddTab"/> 与 <see cref="Load"/> 建页时立刻套上。</para>
+    /// </summary>
+    private IconSizeMetrics _iconSize = IconSizeMetrics.Medium;
+
     public MainViewModel(string? dataDirectory = null, IShellHost? shellHost = null)
     {
         _store = dataDirectory is null ? DataStore.CreateDefault() : new DataStore(dataDirectory);
@@ -127,6 +138,11 @@ public sealed class MainViewModel
 
         var model = _store.AddTab(name, tabType);
         var viewModel = new TabItemViewModel(model);
+
+        // ⚠️ 新建的页也要跟上当前的图标大小档：它上面（以及之后拖上来的）图块都靠这个值，
+        //    漏了它就会出现"设置里选了小/大图标，新页里的图标却是中号"（2026-10-03 用户实测反馈）。
+        viewModel.ApplyIconSize(_iconSize);
+
         Tabs.Add(viewModel);
         RefreshStatusCounts();
         return viewModel;
@@ -212,6 +228,23 @@ public sealed class MainViewModel
         RebuildStatusText();
     }
 
+    /// <summary>
+    /// 套用「图标大小」设置（宿主窗口在设置变化时调用）。
+    ///
+    /// <para>两件事：① 记下当前档（<see cref="AddTab"/> / <see cref="Load"/> 建页时要立刻套上，
+    /// 否则新页/新图块停在中号 —— 2026-10-03 用户实测反馈的那条）；② 套到**所有**标签页上
+    /// （不只是当前可见那一页：切页过去时它不该还是旧尺寸）。</para>
+    /// </summary>
+    public void ApplyIconSize(IconSizeMetrics metrics)
+    {
+        _iconSize = metrics;
+
+        foreach (var tab in Tabs)
+        {
+            tab.ApplyIconSize(metrics);
+        }
+    }
+
     /// <summary>读数据并把界面模型建好。</summary>
     public void Load()
     {
@@ -266,7 +299,7 @@ public sealed class MainViewModel
                 foreach (var icon in tab.Icons)
                 {
                     var (source, wasExtracted) = LoadOrExtractIcon(icon);
-                    tabViewModel.Icons.Add(new IconTileViewModel(icon, source));
+                    tabViewModel.Icons.Add(tabViewModel.CreateTile(icon, source));
                     extracted += wasExtracted ? 1 : 0;
                 }
 
@@ -275,6 +308,11 @@ public sealed class MainViewModel
 
             Tabs.Add(tabViewModel);
         }
+
+        // 全部页都建好了 ⇒ 把当前图标大小档**逐页下发一遍**。
+        // ⚠️ 图块本身已经在 CreateTile 里套过档了，这一次是"整页收口"的第二道保险：
+        //    将来再有人往 `Icons` 里直接塞图块（绕过 CreateTile），这里也能兜住。
+        ApplyIconSize(_iconSize);
 
         // 只有真的提取出了新图标才写盘（避免无意义的"每次启动都改文件"）
         if (_dataChanged)
@@ -599,7 +637,7 @@ public sealed class MainViewModel
             var source = RefreshIconCache(icon, IconRefreshPlan.FromSource(icon.SourcePath));
 
             _store.AddIcon(tabId, icon);
-            tab.Icons.Add(new IconTileViewModel(icon, source));
+            tab.Icons.Add(tab.CreateTile(icon, source));
             messages.Add(decision.Message);
             added++;
         }
@@ -661,10 +699,18 @@ public sealed class MainViewModel
                 FindTab(request.Payload.SourceTabId)?.SyncIconsFromModel();
                 FindTab(request.TargetTabId)?.SyncIconsFromModel();
             }
-            else
+            else if (request.Payload.Kind == DragItemKind.ListItem)
             {
                 FindTab(request.Payload.SourceTabId)?.SyncListItemsFromModel();
                 FindTab(request.TargetTabId)?.SyncListItemsFromModel();
+            }
+            else
+            {
+                // 文本项（2026-10-03）：与上面两支同形 —— 源页与目标页都要跟着 Core 重排。
+                // ⚠️ 跨文本页移动时**两页都要同步**（源页少一项、目标页多一项），只同步目标页会
+                //    留下"源页上那条还在屏幕上"的假象，直到重启才消失。
+                FindTab(request.Payload.SourceTabId)?.SyncTextItemsFromModel();
+                FindTab(request.TargetTabId)?.SyncTextItemsFromModel();
             }
 
             return result;
@@ -760,7 +806,7 @@ public sealed class MainViewModel
         var source = RefreshIconCache(icon, result.Refresh);
 
         _store.AddIcon(tabId, icon);        // 顺序号由 Core 给（= 当前数量），界面直接追加即可
-        tab.Icons.Add(new IconTileViewModel(icon, source));
+        tab.Icons.Add(tab.CreateTile(icon, source));
         tab.NotifyCountLabel();
         return result;
     }
@@ -788,6 +834,51 @@ public sealed class MainViewModel
         // 名称 / 路径都可能被改过 ⇒ 重新判定一次过滤（集合没动，订阅收不到）
         FindTabOfIcon(icon.Id)?.ReapplyFilter();
         return result;
+    }
+
+    /// <summary>
+    /// 「刷新图标」：**只重取图标缓存**，不碰任何属性字段（2026-10-03 用户要求新增的右键菜单项）。
+    ///
+    /// <para>用途：图标源文件换了内容（换了新版本的程序、换了 .ico 的内容、快捷方式指向的目标
+    /// 换了图标）时，<c>tabs.json</c> 里记着的缓存文件名还是旧的、文件也在 ⇒ 常规载入路径
+    /// （<c>LoadOrExtractIcon</c>）**只在文件不存在时才提取**，于是用户一直看到旧图。
+    /// 这个动作就是"再抓一次"的显式入口。</para>
+    ///
+    /// <para>⚠️ 与「编辑属性…」的区别（刻意分开）：编辑属性会**改字段**并落库（可能改名字、换路径），
+    /// 刷新只重取图片、连 <c>IconCacheFile</c> 之外的任何字段都不动 —— 所以它不需要对话框、
+    /// 不需要二次确认，点一下即可。</para>
+    /// </summary>
+    /// <returns>成功与否 + 失败原因（中文，可直接进状态栏）。</returns>
+    public LaunchResult RefreshIcon(IconModel icon)
+    {
+        if (_store is null)
+        {
+            return LaunchResult.Fail(DemoNoSave);   // 演示模式不写盘
+        }
+
+        if (_iconExtractor is null)
+        {
+            return LaunchResult.Fail(I18n.T("icon.error.no_source"));
+        }
+
+        // 自定义图标（对话框里单独指定过 .exe/.dll/.ico + 序号）优先按它重取；
+        // 其余按 SourcePath 重取（与原版 IconEditor.Edit 判据同源，见 IconRefreshPlan.FromSource）。
+        var plan = string.IsNullOrWhiteSpace(icon.SourcePath)
+            ? IconRefreshPlan.Standard
+            : IconRefreshPlan.FromSource(icon.SourcePath);
+
+        var source = RefreshIconCache(icon, plan);
+        if (source is null)
+        {
+            // 提取失败 / 没有可提取的来源（例如网址与命令这类本来就没有图标的条目）
+            return LaunchResult.Fail(I18n.T("icon.error.no_source"));
+        }
+
+        // ⚠️ 必须落库：`RefreshIconCache` 换了 `IconCacheFile`（缓存文件名可能变），
+        //    不写回的话下次启动又去读旧文件。
+        _store.UpdateIcon(icon);
+        FindTile(icon.Id)?.Refresh(source);
+        return new LaunchResult(true);
     }
 
     private TabItemViewModel? FindTabOfIcon(string iconId)
@@ -939,7 +1030,7 @@ public sealed class MainViewModel
                 ? (null, false)
                 : LoadOrExtractOrFallback(icon, shortcut);
 
-            home.Icons.Add(new IconTileViewModel(icon, source));
+            home.Icons.Add(home.CreateTile(icon, source));
         }
 
         Tabs.Add(home);
@@ -972,7 +1063,7 @@ public sealed class MainViewModel
         {
             var icon = new IconModel { Type = IconType.File, DisplayName = name, SourcePath = path };
             var (source, _) = _iconExtractor is null ? (null, false) : LoadOrExtractOrFallback(icon, null);
-            tools.Icons.Add(new IconTileViewModel(icon, source));
+            tools.Icons.Add(tools.CreateTile(icon, source));
         }
 
         Tabs.Add(tools);
@@ -991,6 +1082,9 @@ public sealed class MainViewModel
         }
 
         Tabs.Add(notes);
+
+        // 演示内容也照"整页收口"那道保险走一遍（图块本身已在 CreateTile 里套过档）
+        ApplyIconSize(_iconSize);
 
         var iconTotal = Tabs.Where(t => !t.IsList && !t.IsText).Sum(t => t.Icons.Count);
         var itemTotal = Tabs.Sum(t => t.ListItems.Count + t.TextItems.Count);

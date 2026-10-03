@@ -24,9 +24,30 @@ public class IconContextMenuTests
                 IconMenuAction.OpenLocation,
                 IconMenuAction.EditProperties,
                 IconMenuAction.Rename,
+                IconMenuAction.Refresh,      // WinUI 线新增（原版没有这一项）
                 IconMenuAction.Remove,
             },
             Actions(IconType.File));
+    }
+
+    [Theory]
+    [InlineData(IconType.File)]
+    [InlineData(IconType.Folder)]
+    [InlineData(IconType.Shortcut)]
+    [InlineData(IconType.Url)]
+    [InlineData(IconType.Command)]
+    public void 五类图标都有_刷新图标_且排在重命名与删除之间(IconType type)
+    {
+        // 「刷新图标」与类型无关（有没有可提取的来源由落库那一层判，判不过给一句明确提示），
+        // 但位置是刻意的：紧跟在「重命名」之后、「删除」之前 —— 三者都是管理类动作。
+        var actions = Actions(type);
+
+        var rename = Array.IndexOf(actions, IconMenuAction.Rename);
+        var refresh = Array.IndexOf(actions, IconMenuAction.Refresh);
+        var remove = Array.IndexOf(actions, IconMenuAction.Remove);
+
+        Assert.True(refresh > rename, $"{type}：刷新图标应当在重命名之后");
+        Assert.True(refresh < remove, $"{type}：刷新图标应当在删除之前");
     }
 
     [Theory]
@@ -53,6 +74,7 @@ public class IconContextMenuTests
                 IconMenuAction.OpenLocation,
                 IconMenuAction.EditProperties,
                 IconMenuAction.Rename,
+                IconMenuAction.Refresh,
                 IconMenuAction.Remove,
             },
             actions);
@@ -74,7 +96,7 @@ public class IconContextMenuTests
         var labels = IconContextMenu.Build(IconType.File).Select(item => item.Label).ToArray();
 
         Assert.Equal(
-            new[] { "打开", "用其他应用打开…", "打开文件位置", "编辑属性…", "重命名", "删除" },
+            new[] { "打开", "用其他应用打开…", "打开文件位置", "编辑属性…", "重命名", "刷新图标", "删除" },
             labels);
         Assert.Equal("删除图标", IconContextMenu.RemoveTitle);
     }
@@ -101,6 +123,8 @@ public class IconContextMenuTests
         Assert.Equal("已删除: 记事本", IconContextMenu.RemovedStatus("记事本"));
         Assert.Equal("已重命名为「新名」", IconContextMenu.RenamedStatus("新名"));
         Assert.Equal("已更新图标: 记事本", IconContextMenu.UpdatedStatus("记事本"));
+        Assert.Equal("已刷新图标: 记事本", IconContextMenu.RefreshedStatus("记事本"));
+        Assert.Equal("这个图标没有可重新提取的来源", IconContextMenu.NoSourceMessage);
         Assert.Equal(@"路径不存在: C:\x", IconContextMenu.PathMissingMessage(@"C:\x"));
         Assert.Equal("打开方式失败: boom", IconContextMenu.OpenWithFailedMessage("boom"));
     }

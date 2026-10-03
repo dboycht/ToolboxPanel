@@ -3,12 +3,14 @@
     TextPage.xaml —— 文本页（粘贴板式表格页：左列备注 + 右列文本，**点击一行即复制**）
 
     这是 WinUI 线新增的**第三种页**（原版 Python 只有网格页与列表页，见 Core 的 TabModel.TypeText）。
-    形态照列表页（`ListViewPage`）：紧凑行高、两列、右键菜单；
+    形态照列表页（`ListViewPage`）：紧凑行高、两列、右键菜单、**拖拽排序**；
     差别有三处，都在这里与 .xaml.cs 里写明：
       ① **带一行表头**（备注 / 文本 + "点击一行即可复制它的文本"的提示）——
          两列的含义不像"说明 / 路径"那么自明，表头是必须的；
-      ② 行**不可拖**（`CanDrag=False`）：文本页本轮不做拖拽排序，见 .xaml.cs 顶部说明；
-      ③ 点一行 = **复制**（不是"打开"）。
+      ② 行**可拖**（`CanDrag=True`，2026-10-03）—— 页内重排 + 跨文本页搬；
+         ⚠️ 拖的是"这一行"，落点判定与插入横条与列表页同一套（Core 的 `DropIndexCalculator`）；
+      ③ 点一行 = **复制**（不是"打开"），所以"按住拖"与"点一下"必须能区分：
+         起拖之后系统补的那次 ItemClick 由 `_suppressNextClick` 丢掉（同列表页）。
 
     ⚠️ 文案走 `ui:Tr.Key`（静态文字）+ 代码里取 Core 常量（对话框与提示），与其它页同一分工。
 -->
@@ -33,11 +35,12 @@
             -->
             <Setter Property="HorizontalContentAlignment" Value="Stretch" />
             <!--
-                ⚠️ 文本页**刻意不开 CanDrag**（与列表页相反）：
-                这一页本轮不做拖拽排序，开了只会让"想选中/点一下复制"变成"莫名其妙拖起来"。
-                要加拖拽时记得三件事一起做：载荷类型、目标页门控、Core 的落库入口。
+                拖拽排序（2026-10-03）：行容器可拖 ⇒ 按下拖动即起拖（系统原生行为，与列表页同一套）。
+                ⚠️ 起拖事件收不到（ERROR.md E25）⇒ 载荷与落点靠"目标端 DragOver 登记 + 源端
+                    DragItemsCompleted 收口"，页面代码里没有 DragStarting 处理器。
+                ⚠️ 三类载荷互斥的判据在 Core（`DataStore.ApplyDragDrop`）：文本项只能落在文本页上。
             -->
-            <Setter Property="CanDrag" Value="False" />
+            <Setter Property="CanDrag" Value="True" />
         </Style>
 
         <!--
@@ -73,6 +76,12 @@
                   SelectionMode="None"
                   IsItemClickEnabled="True"
                   ItemClick="OnRowClick"
+                  CanDrag="True"
+                  CanDragItems="True"
+                  AllowDrop="True"
+                  DragOver="OnRowDragOver"
+                  Drop="OnRowDrop"
+                  DragItemsCompleted="OnRowDragItemsCompleted"
                   ContextRequested="OnRowContextRequested"
                   Padding="6,4"
                   Background="Transparent">
@@ -132,5 +141,19 @@
             <TextBlock ui:Tr.Key="search.no_match_hint" Opacity="0.4" FontSize="10.5"
                        TextAlignment="Center" TextWrapping="Wrap" />
         </StackPanel>
+
+        <!--
+            拖拽**插入横条**（表格是单列行，插入位在行的上/下边缘 —— 与列表页同款）：
+            ⚠️ 必须包在 **Canvas** 里：`Canvas.Left/Top` 只在**父级是 Canvas** 时才生效，
+               直接放在 Grid 里会永远停在左上角（见 ERROR.md E23）。
+            ⚠️ IsHitTestVisible=False 保证它不吃拖放事件。
+        -->
+        <Canvas x:Name="DropLayer" IsHitTestVisible="False">
+            <Border x:Name="DropIndicator"
+                    Height="3" CornerRadius="2"
+                    Background="{ThemeResource AccentBrushDark}"
+                    IsHitTestVisible="False"
+                    Visibility="Collapsed" />
+        </Canvas>
     </Grid>
 </UserControl>
