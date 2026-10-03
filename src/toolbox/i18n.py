@@ -355,6 +355,11 @@ TEXTS: dict[str, dict[str, str]] = {
     "drag.error.list_item_gone":   {"zh": "被拖动的列表项已不存在",         "en": "The dragged list item no longer exists"},
     "drag.error.item_gone":        {"zh": "被拖动的项已不存在",             "en": "The dragged item no longer exists"},
     "drag.error.target_not_grid":  {"zh": "目标标签页不存在或不是网格页",   "en": "Target tab does not exist or is not a grid tab"},
+    # ── 拖放门控（WinUI 线的补充：文本页有了自己的载荷，三类必须各自找同类页）──
+    "drag.error.text_to_other":    {"zh": "文本项不能放到网格页或列表页",   "en": "Text items cannot be dropped on a grid or list tab"},
+    "drag.error.text_item_gone":   {"zh": "被拖动的文本项已不存在",         "en": "The dragged text item no longer exists"},
+    "drag.error.target_not_text":  {"zh": "目标标签页不存在或不是文本页",   "en": "Target tab does not exist or is not a text tab"},
+    "drag.error.target_not_list":  {"zh": "目标标签页不存在或不是列表页",   "en": "Target tab does not exist or is not a list tab"},
 
     # ── 搜索（WinUI 线的补充）──
     "search.no_result_list":       {"zh": "没有匹配的列表项",               "en": "No matching list items"},

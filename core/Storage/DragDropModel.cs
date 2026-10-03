@@ -15,7 +15,14 @@ using ToolboxPanel.Core.Models;
 
 namespace ToolboxPanel.Core.Storage;
 
-/// <summary>拖动的是哪一类东西（与页面的 <c>TabModel.TabType</c> 对应）。</summary>
+/// <summary>
+/// 拖动的是哪一类东西（与页面的 <c>TabModel.TabType</c> 严格一一对应）。
+///
+/// <para>⚠️ 这三者构成一条**互斥**关系：图标只进网格页、列表项只进列表页、文本项只进文本页
+/// （判据见 <see cref="Storage.DataStore.ApplyDragDrop"/>）。加第三种载荷时**必须同时**改三处：
+/// 这里的枚举、<see cref="DragPayload.TryParse"/> 的前缀、以及目标页侧的登记口径
+/// （<c>TabItemViewModel.DraggableKind</c> 与 <c>TabStripView.OnTabsDragOver</c>）。</para>
+/// </summary>
 public enum DragItemKind
 {
     /// <summary>网格页的图标。</summary>
@@ -23,6 +30,9 @@ public enum DragItemKind
 
     /// <summary>列表页的一行。</summary>
     ListItem,
+
+    /// <summary>文本页的一行（2026-10-03 新增：文本页的拖拽排序）。</summary>
+    TextItem,
 }
 
 /// <summary>
@@ -46,13 +56,28 @@ public sealed class DragPayload
     /// <summary>拖动开始时该项**所在**的标签页（放置目标可能与它不同 = 跨页移动）。</summary>
     public string SourceTabId { get; }
 
-    /// <summary>图标 id 或列表项 id。</summary>
+    /// <summary>文本项 id。</summary>
     public string ItemId { get; }
 
+    /// <summary>
+    /// 跨拖放传输用的那一行文本（<c>3</c> 段以 <c>"|"</c> 分隔）。
+    ///
+    /// <para>⚠️ 前缀与枚举成员**不是**同名映射，别按枚举名反推：<c>icon</c> / <c>list</c> / <c>text</c>
+    /// 分别对应 <see cref="DragItemKind.Icon"/> / <see cref="DragItemKind.ListItem"/> /
+    /// <see cref="DragItemKind.TextItem"/>。</para>
+    /// </summary>
     public override string ToString()
-        => $"{(Kind == DragItemKind.Icon ? "icon" : "list")}{Separator}{SourceTabId}{Separator}{ItemId}";
+        => $"{Prefix}{Separator}{SourceTabId}{Separator}{ItemId}";
 
-    /// <summary>解析失败（格式不对 / 空串）返回 null —— 调用方一律当作"不接受这次拖放"。</summary>
+    /// <summary>本载荷在传输串里的前缀（与 <see cref="TryParse"/> 的解析表一一对应，一处收口）。</summary>
+    private string Prefix => Kind switch
+    {
+        DragItemKind.Icon => "icon",
+        DragItemKind.ListItem => "list",
+        _ => "text",
+    };
+
+    /// <summary>解析失败（格式不对 / 空串 / 前缀认不出）返回 null —— 调用方一律当作"不接受这次拖放"。</summary>
     public static DragPayload? TryParse(string? text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -66,21 +91,18 @@ public sealed class DragPayload
             return null;
         }
 
-        DragItemKind kind;
-        if (parts[0] == "icon")
+        // ⚠️ 认不出的前缀一律回 null（而不是"兜底成图标"）：未知载荷若被当成合法载荷放行，
+        //    落库那一步会去图标集合里找一个根本不存在的 id，报出来的错就成了误导性的
+        //    「被拖动的图标已不存在」。
+        DragItemKind? kind = parts[0] switch
         {
-            kind = DragItemKind.Icon;
-        }
-        else if (parts[0] == "list")
-        {
-            kind = DragItemKind.ListItem;
-        }
-        else
-        {
-            return null;
-        }
+            "icon" => DragItemKind.Icon,
+            "list" => DragItemKind.ListItem,
+            "text" => DragItemKind.TextItem,
+            _ => null,
+        };
 
-        return new DragPayload(kind, parts[1], parts[2]);
+        return kind is { } recognized ? new DragPayload(recognized, parts[1], parts[2]) : null;
     }
 }
 

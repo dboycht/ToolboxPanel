@@ -755,8 +755,7 @@ public sealed class DataStore
     // ────────────────────────────── 文本项（文本页）──────────────────────────────
     //
     // 与列表项同一套形状：**校验/字段语义在 Core 的 `TextItemEditor`**，这里只管落库。
-    // ⚠️ 文本页**不参与拖拽**（图标与列表项各有自己的门控，见 ApplyDragDrop）——
-    //    所以这里也没有 ReorderTextItems：顺序 = 集合顺序 = sort_order 连续值。
+    // 拖拽排序（同页重排 + 跨页移动）走 `ApplyDragDrop`（载荷 `DragItemKind.TextItem`，2026-10-03）。
 
     /// <summary>往文本页追加一条（页不存在或不是文本页 ⇒ 什么都不做、返回 false）。</summary>
     public bool AddTextItem(string tabId, TextItemModel item)
@@ -814,6 +813,31 @@ public sealed class DataStore
         Save();
     }
 
+    /// <summary>
+    /// 按给定 id 顺序重排文本页的条目（与 <see cref="ReorderListItems"/> 同形）。
+    ///
+    /// <para>⚠️ 拖拽落库**不走这里**（那条路是 <see cref="ApplyDragDrop"/> 按落点索引算的）——
+    /// 这个方法存在的意义与 <see cref="ApplyIconOrder"/> 一样：**界面已经自己让位到最终顺序时，
+    /// 落库只是"把这个顺序写下来"**。留着它是因为三类项的落库入口必须对称
+    /// （少了它，将来给文本页做"实时让位"时又会有人去改 `ApplyDragDrop` 的语义）。</para>
+    ///
+    /// <para>没提到的 id **一律追加到末尾**（防御：绝不静默丢项），并重排 <c>sort_order</c>。</para>
+    /// </summary>
+    /// <returns>页不存在或不是文本页时返回 false（什么都不改）。</returns>
+    public bool ReorderTextItems(string tabId, IReadOnlyList<string> orderedItemIds)
+    {
+        var tab = FindTab(tabId);
+        if (tab is null || !tab.IsTextTab || tab.TextItems is not { } items)
+        {
+            return false;
+        }
+
+        tab.TextItems = ReorderById(items, orderedItemIds, item => item.Id);
+        RenumberTextItems(tab);
+        Save();
+        return true;
+    }
+
     private static void RenumberTextItems(TabModel tab)
     {
         if (tab.TextItems is not { } items)
@@ -856,27 +880,38 @@ public sealed class DataStore
             return DragDropResult.Fail(I18n.T("drag.error.target_missing"), request);
         }
 
-        if (payload.Kind == DragItemKind.Icon && targetTab.IsListTab)
+        // ── 三类载荷各自找同类页（2026-10-03：文本页也有了载荷）─────────────────────
+        //
+        // ⚠️ 这一段**替代了**原来那句"任何东西都不许拖进文本页"的粗判据（`if (targetTab.IsTextTab)`）。
+        //    那句在"文本页自己不能拖"的时代是对的；现在文本页有了自己的载荷，口径必须换成
+        //    **一载荷对一页型**，与 <see cref="DragItemKind"/> 一一对应：
+        //      · 图标   → 只进网格页；      · 列表项 → 只进列表页；      · 文本项 → 只进文本页。
+        //    ⚠️ 别只做一半：漏掉"图标/列表项对文本页"那一半，它们就能落进文本页的 `icons` 集合 ——
+        //       那个集合在文本页上永远不显示，观感就是"图标凭空消失了"（数据还在，用户却找不到）。
+        //    ⚠️ 报错文案按**目标页实际是什么**分开（grid / list / text 三条），
+        //       否则"图标拖到列表页"和"图标拖到文本页"会共用一句"不是网格页"的笼统话。
+        switch (payload.Kind)
         {
-            return DragDropResult.Fail(I18n.T("drag.error.icon_to_list"), request);
+            case DragItemKind.Icon when targetTab.IsListTab:
+                return DragDropResult.Fail(I18n.T("drag.error.icon_to_list"), request);
+
+            case DragItemKind.Icon when targetTab.IsTextTab:
+                return DragDropResult.Fail(I18n.T("drag.error.target_not_grid"), request);
+
+            case DragItemKind.ListItem when !targetTab.IsListTab:
+                return DragDropResult.Fail(
+                    I18n.T(targetTab.IsTextTab ? "drag.error.target_not_list" : "drag.error.list_to_grid"), request);
+
+            case DragItemKind.TextItem when !targetTab.IsTextTab:
+                return DragDropResult.Fail(I18n.T("drag.error.text_to_other"), request);
         }
 
-        if (payload.Kind == DragItemKind.ListItem && !targetTab.IsListTab)
+        return payload.Kind switch
         {
-            return DragDropResult.Fail(I18n.T("drag.error.list_to_grid"), request);
-        }
-
-        // ⚠️ 文本页**两类东西都不收**（它没有拖拽；判据是"目标页本身是文本页"，
-        //    与上面两条按载荷类型分的判据正交 —— 不能只靠"图标只能进网格页"推导：
-        //    那一条只拦住了 IsListTab，文本页会被当成网格页放行，落进一个根本不显示的集合里）。
-        if (targetTab.IsTextTab)
-        {
-            return DragDropResult.Fail(I18n.T("drag.error.target_not_grid"), request);
-        }
-
-        return payload.Kind == DragItemKind.Icon
-            ? ApplyIconDrop(payload, sourceTab, targetTab, request)
-            : ApplyListItemDrop(payload, sourceTab, targetTab, request);
+            DragItemKind.Icon => ApplyIconDrop(payload, sourceTab, targetTab, request),
+            DragItemKind.ListItem => ApplyListItemDrop(payload, sourceTab, targetTab, request),
+            _ => ApplyTextItemDrop(payload, sourceTab, targetTab, request),
+        };
     }
 
     private DragDropResult ApplyIconDrop(
@@ -936,6 +971,47 @@ public sealed class DataStore
     }
 
     /// <summary>
+    /// 文本项落库（2026-10-03）—— 形状与 <see cref="ApplyListItemDrop"/> 逐行对称，只换了集合。
+    ///
+    /// <para>⚠️ 搬项的写法与另外两类**刻意不同**（它们用 <c>FindIcon/FindListItem</c> 按 id 再取一次）：
+    /// 这里必须从**源页自己的集合**里摘那一份，因为 <c>EffectiveTextItems</c> 在读不到集合时
+    /// 回的是一个临时空数组 —— "按 id 全库找"在这条路上多一次可能落空的跳转，
+    /// 而"从源页里找"本身就校验了"这一项确实在它自称的那一页上"。</para>
+    /// </summary>
+    private DragDropResult ApplyTextItemDrop(
+        DragPayload payload, TabModel sourceTab, TabModel targetTab, DragDropRequest request)
+    {
+        // ⚠️ `TextItems` 可能为 null（这一页从没有过文本项，见 TabModel 的长注释）⇒ 用 `?.` 判空，
+        //    直接 `Any(...)` 会抛空引用（"拖一个文本项到另一个空文本页"就是这条路的常规入口）。
+        var item = sourceTab.TextItems?.FirstOrDefault(it => it.Id == payload.ItemId);
+        if (item is null)
+        {
+            return DragDropResult.Fail(I18n.T("drag.error.text_item_gone"), request);
+        }
+
+        if (ReferenceEquals(sourceTab, targetTab))
+        {
+            int fromIndex = sourceTab.TextItems!.FindIndex(it => it.Id == payload.ItemId);
+            int toIndex = Math.Clamp(request.TargetIndex, 0, sourceTab.TextItems.Count);
+            return ApplySameTabDrop(sourceTab.TextItems, fromIndex, toIndex, request);
+        }
+
+        // ⚠️ 落进目标页之前要 `??=`：`AddTextItem` 就是这么自愈的（唯一会把该字段变成非 null 的生产路径），
+        //    否则跨页移动会把这一项插进一个不存在的集合里。
+        targetTab.TextItems ??= new List<TextItemModel>();
+
+        sourceTab.TextItems!.Remove(item);
+        int insertAt = Math.Clamp(request.TargetIndex, 0, targetTab.TextItems.Count);
+        targetTab.TextItems.Insert(insertAt, item);
+
+        RenumberTextItems(sourceTab);
+        RenumberTextItems(targetTab);
+        Save();
+
+        return DragDropResult.Ok(new DragDropRequest(payload, request.TargetTabId, insertAt));
+    }
+
+    /// <summary>
     /// 同页内重排：移动 → 重排序号 → 落盘。
     ///
     /// <para>⚠️ <c>TargetIndex</c> 的口径是「插到**当前**第 N 项之前」（与界面上的落点指示线、
@@ -961,6 +1037,23 @@ public sealed class DataStore
         items.Insert(insertedAt, moved);
 
         // 即使"原地落下"（顺序没变）也照样重排序号：序号必须是 0..N-1 的连续值
+        RenumberItems(items);
+
+        Save();
+
+        // ⚠️ 回传的是**实际插入下标**（夹取 + 往后移 -1 之后的），不是入参：
+        //    `DragDropResult.Request.TargetIndex` 的契约就是"落库后的实际索引"，
+        //    原来这里透传入参，于是"拖到末尾"会回一个比列表长度还大的值（夹取也没做）。
+        return DragDropResult.Ok(new DragDropRequest(request.Payload, request.TargetTabId, insertedAt));
+    }
+
+    /// <summary>
+    /// 按位置重排序号（<c>sort_order</c> 必须是 0..N-1 的连续值）。
+    /// 三类项由同一个 switch 收口 —— 以前只有图标与列表项两个 case，
+    /// **文本项漏在里面**就会在拖完之后留下"序号原地不动"的行（顺序看着对、数据却与界面不符）。
+    /// </summary>
+    private static void RenumberItems<T>(List<T> items)
+    {
         for (int i = 0; i < items.Count; i++)
         {
             switch (items[i])
@@ -971,15 +1064,11 @@ public sealed class DataStore
                 case ListItemModel listItem:
                     listItem.SortOrder = i;
                     break;
+                case TextItemModel textItem:
+                    textItem.SortOrder = i;
+                    break;
             }
         }
-
-        Save();
-
-        // ⚠️ 回传的是**实际插入下标**（夹取 + 往后移 -1 之后的），不是入参：
-        //    `DragDropResult.Request.TargetIndex` 的契约就是"落库后的实际索引"，
-        //    原来这里透传入参，于是"拖到末尾"会回一个比列表长度还大的值（夹取也没做）。
-        return DragDropResult.Ok(new DragDropRequest(request.Payload, request.TargetTabId, insertedAt));
     }
 
     private static void RenumberListItems(TabModel tab)

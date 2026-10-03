@@ -7,6 +7,7 @@
 // 与列表项的**唯一实质差异**（刻意）：**文本不能为空**（文本是这一页的本体，
 // 空文本的行点了也复制不到东西），而备注可以为空。
 
+using ToolboxPanel.Core;
 using ToolboxPanel.Core.Models;
 using ToolboxPanel.Core.Services;
 using ToolboxPanel.Core.Storage;
@@ -341,7 +342,7 @@ public class TextItemTests
         Assert.Equal("内容", item.Text);
     }
 
-    // ────────────────────────────── 拖拽门控：文本页两类东西都不收 ──────────────────────────────
+    // ────────────────────────────── 拖拽门控：三类载荷各自找同类页 ──────────────────────────────
 
     [Fact]
     public void 图标与列表项都不能拖进文本页()
@@ -364,12 +365,44 @@ public class TextItemTests
         Assert.False(iconResult.Success);
         Assert.False(listResult.Success);
 
+        // ★ 报错文案要指名道姓：图标那条说的是"不是网格页"，列表项那条说的是"不是列表页"
+        //   （两条都笼统写成"不是网格页"就看不出用户到底拖错了什么）
+        Assert.Equal(I18n.T("drag.error.target_not_grid"), iconResult.Reason);
+        Assert.Equal(I18n.T("drag.error.target_not_list"), listResult.Reason);
+
         // ★ 一个字节都不能改：两边集合都没动
         var reloaded = temp.NewStore().Load();
         Assert.Single(reloaded.Single(t => t.Id == grid.Id).Icons);
         Assert.Single(reloaded.Single(t => t.Id == list.Id).ListItems);
         Assert.Empty(reloaded.Single(t => t.Id == textTab.Id).Icons);
         Assert.Empty(reloaded.Single(t => t.Id == textTab.Id).EffectiveTextItems);
+    }
+
+    [Fact]
+    public void 文本项不能拖进网格页或列表页()
+    {
+        using var temp = new TempDataDirectory();
+        var store = temp.NewStore();
+        var source = store.AddTab("文本页A", TabModel.TypeText);
+        var grid = store.AddTab("网格页", TabModel.TypeGrid);
+        var list = store.AddTab("列表页", TabModel.TypeList);
+
+        store.AddTextItem(source.Id, TextItemEditor.Create("备注", "内容")!);
+        var payload = new DragPayload(DragItemKind.TextItem, source.Id, source.EffectiveTextItems[0].Id);
+
+        var toGrid = store.ApplyDragDrop(new DragDropRequest(payload, grid.Id, 0));
+        var toList = store.ApplyDragDrop(new DragDropRequest(payload, list.Id, 0));
+
+        Assert.False(toGrid.Success);
+        Assert.False(toList.Success);
+        Assert.Equal(I18n.T("drag.error.text_to_other"), toGrid.Reason);
+        Assert.Equal(I18n.T("drag.error.text_to_other"), toList.Reason);
+
+        // ★ 一个字节都不能改：源页那条还在原处、目标页什么都没多出来
+        var reloaded = temp.NewStore().Load();
+        Assert.Single(reloaded.Single(t => t.Id == source.Id).EffectiveTextItems);
+        Assert.Empty(reloaded.Single(t => t.Id == grid.Id).Icons);
+        Assert.Empty(reloaded.Single(t => t.Id == list.Id).ListItems);
     }
 
     [Fact]

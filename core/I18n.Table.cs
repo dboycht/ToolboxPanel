@@ -14,7 +14,7 @@ namespace ToolboxPanel.Core;
 
 public static partial class I18n
 {
-    /// <summary>全部文案：key → (中文, 英文)。共 411 条。</summary>
+    /// <summary>全部文案：key → (中文, 英文)。共 415 条。</summary>
     internal static readonly Dictionary<string, (string Zh, string En)> Table = new(StringComparer.Ordinal)
     {
 
@@ -238,6 +238,10 @@ public static partial class I18n
         ["drag.error.list_item_gone"]       = ("被拖动的列表项已不存在", "The dragged list item no longer exists"),
         ["drag.error.item_gone"]            = ("被拖动的项已不存在", "The dragged item no longer exists"),
         ["drag.error.target_not_grid"]      = ("目标标签页不存在或不是网格页", "Target tab does not exist or is not a grid tab"),
+        ["drag.error.text_to_other"]        = ("文本项不能放到网格页或列表页", "Text items cannot be dropped on a grid or list tab"),
+        ["drag.error.text_item_gone"]       = ("被拖动的文本项已不存在", "The dragged text item no longer exists"),
+        ["drag.error.target_not_text"]      = ("目标标签页不存在或不是文本页", "Target tab does not exist or is not a text tab"),
+        ["drag.error.target_not_list"]      = ("目标标签页不存在或不是列表页", "Target tab does not exist or is not a list tab"),
         ["search.no_result_list"]           = ("没有匹配的列表项", "No matching list items"),
         ["search.count"]                    = ("匹配 {matched} / {total}", "{matched} / {total} matched"),
         ["bulk.exit"]                       = ("退出批量管理", "Exit Batch Mode"),
