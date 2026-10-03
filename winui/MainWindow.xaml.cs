@@ -845,7 +845,9 @@ public sealed partial class MainWindow : Window
            + $"{settings.AnimationDurationMs}ms/{settings.AnimationStaggerMs}ms/{AppSettings.ToWire(settings.AnimationEasing)} "
            + $"主题={settings.ThemeChoice} 外观细调={settings.ThemeParamOverrides().Count + settings.ThemeColorOverrides().Count} 项";
 
-    /// <summary>把当前设置整体套用到界面（幂等：设置一变就整份重套，省掉"改一处忘一处"）。</summary>
+    /// <summary>
+    /// 把当前设置整体套用到界面（幂等：设置一变就整份重套，省掉"改一处忘一处"）。
+    /// </summary>
     private void ApplyAllSettings()
     {
         var settings = _settingsData ?? new AppSettings();

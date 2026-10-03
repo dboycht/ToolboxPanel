@@ -847,6 +847,10 @@ public sealed class MainViewModel
     /// <para>⚠️ 与「编辑属性…」的区别（刻意分开）：编辑属性会**改字段**并落库（可能改名字、换路径），
     /// 刷新只重取图片、连 <c>IconCacheFile</c> 之外的任何字段都不动 —— 所以它不需要对话框、
     /// 不需要二次确认，点一下即可。</para>
+    ///
+    /// <para>⚠️ **走哪条路径由 Core 的 <see cref="IconEditor.PlanRefresh"/> 决定**，别在这里自己挑
+    /// （第一版就是这里写死的"只照 <c>source_path</c>"，于是"快捷方式的 .lnk 已被删除、程序还在"
+    /// 那条记录刷了也没用 —— 用户 2026-10-03 实测反馈）。</para>
     /// </summary>
     /// <returns>成功与否 + 失败原因（中文，可直接进状态栏）。</returns>
     public LaunchResult RefreshIcon(IconModel icon)
@@ -858,20 +862,24 @@ public sealed class MainViewModel
 
         if (_iconExtractor is null)
         {
-            return LaunchResult.Fail(I18n.T("icon.error.no_source"));
+            return LaunchResult.Fail(IconContextMenu.NoSourceMessage);
         }
 
-        // 自定义图标（对话框里单独指定过 .exe/.dll/.ico + 序号）优先按它重取；
-        // 其余按 SourcePath 重取（与原版 IconEditor.Edit 判据同源，见 IconRefreshPlan.FromSource）。
-        var plan = string.IsNullOrWhiteSpace(icon.SourcePath)
-            ? IconRefreshPlan.Standard
-            : IconRefreshPlan.FromSource(icon.SourcePath);
+        var decision = IconEditor.PlanRefresh(icon);
+        if (decision.Plan is not { } plan)
+        {
+            // 两条路径都不在：报出**被试过的那条**（"路径不存在: D:\...\cc-switch.exe" 比
+            // 一句笼统的"没有可提取的来源"有用得多 —— 用户一眼知道是程序被卸了还是快捷方式被删了）
+            return LaunchResult.Fail(decision.TriedPath.Length > 0
+                ? IconContextMenu.PathMissingMessage(decision.TriedPath)
+                : IconContextMenu.NoSourceMessage);
+        }
 
         var source = RefreshIconCache(icon, plan);
         if (source is null)
         {
-            // 提取失败 / 没有可提取的来源（例如网址与命令这类本来就没有图标的条目）
-            return LaunchResult.Fail(I18n.T("icon.error.no_source"));
+            // 路径存在但提取不出来（极端情况：既没有真实图标、连兜底图都画不出来）
+            return LaunchResult.Fail(IconContextMenu.NoSourceMessage);
         }
 
         // ⚠️ 必须落库：`RefreshIconCache` 换了 `IconCacheFile`（缓存文件名可能变），

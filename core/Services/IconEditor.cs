@@ -397,5 +397,57 @@ public static class IconEditor
     private static string PreferTarget(IconModel icon)
         => string.IsNullOrWhiteSpace(icon.TargetPath) ? icon.SourcePath : icon.TargetPath;
 
+    // ────────────────────────────── 「刷新图标」的取图计划（2026-10-03）──────────────────────────────
+
+    /// <summary>
+    /// 「刷新图标」的取图计划：<see cref="Plan"/> 为 null = **没有可用的来源**（此时
+    /// <see cref="TriedPath"/> 是那条被试过、但不存在的路径，用于给用户一句指名道姓的提示）。
+    /// </summary>
+    public readonly record struct IconRefreshDecision(IconRefreshPlan? Plan, string TriedPath);
+
+    /// <summary>
+    /// 算出「刷新图标」该按哪条路径重取。
+    ///
+    /// <para><b>为什么不能直接用 <see cref="PreferTarget"/></b>：那条规则（target 优先）服务的是
+    /// **编辑属性**（用户刚刚在对话框里填过目标）；而刷新要回答的是另一个问题 ——
+    /// <b>"现在这台机器上，还能从哪儿取到这张图？"</b>。所以判据是
+    /// <b>第一条真实存在的路径</b>（`source_path` 优先：`.lnk` 可能带自定义图标），
+    /// 与 <c>Launcher.OpenShortcut</c> 里"先 .lnk、不在就退到目标"**完全同口径**。</para>
+    ///
+    /// <para>⚠️ 这条规则是用户实测逼出来的（2026-10-03）：某个快捷方式图标的桌面 `.lnk`
+    /// **已被删除**、而 `target_path` 的程序还在（记录里 `source_path` 仍指向那个死 .lnk）
+    /// ⇒ 按 source 硬提必然失败 ⇒ 界面一直是旧的兜底字形（那张 2.4KB 的通用 .lnk 图标），
+    /// 而"刷新图标"当时**也**只照 <c>source_path</c> 提，于是刷了也没用。</para>
+    ///
+    /// <para>网址 / 命令两类**不按路径提取**（它们的 source_path 是网址/命令行）——
+    /// 与 <c>IconExtractor.ExtractHandleFor</c> / <see cref="Create"/> 一致，给该类型的标准图标。</para>
+    /// </summary>
+    public static IconRefreshDecision PlanRefresh(IconModel icon)
+    {
+        ArgumentNullException.ThrowIfNull(icon);
+
+        if (icon.Type is IconType.Url or IconType.Command)
+        {
+            return new IconRefreshDecision(IconRefreshPlan.Standard, string.Empty);
+        }
+
+        foreach (var candidate in new[] { icon.SourcePath, icon.TargetPath })
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (File.Exists(candidate) || Directory.Exists(candidate))
+            {
+                return new IconRefreshDecision(IconRefreshPlan.FromSource(candidate), candidate);
+            }
+        }
+
+        // 两条都不在：报"目标"那条（对用户来说更有意义 —— 程序没了比 .lnk 没了更值得知道）
+        var reported = !string.IsNullOrWhiteSpace(icon.TargetPath) ? icon.TargetPath : icon.SourcePath;
+        return new IconRefreshDecision(null, reported ?? string.Empty);
+    }
+
     private static string Trim(string? value) => (value ?? string.Empty).Trim();
 }
