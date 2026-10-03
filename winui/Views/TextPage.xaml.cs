@@ -147,30 +147,15 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
         args.Handled = true;
     }
 
-    /// <summary>右键点在哪 —— 往上找到承载这一行的 ListViewItem（空白处返回 null）。</summary>
-    private static TextRowViewModel? FindRowFromSource(object? source)
-    {
-        var current = source as DependencyObject;
-
-        while (current is not null)
-        {
-            if (current is ListViewItem { DataContext: TextRowViewModel row })
-            {
-                return row;
-            }
-
-            try
-            {
-                current = VisualTreeHelper.GetParent(current);
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
+    /// <summary>
+    /// 右键点在哪 —— 往上找到承载这一行的元素；点在空白处返回 null。
+    ///
+    /// <para>⚠️ 2026-10-03：判据收进 <see cref="ContextHitTest"/>（原来那版写成
+    /// <c>ListViewItem { DataContext: ... }</c>，**永远不成立** —— 容器 DataContext 是 null、
+    /// 数据项在模板元素上，见 `ERROR.md` E47 与 E52）。</para>
+    /// </summary>
+    private TextRowViewModel? FindRowFromSource(object? source)
+        => ContextHitTest.Resolve(source, Rows, _tab.VisibleTextItems);
 
     // ────────────────────────────── 点击 = 复制 ──────────────────────────────
 

@@ -776,30 +776,22 @@ public sealed partial class TabStripView : UserControl
         args.Handled = true;
     }
 
-    /// <summary>右键点在哪 —— 往上找到承载标签的 `ListViewItem`；点在空白处返回 null。</summary>
-    private static TabItemViewModel? FindTabFromSource(object? source)
-    {
-        var current = source as DependencyObject;
-
-        while (current is not null)
-        {
-            if (current is ListViewItem { DataContext: TabItemViewModel tab })
-            {
-                return tab;
-            }
-
-            try
-            {
-                current = VisualTreeHelper.GetParent(current);
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
+    /// <summary>
+    /// 右键点在哪 —— 往上找到承载标签的那个元素；点在空白处返回 null。
+    ///
+    /// <para>⚠️ 2026-10-03：判据收进 <see cref="ContextHitTest"/>（原来那版写成
+    /// <c>ListViewItem { DataContext: TabItemViewModel }</c>，**永远不成立** —— 容器 DataContext 是 null、
+    /// 数据项在模板元素上，见 `ERROR.md` E47 与 E52。这个 bug 的后果是：**在标签上右键也只会出
+    /// "空白处菜单"（两个新建），「重命名 / 删除」永远看不到**）。</para>
+    ///
+    /// <para>⚠️ 传的是**界面上正在用的那一份集合**（<c>ItemsSource</c>）：
+    /// <c>IndexFromContainer</c> 给的是视图下标，与 Core 的列表下标不是一回事。</para>
+    /// </summary>
+    private TabItemViewModel? FindTabFromSource(object? source)
+        => ContextHitTest.Resolve(
+            source,
+            Tabs,
+            ItemsSource as IReadOnlyList<TabItemViewModel> ?? Array.Empty<TabItemViewModel>());
 }
 
 /// <summary>

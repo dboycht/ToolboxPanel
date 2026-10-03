@@ -94,6 +94,8 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     }
 
     // ────────────────────────────── 搜索过滤（W5）──────────────────────────────
+
+    // ────────────────────────────── 搜索过滤（W5）──────────────────────────────
     //
     // 判定在 Core 的 `SearchFilter`（有单测）；页面只做三件事：
     //   ① 把查询交给标签页（它重算可见集合，界面绑的就是那个集合）；
@@ -726,31 +728,20 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         return menu;
     }
 
-    /// <summary>右键点在哪 —— 往上找到承载图块的 GridViewItem；点在空白处返回 null。</summary>
-    private static IconTileViewModel? FindTileFromSource(object? source)
-    {
-        var current = source as DependencyObject;
-
-        while (current is not null)
-        {
-            if (current is GridViewItem { DataContext: IconTileViewModel tile })
-            {
-                return tile;
-            }
-
-            try
-            {
-                current = VisualTreeHelper.GetParent(current);
-            }
-            catch (Exception)
-            {
-                // 命中的不是可视元素（例如 Run/TextElement）：当作"点在空白处"
-                return null;
-            }
-        }
-
-        return null;
-    }
+    /// <summary>
+    /// 右键点在哪 —— 往上找到承载图块的那个元素；点在空白处返回 null。
+    ///
+    /// <para>⚠️⚠️ 2026-10-03：这里原来是 <c>if (current is GridViewItem { DataContext: IconTileViewModel tile })</c>
+    /// —— **它永远不成立**，于是"图标右键菜单"从来没出现过（永远弹空白处那个"新建类"菜单）：
+    /// 往上走到**模板元素**（Image / TextBlock）时它不是 `GridViewItem`（这个模式压根不看它，
+    /// 而**数据项恰恰挂在模板元素上**）；走到**容器**时它的 `DataContext` 是 **null**（`ERROR.md` E47）。
+    /// 实测（临时探针，改前）：容器 `DataContext=null`、`Image/TextBlock.DataContext=IconTileViewModel`、
+    /// 而 `FindTileFromSource(Image)` / `(TextBlock)` 都返回 **null**。</para>
+    ///
+    /// <para>现在两条路都走（判据收在 <see cref="ContextHitTest"/>，四个右键菜单共用一份）。</para>
+    /// </summary>
+    private IconTileViewModel? FindTileFromSource(object? source)
+        => ContextHitTest.Resolve(source, TileGrid, _tab.VisibleIcons);
 
     // ────────────────────────────── 拖拽排序（2026-09-16 最终形态）──────────────────────────────
     //

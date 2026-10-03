@@ -145,30 +145,15 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         args.Handled = true;
     }
 
-    /// <summary>右键点在哪 —— 往上找到承载这一行的 ListViewItem（空白处返回 null）。</summary>
-    private static ListRowViewModel? FindRowFromSource(object? source)
-    {
-        var current = source as DependencyObject;
-
-        while (current is not null)
-        {
-            if (current is ListViewItem { DataContext: ListRowViewModel row })
-            {
-                return row;
-            }
-
-            try
-            {
-                current = VisualTreeHelper.GetParent(current);
-            }
-            catch (Exception)
-            {
-                return null;
-            }
-        }
-
-        return null;
-    }
+    /// <summary>
+    /// 右键点在哪 —— 往上找到承载这一行的元素；点在空白处返回 null。
+    ///
+    /// <para>⚠️ 2026-10-03：判据收进 <see cref="ContextHitTest"/>（原来那版写成
+    /// <c>ListViewItem { DataContext: ... }</c>，**永远不成立** —— 容器 DataContext 是 null、
+    /// 数据项在模板元素上，见 `ERROR.md` E47 与 E52）。</para>
+    /// </summary>
+    private ListRowViewModel? FindRowFromSource(object? source)
+        => ContextHitTest.Resolve(source, Rows, _tab.VisibleListItems);
 
     /// <summary>演示模式下不写盘：由宿主窗口置为 false 关掉拖拽。</summary>
     public bool DragDropEnabled
