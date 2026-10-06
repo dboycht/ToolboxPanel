@@ -87,7 +87,23 @@ internal static class DragSession
     public static bool LooksLikeTabDrag => TabDragTabId is not null || !SawPageTarget;
 
     /// <summary>
-    /// 页面内容区在 DragOver / Drop 里登记落点（"落到本页第几位"）。
+    /// 本次拖动里**有没有任何一个接受区域真的收到过 `Drop`**（"松手落在有效落点上"的会话级证据）。
+    ///
+    /// <para>🆕 2026-10-06（图标跨页面拖动那一轮）为什么需要它：一次**跨区域**的拖动，
+    /// `Drop` 事件落在**目标**那一侧（标签栏或目标页），而收口在**源**那一侧 ——
+    /// 源侧自己的"Drop 到过本页"标记**永远是假**，于是落库只剩 `DropResult == Move` 一根独苗。
+    /// ⚠️ 而 E25 记录过"载荷为空时 OS 可能把 `DropResult` 报成 `None`"——真报成 None，
+    /// 用户看到的就是"拖上去什么都没发生"（静默无操作）。这里补一条不依赖 `DropResult` 的证据。</para>
+    ///
+    /// <para>⚠️ 生命周期：只由**内部拖动**的 Drop 分支置位；`TakeTarget()` / `EndSession()` /
+    /// `ClearTarget()` 一律复位 —— 免得留给"紧接着的下一次拖动"当成本轮落下（E32 那类坑）。</para>
+    /// </summary>
+    public static bool DropSeen { get; private set; }
+
+    /// <summary>某个接受区域（页面 / 标签栏）在 Drop 里确认"这次真落下了"。</summary>
+    public static void ReportDropSeen() => DropSeen = true;
+
+    /// <summary>页面内容区在 DragOver / Drop 里登记落点（"落到本页第几位"）。
     /// ⚠️ **只有页面用这个方法**：它同时把区域记成"页面"、把标签重排的登记作废
     /// （指针已经不在标签栏上了）—— 标签栏请用 <see cref="ReportTabStripHover"/>。
     /// </summary>
@@ -127,8 +143,9 @@ internal static class DragSession
         var target = Target;
         Target = null;
 
-        // 一次条目拖动到此结束 ⇒ "本次拖过页面"也复位（下一个拖动重新判定）
+        // 一次条目拖动到此结束 ⇒ "本次拖过页面"与"真的落下过"都复位（下一个拖动重新判定）
         SawPageTarget = false;
+        DropSeen = false;
         return target;
     }
 
@@ -140,11 +157,12 @@ internal static class DragSession
         LastRegion = DragRegion.None;
         SawPageTarget = false;
         TabDragTabId = null;
+        DropSeen = false;
     }
 
     /// <summary>
     /// 单纯点击（没拖动）时顺手清掉落点登记 —— 防止"上次拖动的落点"影响后续判断。
-    /// ⚠️ 连"这次拖过页面 / 按标签拖动"的标记一起清：点击意味着本次手势不是拖动。
+    /// ⚠️ 连"这次拖过页面 / 按标签拖动 / 真的落下过"的标记一起清：点击意味着本次手势不是拖动。
     /// </summary>
     public static void ClearTarget()
     {
@@ -153,6 +171,7 @@ internal static class DragSession
         LastRegion = DragRegion.None;
         SawPageTarget = false;
         TabDragTabId = null;
+        DropSeen = false;
     }
 
     /// <summary>

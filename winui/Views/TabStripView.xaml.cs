@@ -257,6 +257,9 @@ public sealed partial class TabStripView : UserControl
         //    （`{ThemeResource}` 不会因为资源键变了就重新解析，见上面那段注释）
         TabDropIndicator.Background = accent;
 
+        // 🆕 「图标拖到标签上」的目标描边也是同一个键（同一个理由）
+        TabDropTarget.BorderBrush = accent;
+
         // 主题圆角 + 悬停时长（默认参数下这两步都是恒等变换）
         _cornerScale = radiusScale;
         _hoverScale = hoverScale;
@@ -651,6 +654,7 @@ public sealed partial class TabStripView : UserControl
         {
             e.AcceptedOperation = DataPackageOperation.None;
             StopDragTimers();
+            ClearDragFeedback();   // 从资源管理器拖进来一条也得把上一次的内部拖动提示收干净
             return;
         }
 
@@ -666,6 +670,8 @@ public sealed partial class TabStripView : UserControl
         // 标签重排的落点（0..标签数）：指针越过第 i 个标签的中心 ⇒ 插到它后面；
         // 在标签栏空白处 ⇒ 标签数（放到最后）。算法在 Core（`TabReorder.ComputeInsertIndex`，有单测）。
         var tabInsertIndex = ComputeTabInsertIndex(e);
+        var tabDrag = DragSession.LooksLikeTabDrag;
+        int appendIndex = 0;
 
         if (tab is null)
         {
@@ -682,7 +688,7 @@ public sealed partial class TabStripView : UserControl
             // ⚠️ 三类页各有自己的可见集合（2026-10-03 加上文本页）：漏掉文本页那一支，
             //    "把文本项丢到文本标签上"会拿 `VisibleIcons.Count`（文本页上恒为 0）当落点 ⇒ 永远插到最前。
             var kind = tab.DraggableKind;
-            var appendIndex = kind switch
+            appendIndex = kind switch
             {
                 DragItemKind.TextItem => tab.VisibleTextItems.Count,
                 DragItemKind.ListItem => tab.VisibleListItems.Count,
@@ -692,15 +698,31 @@ public sealed partial class TabStripView : UserControl
             DragSession.ReportTabStripHover(tab.Id, kind, appendIndex, tabInsertIndex);
         }
 
-        // 插入竖条只在"这次拖的确实是标签"时画：条目拖到标签栏上表达的是"追加到那一页"，
-        // 此时画一根"标签会插到这里"的条子会误导用户（判据见 DragSession.LooksLikeTabDrag）。
-        if (DragSession.LooksLikeTabDrag)
+        // 反馈两类拖动各一套（一次拖动只会是其中一种，所以两个提示互斥）：
+        //   · 拖**标签** ⇒ 插入竖条（"插到第几个标签之前"）；
+        //   · 拖**页面里的条目** ⇒ 给目标标签套一圈描边（"松手就落进这一页"）。
+        // ⚠️ 别在条目拖动时画插入竖条：那条子表达的是"标签会插到这里"，会误导用户。
+        if (tabDrag)
         {
+            HideTabDropTarget();
             ShowTabDropIndicator(tabInsertIndex);
+        }
+        else
+        {
+            HideTabDropIndicator();
+
+            if (tab is null)
+            {
+                HideTabDropTarget();
+            }
+            else
+            {
+                ShowTabDropTarget(tab);
+            }
         }
 
         // 悬停切页只对**条目拖动**有意义；拖的是标签时绝不能切页（用户正在重排标签栏，界面却跟着翻页）。
-        if (tab is null || DragSession.LooksLikeTabDrag)
+        if (tab is null || tabDrag)
         {
             return;
         }
@@ -710,8 +732,12 @@ public sealed partial class TabStripView : UserControl
             return;
         }
 
-        // 换了一个标签 → 重新开始计时（拖过标签栏时不会乱切页）
+        // 换了一个标签 → 重新开始计时（拖过标签栏时不会乱切页）。
+        // 顺带留一条可诊断的链路日志（只在这一刻打，不会每移动 1px 刷屏）：
+        // 用户报"跨页拖动没反应"时，先看它有没有出现 ⇒ 一眼分清"没命中标签"还是"落库被否"。
         _dragOverTab = tab;
+        DragTrace($"条目拖动经过标签「{tab.Name}」⇒ 登记：松手追加到该页第 {appendIndex} 位"
+                  + $"（停 {DragAutoSwitchDelay.TotalMilliseconds:0}ms 则自动切过去）");
         _dragAutoSwitchTimer?.Stop();
         _dragAutoSwitchTimer?.Start();
     }
@@ -742,6 +768,9 @@ public sealed partial class TabStripView : UserControl
         _dragLeaveTimer?.Stop();
         _dragOverTab = null;
         _dragAutoSwitchTimer?.Stop();
+
+        // 指针已经离开标签栏（去抖确认）⇒ 两个拖动提示都收干净
+        ClearDragFeedback();
     }
 
     private void OnDragAutoSwitchTick(DispatcherQueueTimer sender, object args)
@@ -766,12 +795,18 @@ public sealed partial class TabStripView : UserControl
         {
             _tabDropSeen = true;
 
+            // 🆕 会话级"真的落下过"：跨区域的拖动，`Drop` 落在**目标**侧（这里），
+            //    而收口在**源**侧（页面）—— 源侧自己的 `_dropSeen` 永远是假，
+            //    只靠 `DropResult == Move` 一根独苗（E25 记录过它可能报 None）⇒ 这里补一条证据。
+            DragSession.ReportDropSeen();
+
             // 松手那一刻的位置最准（DragOver 与 Drop 之间指针可能还会动一点）
             var insertIndex = ComputeTabInsertIndex(e);
             DragSession.ReportTabStripHover(tabId: null, DragItemKind.Icon, appendIndex: 0, insertIndex);
         }
 
         StopDragTimers();
+        ClearDragFeedback();
     }
 
     private void StopDragTimers()
@@ -828,7 +863,7 @@ public sealed partial class TabStripView : UserControl
         // ⚠️ 先复位再判定：这一拍之后就属于"下一次拖动"了（同 ERROR.md E32 的教训 —— 别在延后回调里
         //    二次读字段）。落点与区域在 EndSession 之前已经进了 FinishTabDrag 的局部量。
         _tabDropSeen = false;
-        HideTabDropIndicator();
+        ClearDragFeedback();
         StopDragTimers();
 
         FinishTabDrag(tab, dropResult, dropSeen);
@@ -892,6 +927,49 @@ public sealed partial class TabStripView : UserControl
         => DragDropShared.ShowVerticalIndicator(TabDropIndicator, CollectTabBounds(), insertIndex);
 
     private void HideTabDropIndicator() => DragDropShared.HideIndicator(TabDropIndicator);
+
+    /// <summary>
+    /// 把"松手就落进这一页"的目标描边套在 <paramref name="tab"/> 上（拖**页面里的条目**经过标签时）。
+    /// 几何与插入竖条共用同一套"容器矩形 → 画布坐标"的换算（`CollectTabBounds`，本轮实测过）。
+    /// </summary>
+    private void ShowTabDropTarget(TabItemViewModel tab)
+    {
+        var tabs = Tabs.Items.OfType<TabItemViewModel>().ToList();
+        int index = tabs.IndexOf(tab);
+
+        if (index < 0 || Tabs.ContainerFromIndex(index) is not FrameworkElement container)
+        {
+            HideTabDropTarget();
+            return;
+        }
+
+        try
+        {
+            var origin = container.TransformToVisual(TabDropLayer)
+                .TransformPoint(new Windows.Foundation.Point(0, 0));
+
+            Canvas.SetLeft(TabDropTarget, origin.X);
+            Canvas.SetTop(TabDropTarget, origin.Y);
+            TabDropTarget.Width = Math.Max(8, container.ActualWidth);
+            TabDropTarget.Height = Math.Max(8, container.ActualHeight);
+            TabDropTarget.Visibility = Visibility.Visible;
+        }
+        catch (Exception ex)
+        {
+            // 元素还没进可视树时会抛异常：当作"画不出来"，不影响拖动本身
+            App.WriteCrash("TabStripView.ShowTabDropTarget", ex);
+            HideTabDropTarget();
+        }
+    }
+
+    private void HideTabDropTarget() => TabDropTarget.Visibility = Visibility.Collapsed;
+
+    /// <summary>把两类拖动提示（标签插入竖条 / 目标标签描边）一起收干净。</summary>
+    private void ClearDragFeedback()
+    {
+        HideTabDropIndicator();
+        HideTabDropTarget();
+    }
 
     /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）—— 与页面同一套。</summary>
     private static void DragTrace(string message) => DragDropShared.Trace(message);

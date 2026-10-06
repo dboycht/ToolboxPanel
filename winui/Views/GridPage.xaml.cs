@@ -820,6 +820,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
             _dropSeen = true;
+
+            // 🆕 会话级证据（2026-10-06 图标跨页面拖动）：内部拖动的 `Drop` 落在**哪个**接受区域上，
+            //    这里就替那个区域作证一次 —— 跨区域时源侧看不到本页的 `_dropSeen`，只剩 `DropResult`
+            //    一根独苗（E25 记录过它可能报 `None`）⇒ 这条让"真的落下过"不依赖它。
+            DragSession.ReportDropSeen();
+
             var dropIndex = ComputeInsertIndex(e);
             DragSession.ReportPageTarget(_tab.Id, DragItemKind.Icon, dropIndex);
             HideDropIndicator();
@@ -888,6 +894,12 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         //    而 HANDOVER 把 %TEMP%\toolboxpanel-probe.log 当常驻诊断资产（"拖放手感先看它"）。
         _tracedDragOverEntry = false;
 
+        // 🆕 会话级"真的落下过"（2026-10-06）：跨区域的拖动里，`Drop` 落在**目标**那一侧
+        //    （另一个页面或标签栏），本页自己的 `_dropSeen` **永远是假** ⇒ 落库判断只剩
+        //    `DropResult == Move` 一根独苗，而 E25 记录过它可能报 `None`（那就成了"拖上去没反应"）。
+        //    ⚠️ 必须在 `TakeTarget()` **之前**取快照 —— 它会把这个标记一起复位（见 DragSession.TakeTarget）。
+        var sessionDropSeen = DragSession.DropSeen;
+
         var target = DragSession.TakeTarget();
         var tile = args.Items.Count > 0 ? args.Items[0] as IconTileViewModel : null;
         var dropResult = args.DropResult;
@@ -896,7 +908,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
 
         DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
                   + $"被拖={tile?.DisplayName ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
-                  + $"Drop到过本页={dropSeen}");
+                  + $"Drop到过本页={dropSeen} 会话DropSeen={sessionDropSeen}");
 
         if (tile is null || target is null)
         {
@@ -918,7 +930,18 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         //    本该丢弃的取消拖动被落库（顺序被改）。同理也不再无条件把字段清零。
         DispatcherQueue.TryEnqueue(() =>
         {
-            var landed = dropResult == DataPackageOperation.Move || dropSeen;
+            // ⚠️ 三个证据取或（2026-10-06 加上第三个）：
+            //    ① `DropResult == Move`：OS 给的结论（**唯一**能覆盖"落下在别的区域"的信号）；
+            //    ② `dropSeen`：本页收到过 Drop（入口快照，不是现读 —— 见下面 E32 那段）；
+            //    ③ `sessionDropSeen` / `DragSession.DropSeen`：**任意**接受区域收到过 Drop。
+            //       前一个快照覆盖"Drop 先到"，后一个现读覆盖"Drop 比 DragItemsCompleted 晚一点点到"
+            //       （跨区域拖动时 `Drop` 落在目标侧，顺序不保证）。
+            //    ⚠️ 现读那个字段安全吗？安全：`TakeTarget()` 已经在入口把它清掉了，而"下一次拖动"
+            //       要重新经历 press → Drag → Drop，不可能在**同一拍**内把它置上（E32 的顾虑不成立）。
+            var landed = dropResult == DataPackageOperation.Move
+                         || dropSeen
+                         || sessionDropSeen
+                         || DragSession.DropSeen;
 
             if (!landed)
             {

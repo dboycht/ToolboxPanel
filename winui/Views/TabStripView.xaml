@@ -147,6 +147,18 @@
                     <Border x:Name="TabDropIndicator" Width="3" CornerRadius="2"
                             Background="{ThemeResource AccentBrushDark}"
                             Visibility="Collapsed" />
+
+                    <!--
+                        🆕 2026-10-06「图标跨页面拖动」的目标提示：拖着**页面里的条目**经过某个标签时，
+                        给那个标签套一圈强调色描边 —— 用户看得见"松手就落进这一页（追加到末尾）"。
+                        ⚠️ 刻意**不用改容器 Background** 的办法：`ListViewItem` 的底由模板的视觉状态管，
+                        本地赋值能不能压得住要看模板（不可靠）；画在这层 Canvas 上则完全由我们掌控，
+                        而且几何与插入竖条共用同一套"容器矩形 → 画布坐标"的换算（本轮已实测过）。
+                    -->
+                    <Border x:Name="TabDropTarget" CornerRadius="5" BorderThickness="2"
+                            BorderBrush="{ThemeResource AccentBrushDark}"
+                            Background="Transparent"
+                            Visibility="Collapsed" />
                 </Canvas>
             </Grid>
         </ScrollViewer>

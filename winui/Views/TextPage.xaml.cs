@@ -242,6 +242,11 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
         if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
             _dropSeen = true;
+
+            // 🆕 会话级证据（2026-10-06）：跨区域拖动时 `Drop` 落在**目标**侧，
+            //    源侧的本页 `_dropSeen` 永远是假 ⇒ 这条让"真的落下过"不依赖 `DropResult`（见 E25）。
+            DragSession.ReportDropSeen();
+
             var dropIndex = ComputeInsertIndex(e);
             DragSession.ReportPageTarget(_tab.Id, DragItemKind.TextItem, dropIndex);
             HideDropIndicator();
@@ -263,6 +268,10 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
         _suppressNextClick = false;
         _tracedDragOverEntry = false;   // 复位诊断标记（漏了它，日志从第二次拖动起就废了）
 
+        // 🆕 会话级"真的落下过"（2026-10-06）：见 GridPage 同一处的注释。
+        //    ⚠️ 必须在 `TakeTarget()` 之前取快照 —— 它会把这个标记一起复位。
+        var sessionDropSeen = DragSession.DropSeen;
+
         var target = DragSession.TakeTarget();
         var row = args.Items.Count > 0 ? args.Items[0] as TextRowViewModel : null;
         var dropResult = args.DropResult;
@@ -271,7 +280,7 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
 
         DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
                   + $"被拖={row?.Note ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
-                  + $"Drop到过本页={dropSeen}");
+                  + $"Drop到过本页={dropSeen} 会话DropSeen={sessionDropSeen}");
 
         if (row is null || target is null)
         {
@@ -288,7 +297,11 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
         //    ⚠️ 只认上面那个 `dropSeen` 快照，**不再二次读字段**（会把下一次拖动的标记误当本轮）。
         DispatcherQueue.TryEnqueue(() =>
         {
-            var landed = dropResult == DataPackageOperation.Move || dropSeen;
+            // 三个证据取或（2026-10-06 加上会话级那条）——理由与注释见 GridPage 同一处
+            var landed = dropResult == DataPackageOperation.Move
+                         || dropSeen
+                         || sessionDropSeen
+                         || DragSession.DropSeen;
 
             if (!landed)
             {

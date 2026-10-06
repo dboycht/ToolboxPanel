@@ -117,4 +117,42 @@ public class UiSourceGuardTests
         Assert.Contains("Views\\TextPage.xaml.cs", callers);
         Assert.Contains("Views\\TabStripView.xaml.cs", callers);
     }
+
+    // ────────────────────────────── 「界面集合跟上 Core」也必须走 Core 的判据（2026-10-06）──────────────────────────────
+
+    /// <summary>
+    /// 背景（2026-10-06 用户要的「图标跨页面拖动」踩出来的真 bug）：
+    /// `TabItemViewModel` 里那份"照 Core 重排界面集合"的手写循环**只 insert/move、从不移除** ——
+    /// 跨页移动之后**源页仍然显示被搬走的那个图标**（`tabs.json` 却是对的），直到重启。
+    /// 现在"该删谁 / 该插谁 / 该挪到哪"全在 Core 的 <c>CollectionSync</c>（有单测）。
+    ///
+    /// <para>这条守门员钉两件事：① UI 一侧的集合同步**必须**调 <c>CollectionSync</c>；
+    /// ② 那个"只重排不删"的旧写法不许复活（谁再写一个同形的循环，这里就红）。</para>
+    /// </summary>
+    [UiSourceFact]
+    public void 界面集合同步必须走Core的CollectionSync()
+    {
+        var tabViewModel = UiSourceScan.Files.FirstOrDefault(path =>
+            path.EndsWith("TabItemViewModel.cs", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(tabViewModel);
+
+        var code = UiSourceScan.ReadCode(tabViewModel!);
+        int calls = Regex.Matches(code, @"CollectionSync\.Sync\(").Count;
+
+        // 三处 Sync*FromModel（图标 / 列表项 / 文本项）+ 一处可视集合同步 = 4 处
+        Assert.True(calls >= 4,
+            $"TabItemViewModel 里只看到 {calls} 处 CollectionSync.Sync(...)（应 ≥ 4）—— "
+            + "集合同步是不是又被手写回\"只 insert/move\"的循环了？（跨页移动后源页会留残留项）");
+
+        // 反面对照：被删掉的那个写法不许复活
+        var revived = UiSourceScan.Files
+            .Where(path => UiSourceScan.ReadCode(path).Contains("ReorderObservable", StringComparison.Ordinal))
+            .Select(UiSourceScan.Relative)
+            .ToList();
+
+        Assert.True(revived.Count == 0,
+            "又出现了 ReorderObservable（只 insert/move、从不移除 ⇒ 跨页移动会留下残留项）："
+            + string.Join(", ", revived));
+    }
 }

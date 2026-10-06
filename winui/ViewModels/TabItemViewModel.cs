@@ -247,33 +247,28 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     /// <summary>按当前查询重算两个可见集合（不做过滤时 = 全量，与完整集合逐项一致）。</summary>
     private void RebuildVisible()
     {
-        SyncVisible(Icons, VisibleIcons, tile => SearchFilter.Matches(tile.Model, Filter));
-        SyncVisible(ListItems, VisibleListItems, row => SearchFilter.Matches(row.Model, Filter));
-        SyncVisible(TextItems, VisibleTextItems, row => SearchFilter.Matches(row.Model, Filter));
+        SyncVisible(Icons, VisibleIcons, tile => SearchFilter.Matches(tile.Model, Filter), tile => tile.Model.Id);
+        SyncVisible(ListItems, VisibleListItems, row => SearchFilter.Matches(row.Model, Filter), row => row.Model.Id);
+        SyncVisible(TextItems, VisibleTextItems, row => SearchFilter.Matches(row.Model, Filter), row => row.Model.Id);
     }
 
     /// <summary>
     /// 把 <paramref name="target"/> 调成"按当前过滤条件筛出来的 source 顺序"。
-    /// 先剔除不该出现的（保持剩余项的相对顺序），再补齐/重排 —— 尽量走 Move/Insert，
-    /// 避免 Clear+Add 让 GridView 丢掉容器（那会把入场动画、滚动位置一起重置）。
+    ///
+    /// <para>⚠️ 2026-10-06 起判据全部在 Core 的 <see cref="CollectionSync"/>（有单测）：
+    /// **该删的删、该挪的挪、该插的插**，这里只剩"调用"。
+    /// 旧实现（`ReorderObservable` + 一段手写的剔除循环）**不删**已经不在 Core 里的项 ——
+    /// 跨页移动时图标会同时留在两页上（真 bug，见 `tests/CollectionSyncTests.cs` 的回归点）。</para>
     /// </summary>
-    private void SyncVisible<T>(IReadOnlyList<T> source, ObservableCollection<T> target, Func<T, bool> matches)
+    private void SyncVisible<T>(
+        IReadOnlyList<T> source, ObservableCollection<T> target, Func<T, bool> matches, Func<T, string> keyOf)
         where T : class
     {
         var desired = IsFilterActive
             ? source.Where(matches).ToList()
             : source.ToList();
 
-        var wanted = new HashSet<T>(desired);
-        for (int i = target.Count - 1; i >= 0; i--)
-        {
-            if (!wanted.Contains(target[i]))
-            {
-                target.RemoveAt(i);
-            }
-        }
-
-        ReorderObservable(target, desired);
+        CollectionSync.Sync(target, desired, keyOf);
     }
 
     // ────────────────────────────── 视图 ↔ Core 顺序同步（拖拽排序用）──────────────────────────────
@@ -314,7 +309,10 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
                 : CreateTile(icon, null));
         }
 
-        ReorderObservable(Icons, ordered);
+        // ⚠️ 2026-10-06 修：这里以前调的是 `ReorderObservable` —— 它**只 insert/move、从不移除**，
+        //    于是**跨页移动**之后源页的界面集合仍然留着被搬走的图块（图标同时出现在两页上，直到重启）。
+        //    现在走 Core 的 `CollectionSync`（该删的删 / 该挪的挪 / 该插的插），判据有单测。
+        CollectionSync.Sync(Icons, ordered, tile => tile.Model.Id);
         NotifyCountLabel();
     }
 
@@ -380,7 +378,8 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
                 : new ListRowViewModel(item));
         }
 
-        ReorderObservable(ListItems, ordered);
+        // ⚠️ 同图标版（2026-10-06）：跨页移动后**必须**把搬走的行删掉（旧实现只重排、不删）
+        CollectionSync.Sync(ListItems, ordered, row => row.Model.Id);
         NotifyCountLabel();
     }
 
@@ -413,7 +412,8 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
                 : new TextRowViewModel(item));
         }
 
-        ReorderObservable(TextItems, ordered);
+        // ⚠️ 同图标版（2026-10-06）：跨文本页移动后**必须**把搬走的行删掉（旧实现只重排、不删）
+        CollectionSync.Sync(TextItems, ordered, row => row.Model.Id);
         NotifyCountLabel();
     }
 
@@ -430,26 +430,10 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
         return map;
     }
 
-    /// <summary>
-    /// 用最小改动把 <paramref name="target"/> 调成 <paramref name="ordered"/> 的顺序。
-    /// 走 <see cref="ObservableCollection{T}.Move"/> 而不是 Clear+Add：
-    /// 后者会让 GridView 丢掉容器、把入场动画/滚动位置一起重置（观感上是"整页闪一下"）。
-    /// </summary>
-    private static void ReorderObservable<T>(ObservableCollection<T> target, IReadOnlyList<T> ordered)
-    {
-        for (int i = 0; i < ordered.Count; i++)
-        {
-            int currentIndex = target.IndexOf(ordered[i]);
-            if (currentIndex < 0)
-            {
-                target.Insert(i, ordered[i]);
-            }
-            else if (currentIndex != i)
-            {
-                target.Move(currentIndex, i);
-            }
-        }
-    }
+    // ⚠️ 2026-10-06：这里原来的 `ReorderObservable`（只 insert/move、**从不移除**）已删除 ——
+    //    判断与施加都收到 Core 的 `CollectionSync`（`Plan` + `Apply`，有单测）：
+    //    该删的删 / 该挪的挪 / 该插的插，UI 只剩"调一次"。
+    //    （删它的直接原因：跨页移动后源页仍显示被搬走的图标 —— "不删"是唯一能造成那个现象的原因。）
 
     private void SetField<T>(ref T field, T value, string propertyName)
     {

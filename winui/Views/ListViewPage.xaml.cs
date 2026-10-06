@@ -293,6 +293,11 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
         {
             _dropSeen = true;
+
+            // 🆕 会话级证据（2026-10-06）：跨区域拖动时 `Drop` 落在**目标**侧，
+            //    源侧的本页 `_dropSeen` 永远是假 ⇒ 这条让"真的落下过"不依赖 `DropResult`（见 E25）。
+            DragSession.ReportDropSeen();
+
             var dropIndex = ComputeInsertIndex(e);
             DragSession.ReportPageTarget(_tab.Id, DragItemKind.ListItem, dropIndex);
             HideDropIndicator();
@@ -316,6 +321,10 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         // 复位"本次拖动是否已打过 DragOver 详情"（漏了它，诊断日志从第二次拖动起就废了，同网格页）
         _tracedDragOverEntry = false;
 
+        // 🆕 会话级"真的落下过"（2026-10-06）：见 GridPage 同一处的注释 —— 跨区域拖动时
+        //    `Drop` 落在目标侧，本页 `_dropSeen` 永远是假。⚠️ 必须在 `TakeTarget()` 之前取快照。
+        var sessionDropSeen = DragSession.DropSeen;
+
         var target = DragSession.TakeTarget();
         var row = args.Items.Count > 0 ? args.Items[0] as ListRowViewModel : null;
         var dropResult = args.DropResult;
@@ -324,7 +333,7 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
 
         DragTrace($"DragItemsCompleted：DropResult={dropResult} items={args.Items.Count} "
                   + $"被拖={row?.Description ?? "null"} 登记落点={(target is null ? "无" : $"{target.Value.TabId}#{target.Value.InsertIndex}")} "
-                  + $"Drop到过本页={dropSeen}");
+                  + $"Drop到过本页={dropSeen} 会话DropSeen={sessionDropSeen}");
 
         if (row is null || target is null)
         {
@@ -342,7 +351,11 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         //    那一读发生在下一拍，会把用户"紧接着开始的第二次拖动"留下的标记误当成本轮落下。
         DispatcherQueue.TryEnqueue(() =>
         {
-            var landed = dropResult == DataPackageOperation.Move || dropSeen;
+            // 三个证据取或（2026-10-06 加上会话级那条）——理由与注释见 GridPage 同一处
+            var landed = dropResult == DataPackageOperation.Move
+                         || dropSeen
+                         || sessionDropSeen
+                         || DragSession.DropSeen;
 
             if (!landed)
             {
