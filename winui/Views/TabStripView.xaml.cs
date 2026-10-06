@@ -86,6 +86,16 @@ public sealed partial class TabStripView : UserControl
     private DispatcherQueueTimer? _dragLeaveTimer;
     private TabItemViewModel? _dragOverTab;
 
+    /// <summary>
+    /// 本次拖动是否**真的落在标签栏上**（`Drop` 事件到场）。
+    /// 用途与页面的 `_dropSeen` 完全一致：载荷为空时 OS 可能把 `DropResult` 报成 `None`，
+    /// 只看它会把"真落下"当成"取消"。见 ERROR.md E25。
+    /// </summary>
+    private bool _tabDropSeen;
+
+    /// <summary>演示模式下关掉"拖起标签"（假数据不会落库，别让用户看着能拖、其实存不下来）。</summary>
+    private bool _dragDropEnabled = true;
+
     public TabStripView()
     {
         InitializeComponent();
@@ -126,6 +136,13 @@ public sealed partial class TabStripView : UserControl
     /// </summary>
     public event EventHandler<TabRenameRequest>? TabRenameCommitted;
 
+    /// <summary>
+    /// 标签拖动落到了标签栏上（2026-10-06）—— 交给宿主窗口落库（页面不碰 DataStore）。
+    /// <para><see cref="TabReorderRequest.InsertIndex"/> 是"插到第几个标签之前"（0..标签数），
+    /// 由 <see cref="ToolboxPanel.Core.Services.TabReorder.Resolve"/> 换算成 Core 的下标。</para>
+    /// </summary>
+    public event EventHandler<TabReorderRequest>? TabReorderRequested;
+
     // ⚠️ 2026-09-16：原来还有一个 `ItemDroppedOnTab`（松手在标签上直接落库）。
     //    现在"松手在标签上"由 `DragSession.ReportTarget` 登记落点、源端 `DragItemsCompleted` 统一收口，
     //    这条独立路径已删除（避免两套机制并存；落库入口仍只有 MainWindow.OnItemDropped 一个）。
@@ -156,6 +173,21 @@ public sealed partial class TabStripView : UserControl
     }
 
     public int ItemCount => Tabs.Items.Count;
+
+    /// <summary>
+    /// 演示模式下关掉"从标签栏拖起一个标签"（与三个页面的同名属性同一用意）。
+    /// ⚠️ 只关"起拖"（`CanDragItems`）：落点那一侧本来就不会落库（`MainViewModel` 的 `_store` 为空），
+    /// 关掉起拖是为了不让用户看着能拖、其实存不下来。
+    /// </summary>
+    public bool DragDropEnabled
+    {
+        set
+        {
+            _dragDropEnabled = value;
+            Tabs.CanDrag = value;
+            Tabs.CanDragItems = value;
+        }
+    }
 
     public TabItemViewModel? SelectedTab
     {
@@ -220,6 +252,10 @@ public sealed partial class TabStripView : UserControl
             Windows.UI.Color.FromArgb(palette.Accent.A, palette.Accent.R, palette.Accent.G, palette.Accent.B));
         Resources["AccentBrushDark"] = accent;
         ApplyAccentToRealizedSelectionBars(accent);
+
+        // 🆕 标签重排的插入竖条同一个键，同样**直接改已实现出来的那个元素**
+        //    （`{ThemeResource}` 不会因为资源键变了就重新解析，见上面那段注释）
+        TabDropIndicator.Background = accent;
 
         // 主题圆角 + 悬停时长（默认参数下这两步都是恒等变换）
         _cornerScale = radiusScale;
@@ -587,13 +623,18 @@ public sealed partial class TabStripView : UserControl
         }
     }
 
-    // ────────────────────────────── 拖拽：悬停切页 + 丢到标签上 ──────────────────────────────
+    // ────────────────────────────── 拖拽：悬停切页 + 丢到标签上 + 标签重排 ──────────────────────────────
     //
     // 跨页移动的两条路：
     //   ① 拖到某个标签上停住 → 自动切到那一页 → 用户继续在新页面里选位置放下（位置可精确控制）；
     //   ② 直接松手在标签上 → 追加到那一页末尾（快手操作）。
     // ⚠️ 悬停判定用**定时器**而不是 PointerEntered：拖拽期间指针事件与普通指针事件是两套，
     //    这里以 DragOver 为准（每次移动都会重置定时器，停住才开始计时）。
+    //
+    // 🆕 2026-10-06：标签栏**自己也能被拖动**（拖起一个标签做重排）。于是同一次 DragOver 要写两份落点：
+    //   · 「落在哪个标签上 + 追加到第几位」→ 条目拖动用（页面那条 DragItemsCompleted 收口）；
+    //   · 「插到第几个标签之前」        → 标签重排用（标签栏自己的 DragItemsCompleted 收口）。
+    //   谁用哪一份由**源端**决定（谁起的拖，谁的 DragItemsCompleted 才会到场），这里一次写齐、互不干扰。
 
     private void OnTabsDragOver(object sender, DragEventArgs e)
     {
@@ -621,26 +662,48 @@ public sealed partial class TabStripView : UserControl
         _dragLeaveTimer?.Start();
 
         var tab = FindTabFromArgs(e);
+
+        // 标签重排的落点（0..标签数）：指针越过第 i 个标签的中心 ⇒ 插到它后面；
+        // 在标签栏空白处 ⇒ 标签数（放到最后）。算法在 Core（`TabReorder.ComputeInsertIndex`，有单测）。
+        var tabInsertIndex = ComputeTabInsertIndex(e);
+
         if (tab is null)
+        {
+            // 标签栏空白处：条目那半**原样保留**改动前的行为（此前这里直接 return，落点登记不动），
+            // 只补上"标签重排落在最后一位"这条 —— 拖标签时把指针放到最右边松手就走这一支。
+            DragSession.ReportTabStripHover(tabId: null, DragItemKind.Icon, appendIndex: 0, tabInsertIndex);
+        }
+        else
+        {
+            // 落在这条标签上 ⇒ 登记"松手就追加到这一页末尾"（松手在标签上 = 快手跨页移动）
+            // ⚠️ 用**可见数量**（`VisibleIcons / VisibleListItems / VisibleTextItems`）而不是完整集合：
+            //    落点的口径统一是"过滤视图里的第几位"，目标页若正在搜索，追加的含义就是
+            //    "放到最后一个**可见项**后面"（MainViewModel 会再换算成 Core 下标）。
+            // ⚠️ 三类页各有自己的可见集合（2026-10-03 加上文本页）：漏掉文本页那一支，
+            //    "把文本项丢到文本标签上"会拿 `VisibleIcons.Count`（文本页上恒为 0）当落点 ⇒ 永远插到最前。
+            var kind = tab.DraggableKind;
+            var appendIndex = kind switch
+            {
+                DragItemKind.TextItem => tab.VisibleTextItems.Count,
+                DragItemKind.ListItem => tab.VisibleListItems.Count,
+                _ => tab.VisibleIcons.Count,
+            };
+
+            DragSession.ReportTabStripHover(tab.Id, kind, appendIndex, tabInsertIndex);
+        }
+
+        // 插入竖条只在"这次拖的确实是标签"时画：条目拖到标签栏上表达的是"追加到那一页"，
+        // 此时画一根"标签会插到这里"的条子会误导用户（判据见 DragSession.LooksLikeTabDrag）。
+        if (DragSession.LooksLikeTabDrag)
+        {
+            ShowTabDropIndicator(tabInsertIndex);
+        }
+
+        // 悬停切页只对**条目拖动**有意义；拖的是标签时绝不能切页（用户正在重排标签栏，界面却跟着翻页）。
+        if (tab is null || DragSession.LooksLikeTabDrag)
         {
             return;
         }
-
-        // 落在这条标签上 ⇒ 登记"松手就追加到这一页末尾"（松手在标签上 = 快手跨页移动）
-        // ⚠️ 用**可见数量**（`VisibleIcons / VisibleListItems / VisibleTextItems`）而不是完整集合：
-        //    落点的口径统一是"过滤视图里的第几位"，目标页若正在搜索，追加的含义就是
-        //    "放到最后一个**可见项**后面"（MainViewModel 会再换算成 Core 下标）。
-        // ⚠️ 三类页各有自己的可见集合（2026-10-03 加上文本页）：漏掉文本页那一支，
-        //    "把文本项丢到文本标签上"会拿 `VisibleIcons.Count`（文本页上恒为 0）当落点 ⇒ 永远插到最前。
-        var kind = tab.DraggableKind;
-        var appendIndex = kind switch
-        {
-            DragItemKind.TextItem => tab.VisibleTextItems.Count,
-            DragItemKind.ListItem => tab.VisibleListItems.Count,
-            _ => tab.VisibleIcons.Count,
-        };
-
-        DragSession.ReportTarget(tab.Id, kind, appendIndex);
 
         if (ReferenceEquals(tab, _dragOverTab))
         {
@@ -692,11 +755,22 @@ public sealed partial class TabStripView : UserControl
     }
 
     /// <summary>
-    /// 松手在标签上：**不在这里落库** —— 落点已在 <see cref="OnTabsDragOver"/> 里登记给
-    /// <see cref="DragSession"/>，由源端的 `DragItemsCompleted`（那里才有"拖的是谁"）统一收口。
+    /// 松手在标签栏上：**不在这里落库**（Drop 不带"拖的是谁"）—— 落点已在
+    /// <see cref="OnTabsDragOver"/> / 这里登记给 <see cref="DragSession"/>，
+    /// 由**源端**的 `DragItemsCompleted`（页面或标签栏自己的那一个）统一收口。
     /// </summary>
     private void OnTabsDrop(object sender, DragEventArgs e)
     {
+        var (hasText, hasStorage) = DescribeDrag(e);
+        if (DragSession.LooksLikeInternalDrag(hasText, hasStorage))
+        {
+            _tabDropSeen = true;
+
+            // 松手那一刻的位置最准（DragOver 与 Drop 之间指针可能还会动一点）
+            var insertIndex = ComputeTabInsertIndex(e);
+            DragSession.ReportTabStripHover(tabId: null, DragItemKind.Icon, appendIndex: 0, insertIndex);
+        }
+
         StopDragTimers();
     }
 
@@ -706,6 +780,121 @@ public sealed partial class TabStripView : UserControl
         _dragLeaveTimer?.Stop();
         _dragOverTab = null;
     }
+
+    // ────────────────────────────── 标签拖动重排（2026-10-06）──────────────────────────────
+    //
+    // 与页面里的条目拖动**同一套链路**（ERROR.md E25）：
+    //   · 起拖交给系统的原生拖拽（容器 `CanDrag` + `CanDragItems`，见 TabStripView.xaml）；
+    //   · 落点在 DragOver 里登记（上面那些 `DragSession.ReportTabStripHover`）；
+    //   · "拖的是谁"只有**源端**的 `DragItemsCompleted` 知道（`args.Items`）—— 这里就是标签栏自己。
+    //
+    // ⚠️ 本方法**只在"拖动是从标签栏起手"时才会被调用**（页面起手的拖动走页面自己的
+    //    `DragItemsCompleted`），所以这里不需要再判断"拖的是标签还是条目"。
+    //    反过来，标签拖到页面上松手时，页面那条 `DragItemsCompleted` 也不会到场 ⇒ 不会误当成条目移动。
+    //
+    // ⚠️⚠️ 判据里最要紧的一条：**最后登记的落点必须在标签栏上**（`DragSession.LastRegion`）。
+    //    标签被拖出标签栏、松手在页面内容区里时，页面会把区域登记成 `Page`（页面还会把这次拖动
+    //    accept 成 Move）⇒ 只看 `DropResult` 会把这种"拖到页面上"误当成在标签栏上松手。
+
+    /// <summary>
+    /// 标签的 <c>DragItemsStarting</c>：把"本次拖的是哪个标签"记进会话。
+    ///
+    /// <para>⚠️ 这里**绝不能**往 <c>args.Data</c> 里写载荷：全项目"内部拖动"的判据就是
+    /// "DataPackage 是空的"（<see cref="DragSession.LooksLikeInternalDrag"/>）——
+    /// 写进去会让所有页面与标签栏一起拒收这次拖动。
+    /// 这条事件在本项目历史上实测**收不到**（E24/E25），所以它只是首选判据之一：
+    /// 拿不到时由 <see cref="DragSession.LooksLikeTabDrag"/> 的第二条兜底，
+    /// 这里也无条件写一行探针日志（下一次手验就能看出它现在到底通不通）。</para>
+    /// </summary>
+    private void OnTabsDragItemsStarting(object sender, DragItemsStartingEventArgs args)
+    {
+        if (args.Items.Count > 0 && args.Items[0] is TabItemViewModel tab)
+        {
+            DragSession.BeginTabDrag(tab.Id);
+            DragTrace($"DragItemsStarting：被拖标签=「{tab.Name}」⇒ 本次按标签拖动");
+            return;
+        }
+
+        DragTrace($"DragItemsStarting：没拿到标签项（items={args.Items.Count}）");
+    }
+
+    /// <summary>★ 一次标签拖动的收口点（源端事件，实测可靠）。</summary>
+    private void OnTabsDragItemsCompleted(ListViewBase sender, DragItemsCompletedEventArgs args)
+    {
+        var tab = args.Items.Count > 0 ? args.Items[0] as TabItemViewModel : null;
+        var dropResult = args.DropResult;
+        var dropSeen = _tabDropSeen;
+
+        // ⚠️ 先复位再判定：这一拍之后就属于"下一次拖动"了（同 ERROR.md E32 的教训 —— 别在延后回调里
+        //    二次读字段）。落点与区域在 EndSession 之前已经进了 FinishTabDrag 的局部量。
+        _tabDropSeen = false;
+        HideTabDropIndicator();
+        StopDragTimers();
+
+        FinishTabDrag(tab, dropResult, dropSeen);
+        DragSession.EndSession();
+    }
+
+    /// <summary>
+    /// 判据齐了就把"重排请求"发给宿主窗口（落库在那一层，页面不碰 DataStore）。
+    /// <para>刻意拆成独立方法：2026-10-06 那一轮用**一次性探针直接调它**，把"事件投递"与
+    /// "业务链"分开证伪（E25 的方法论：单测测不到"没人调用它"）。探针用完已删。</para>
+    /// </summary>
+    private void FinishTabDrag(TabItemViewModel? tab, DataPackageOperation dropResult, bool dropSeen)
+    {
+        var insertIndex = DragSession.TabInsertIndex;
+        var region = DragSession.LastRegion;
+
+        DragTrace($"标签 DragItemsCompleted：DropResult={dropResult} 被拖=「{tab?.Name ?? "null"}」 "
+                  + $"落点区域={region} 插入位={(insertIndex?.ToString() ?? "无")} Drop到过标签栏={dropSeen}");
+
+        if (tab is null || insertIndex is not { } insert)
+        {
+            DragTrace("→ 没拿到被拖的标签或没有落点 ⇒ 不重排");
+            return;
+        }
+
+        if (region != DragRegion.TabStrip)
+        {
+            DragTrace($"→ 最后登记的落点在「{region}」而不是标签栏（多半是拖出标签栏后松手在页面上）⇒ 不重排");
+            return;
+        }
+
+        if (dropResult != DataPackageOperation.Move && !dropSeen)
+        {
+            DragTrace("→ 判定：拖动被取消（DropResult 不是 Move，且 Drop 没到过标签栏）⇒ 不重排");
+            return;
+        }
+
+        DragTrace($"→ 请求重排：插入位={insert}（被拖标签的当前下标由宿主窗口按 id 现取）");
+
+        // 与页面同款：结算延后一拍（Drop 与 DragItemsCompleted 的先后顺序不保证）
+        DispatcherQueue.TryEnqueue(
+            () => TabReorderRequested?.Invoke(this, new TabReorderRequest(tab, insert)));
+    }
+
+    // ────────────────────────────── 标签重排的落点与插入竖条 ──────────────────────────────
+
+    /// <summary>已实现标签的矩形（相对插入条所在的画布）—— 与页面共用同一套收集器。</summary>
+    private List<ItemBounds> CollectTabBounds()
+        => DragDropShared.CollectBounds(Tabs, Tabs.Items.Count, TabDropLayer, "TabStripView.CollectTabBounds");
+
+    /// <summary>本次 DragOver 的落点是"插到第几个标签之前"（0..标签数）。</summary>
+    private int ComputeTabInsertIndex(DragEventArgs e)
+    {
+        var bounds = CollectTabBounds();
+        return bounds.Count == 0
+            ? 0
+            : TabReorder.ComputeInsertIndex(bounds, e.GetPosition(TabDropLayer).X);
+    }
+
+    private void ShowTabDropIndicator(int insertIndex)
+        => DragDropShared.ShowVerticalIndicator(TabDropIndicator, CollectTabBounds(), insertIndex);
+
+    private void HideTabDropIndicator() => DragDropShared.HideIndicator(TabDropIndicator);
+
+    /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）—— 与页面同一套。</summary>
+    private static void DragTrace(string message) => DragDropShared.Trace(message);
 
     /// <summary>
     /// <summary>这次 DragOver 落在哪个标签项上（落在标签栏空白处 → null）。</summary>
@@ -805,3 +994,11 @@ public sealed record TabMenuRequest(TabItemViewModel? Tab, TabMenuAction Action)
 /// <para><see cref="NewName"/> 已 Trim、也**一定与原值不同**（空输入与没改在标签栏那一层就被 Core 的决定拦掉了）。</para>
 /// </summary>
 public sealed record TabRenameRequest(TabItemViewModel Tab, string NewName);
+
+/// <summary>
+/// 一次"标签拖动重排"请求（标签栏 → 宿主窗口）。
+/// <para><see cref="InsertIndex"/> 是"插到第几个标签之前"（0..标签数，界面的坐标系），
+/// 由宿主窗口交给 Core 的 <see cref="ToolboxPanel.Core.Services.TabReorder.Resolve"/>
+/// 换算成 <c>DataStore.ReorderTabs</c> 的下标（并挡掉"拖回原位"）。</para>
+/// </summary>
+public sealed record TabReorderRequest(TabItemViewModel Tab, int InsertIndex);

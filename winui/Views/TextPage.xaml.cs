@@ -221,7 +221,7 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
         _suppressNextClick = true;
 
         var insertIndex = ComputeInsertIndex(e);
-        DragSession.ReportTarget(_tab.Id, DragItemKind.TextItem, insertIndex);
+        DragSession.ReportPageTarget(_tab.Id, DragItemKind.TextItem, insertIndex);
 
         if (insertIndex != _lastTracedIndex)
         {
@@ -243,7 +243,7 @@ public sealed partial class TextPage : UserControl, IAnimatedPage, ISearchablePa
         {
             _dropSeen = true;
             var dropIndex = ComputeInsertIndex(e);
-            DragSession.ReportTarget(_tab.Id, DragItemKind.TextItem, dropIndex);
+            DragSession.ReportPageTarget(_tab.Id, DragItemKind.TextItem, dropIndex);
             HideDropIndicator();
             DragTrace($"Drop（内部拖动）：落点={dropIndex} ⇒ 留给 DragItemsCompleted 收口");
             return;

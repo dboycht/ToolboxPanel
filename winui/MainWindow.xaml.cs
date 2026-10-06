@@ -2114,6 +2114,9 @@ public sealed partial class MainWindow : Window
 
             TabStrip.ItemsSource = _viewModel.Tabs;
 
+            // 演示模式：不给"从标签栏拖起一个标签"（假数据不会落库，别让用户看着能拖、其实存不下来）
+            TabStrip.DragDropEnabled = !_isDemo;
+
             // ⚠️ 事件只订阅一次：`LoadData` 只在构造函数里调一次，
             //    但**别在这里重复写 `+=`** —— 曾经把 `TabDraggedOver` 写了两遍，
             //    跨页拖动时 `OnTabDraggedOver` 会被调用两次（多出来的那次是空转，但语义已经错了）。
@@ -2121,6 +2124,7 @@ public sealed partial class MainWindow : Window
             TabStrip.TabDraggedOver += OnTabDraggedOver;
             TabStrip.TabMenuActionRequested += OnTabMenuActionRequested;
             TabStrip.TabRenameCommitted += OnTabRenameCommitted;
+            TabStrip.TabReorderRequested += OnTabReorderRequested;
 
             _log.AppendLine($"数据目录 = {_viewModel.DataDirectory}");
             _log.AppendLine(_viewModel.StatusText);
@@ -2314,6 +2318,39 @@ public sealed partial class MainWindow : Window
 
         _log.AppendLine($"就地改名标签页：{oldName} → {edit.Name}");
         ReportTransient(TabContextMenu.RenamedStatus(edit.Name));
+    }
+
+    /// <summary>
+    /// 标签拖动重排（2026-10-06）：标签栏只发"被拖的标签 + 插到第几位之前"，落库与下标换算在这里。
+    ///
+    /// <para>⚠️ **不发状态消息**：原版 `tab_widget.py::_on_tab_moved` 也只有一行
+    /// `data_store.reorder_tabs(...)`，标签重排从不提示 —— 跟它保持一致也就**不需要新增 i18n key**
+    /// （文案表 key 集合必须与原版 `i18n.py` 完全一致，见 ERROR.md E36）。界面上的结果本身就是反馈。</para>
+    /// </summary>
+    private void OnTabReorderRequested(object? sender, TabReorderRequest request)
+    {
+        if (_viewModel is null || _isDemo)
+        {
+            return;
+        }
+
+        var name = request.Tab.Model.Name;
+
+        if (!_viewModel.ReorderTab(request.Tab, request.InsertIndex))
+        {
+            return;   // 拖回原位（或只有一页）⇒ Core 判下来什么都不用做
+        }
+
+        // ⚠️ 一定要把选中项补回来：`ObservableCollection.Move` 会让 ListView **把 SelectedItem 清成 null**
+        //    （探针实测：移动前选中「Alpha」，移动后选中为空 ⇒ 标签栏一条都不高亮）。
+        //    选回"被拖的那个标签"既恢复了原状（用户按下它时它就已经是当前页），
+        //    也符合"拖完还停在这一页"的预期；顺带让 ListView 把它滚进可视区。
+        TabStrip.SelectedTab = request.Tab;
+        TabStrip.SyncSelection();   // 移动后强调条与选中态对一次账（同 ShowTab 那条路的收尾）
+
+        _log.AppendLine($"拖动重排标签页：「{name}」→ 第 {request.InsertIndex} 位之前"
+                        + $"（当前顺序：{string.Join(" / ", _viewModel.Tabs.Select(t => t.Name))}）");
+        FlushLog();
     }
 
     /// <summary>删除标签页（先确认；**至少保留一个**由 Core 判，界面也先问一次）。</summary>

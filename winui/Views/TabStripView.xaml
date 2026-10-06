@@ -84,6 +84,13 @@
             <Setter Property="Margin" Value="0,0,3,0" />
             <Setter Property="CornerRadius" Value="5" />
             <!--
+                🆕 2026-10-06 标签拖动重排：容器可拖（与图块 / 列表行的 `CanDrag` 同一做法）。
+                ⚠️ 只靠"按下 + 移动"起拖（系统的原生拖拽），**不设** `CanReorderItems`
+                  —— 那套会自己搬数据、绕开 DataStore（顺序必须由 Core 说了算；
+                  本项目 W3 也是为此不用 GridView 内置重排，见 GridPage.xaml 顶部注释）。
+            -->
+            <Setter Property="CanDrag" Value="True" />
+            <!--
                 ⚠️ 焦点框必须**厚度归零**才真的消失：只把 FocusVisual*Brush 设成透明是不够的
                 （那只是把画笔变透明，框仍然占位并可能被其它主题覆盖）。
                 用户实测反馈"选中的标签外面有个框"，根因就是这里。
@@ -103,26 +110,45 @@
                       VerticalScrollBarVisibility="Disabled"
                       VerticalScrollMode="Disabled"
                       Padding="3,2">
-            <ListView x:Name="Tabs"
-                      ItemTemplate="{StaticResource TabItemTemplate}"
-                      ItemContainerStyle="{StaticResource CompactTabItemStyle}"
-                      SelectionMode="Single"
-                      SelectionChanged="OnSelectionChanged"
-                      ContextRequested="OnTabsContextRequested"
-                      AllowDrop="True"
-                      DragOver="OnTabsDragOver"
-                      DragLeave="OnTabsDragLeave"
-                      Drop="OnTabsDrop"
-                      ScrollViewer.VerticalScrollMode="Disabled"
-                      ScrollViewer.HorizontalScrollMode="Disabled"
-                      Background="Transparent"
-                      BorderThickness="0">
-                <ListView.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <StackPanel Orientation="Horizontal" Spacing="3" />
-                    </ItemsPanelTemplate>
-                </ListView.ItemsPanel>
-            </ListView>
+            <Grid>
+                <ListView x:Name="Tabs"
+                          ItemTemplate="{StaticResource TabItemTemplate}"
+                          ItemContainerStyle="{StaticResource CompactTabItemStyle}"
+                          SelectionMode="Single"
+                          SelectionChanged="OnSelectionChanged"
+                          ContextRequested="OnTabsContextRequested"
+                          AllowDrop="True"
+                          CanDrag="True"
+                          CanDragItems="True"
+                          DragItemsStarting="OnTabsDragItemsStarting"
+                          DragItemsCompleted="OnTabsDragItemsCompleted"
+                          DragOver="OnTabsDragOver"
+                          DragLeave="OnTabsDragLeave"
+                          Drop="OnTabsDrop"
+                          ScrollViewer.VerticalScrollMode="Disabled"
+                          ScrollViewer.HorizontalScrollMode="Disabled"
+                          Background="Transparent"
+                          BorderThickness="0">
+                    <ListView.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="3" />
+                        </ItemsPanelTemplate>
+                    </ListView.ItemsPanel>
+                </ListView>
+
+                <!--
+                    插入竖条（标签重排的唯一反馈）：与图块 / 列表行同一套语言 —— 拖动期间**不改顺序、不让位**，
+                    只在"松手会插到这里"的位置画一根强调色竖条（位置由 Core 的 TabReorder 算）。
+                    ⚠️ 必须包在 Canvas 里：`Canvas.Left/Top` 是附加属性，直接父级不是 Canvas 时**静默失效**
+                      （ERROR.md E23：那条竖条曾经永远停在左上角）。
+                    ⚠️ `IsHitTestVisible="False"`：它不能抢掉标签栏自己的命中测试（悬停展开 / 右键菜单）。
+                -->
+                <Canvas x:Name="TabDropLayer" IsHitTestVisible="False">
+                    <Border x:Name="TabDropIndicator" Width="3" CornerRadius="2"
+                            Background="{ThemeResource AccentBrushDark}"
+                            Visibility="Collapsed" />
+                </Canvas>
+            </Grid>
         </ScrollViewer>
     </Border>
 </UserControl>

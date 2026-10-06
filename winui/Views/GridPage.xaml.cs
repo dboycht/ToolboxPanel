@@ -746,7 +746,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
     // ────────────────────────────── 拖拽排序（2026-09-16 最终形态）──────────────────────────────
     //
     // 收不到任何起拖/指针事件（ERROR.md E25），所以只靠两个实测可靠的事件：
-    //   · 这里（目标端）在 `DragOver` 里**登记落点** → `DragSession.ReportTarget(...)`；
+    //   · 这里（目标端）在 `DragOver` 里**登记落点** → `DragSession.ReportPageTarget(...)`；
     //   · 源端在 `DragItemsCompleted` 里带着"被拖项 + DropResult"来取走落点并落库。
     // DataPackage 里永远是空的 ⇒ **"载荷为空 + 没有 StorageItems"就是"本应用内部拖动"的判据**。
 
@@ -775,7 +775,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
             _suppressNextClick = true;   // 起拖之后系统补的那次 ItemClick 不能当"打开"
 
             var insertIndex = ComputeInsertIndex(e);
-            DragSession.ReportTarget(_tab.Id, DragItemKind.Icon, insertIndex);
+            DragSession.ReportPageTarget(_tab.Id, DragItemKind.Icon, insertIndex);
 
             if (insertIndex != _lastTracedIndex)
             {
@@ -821,7 +821,7 @@ public sealed partial class GridPage : UserControl, IAnimatedPage, IIconSizedPag
         {
             _dropSeen = true;
             var dropIndex = ComputeInsertIndex(e);
-            DragSession.ReportTarget(_tab.Id, DragItemKind.Icon, dropIndex);
+            DragSession.ReportPageTarget(_tab.Id, DragItemKind.Icon, dropIndex);
             HideDropIndicator();
             DragTrace($"Drop（内部拖动）：落点={dropIndex} ⇒ 留给 DragItemsCompleted 收口");
             return;

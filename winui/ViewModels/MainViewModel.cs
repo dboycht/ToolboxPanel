@@ -193,6 +193,35 @@ public sealed class MainViewModel
     }
 
     /// <summary>
+    /// 标签页拖动重排（2026-10-06）：把"被拖的标签"放到"第几个标签之前"。
+    ///
+    /// <para>顺序与图标那几个方法一致：**先落库（Core 是唯一事实源），再改界面集合**。
+    /// 判据与下标换算全在 Core 的 <see cref="TabReorder"/>（有单测）：
+    /// 只有一页 / 拖回原位 / 下标越界一律返回 null ⇒ **不落库、不刷新**（原版 `from == to` 时也不发信号）。</para>
+    ///
+    /// <para>⚠️ 界面集合用 <c>ObservableCollection.Move</c> 而**不是** Remove + Insert：
+    /// 后者会把那一项的容器回收重建（选中项、入场动画、页面缓存都会跟着抖一下），
+    /// 而 Move 只是换位置 —— 选中项仍然是被拖的那个标签（它在按下时就已经被选中了）。</para>
+    /// </summary>
+    /// <returns>真的移动了才 true（调用方据此决定要不要写自检日志）。</returns>
+    public bool ReorderTab(TabItemViewModel tab, int insertIndex)
+    {
+        if (_store is null)
+        {
+            return false;   // 演示模式：不落库、也不动界面（拖起那一侧也已经关掉）
+        }
+
+        if (TabReorder.Resolve(Tabs.IndexOf(tab), insertIndex, Tabs.Count) is not { } plan)
+        {
+            return false;   // 拖回原位（或只有一页）⇒ 什么都不做
+        }
+
+        _store.ReorderTabs(plan.FromIndex, plan.ToIndex);
+        Tabs.Move(plan.FromIndex, plan.ToIndex);
+        return true;
+    }
+
+    /// <summary>
     /// **重置数据**（原版 文件菜单 →「重置数据」）：清空所有标签页与图标缓存、重建默认页，
     /// 然后重新装配界面模型。
     /// </summary>

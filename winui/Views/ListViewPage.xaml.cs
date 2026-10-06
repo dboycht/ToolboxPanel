@@ -271,7 +271,7 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         _suppressNextClick = true;
 
         var insertIndex = ComputeInsertIndex(e);
-        DragSession.ReportTarget(_tab.Id, DragItemKind.ListItem, insertIndex);
+        DragSession.ReportPageTarget(_tab.Id, DragItemKind.ListItem, insertIndex);
 
         if (insertIndex != _lastTracedIndex)
         {
@@ -294,7 +294,7 @@ public sealed partial class ListViewPage : UserControl, IAnimatedPage, ISearchab
         {
             _dropSeen = true;
             var dropIndex = ComputeInsertIndex(e);
-            DragSession.ReportTarget(_tab.Id, DragItemKind.ListItem, dropIndex);
+            DragSession.ReportPageTarget(_tab.Id, DragItemKind.ListItem, dropIndex);
             HideDropIndicator();
             DragTrace($"Drop（内部拖动）：落点={dropIndex} ⇒ 留给 DragItemsCompleted 收口");
             return;
