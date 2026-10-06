@@ -39,12 +39,6 @@ public sealed partial class TabStripView : UserControl
     /// </summary>
     private const double HitTolerance = 1;
 
-    /// <summary>
-    /// 拖拽悬停在某个标签上多久才自动切到那一页（毫秒）。
-    /// ⚠️ 不能太短：用户可能只是拖过标签栏、想放到**当前页**的某个位置。
-    /// </summary>
-    private static readonly TimeSpan DragAutoSwitchDelay = TimeSpan.FromMilliseconds(550);
-
     /// <summary>拖拽"离开标签栏"的去抖时长：DragLeave 在项之间移动时会误报，用这个兜底取消。</summary>
     private static readonly TimeSpan DragLeaveGrace = TimeSpan.FromMilliseconds(260);
 
@@ -82,7 +76,6 @@ public sealed partial class TabStripView : UserControl
     private TabIconMode _iconMode = TabIconMode.Hover;
     private AnimationSpec _spec = AnimationSpec.Disabled;
 
-    private DispatcherQueueTimer? _dragAutoSwitchTimer;
     private DispatcherQueueTimer? _dragLeaveTimer;
     private TabItemViewModel? _dragOverTab;
 
@@ -107,11 +100,6 @@ public sealed partial class TabStripView : UserControl
         // 由同一条逻辑处理，不会出现"上一个收不回去"。
         Tabs.PointerMoved += OnStripPointerMoved;
         Tabs.PointerExited += OnStripPointerExited;
-
-        _dragAutoSwitchTimer = DispatcherQueue.CreateTimer();
-        _dragAutoSwitchTimer.Interval = DragAutoSwitchDelay;
-        _dragAutoSwitchTimer.IsRepeating = false;
-        _dragAutoSwitchTimer.Tick += OnDragAutoSwitchTick;
 
         _dragLeaveTimer = DispatcherQueue.CreateTimer();
         _dragLeaveTimer.Interval = DragLeaveGrace;
@@ -756,14 +744,20 @@ public sealed partial class TabStripView : UserControl
             return;
         }
 
-        // 换了一个标签 → 重新开始计时（拖过标签栏时不会乱切页）。
-        // 顺带留一条可诊断的链路日志（只在这一刻打，不会每移动 1px 刷屏）：
-        // 用户报"跨页拖动没反应"时，先看它有没有出现 ⇒ 一眼分清"没命中标签"还是"落库被否"。
+        // 换了一个标签 ⇒ **立刻切到那一页**（2026-10-06 用户明确要求："鼠标移动到哪个标签页就
+        // 直接打开对应的标签页，然后方便我们进行移动"）。原先是等 550ms，用户描述成"卡一下"。
+        // ⚠️ 只是**下一拍执行**（`TryEnqueue`），不在 DragOver 回调里同步切页：
+        //    切页会重建/显示页面、触发布局，压在拖放事件的派发栈上容易出怪事。
+        // ⚠️ 执行前再确认"指针还压在这个标签上"（下一拍之前用户可能已经移开）。
         _dragOverTab = tab;
-        DragTrace($"条目拖动经过标签「{tab.Name}」⇒ 登记：松手追加到该页第 {appendIndex} 位"
-                  + $"（停 {DragAutoSwitchDelay.TotalMilliseconds:0}ms 则自动切过去）");
-        _dragAutoSwitchTimer?.Stop();
-        _dragAutoSwitchTimer?.Start();
+        DragTrace($"条目拖动经过标签「{tab.Name}」⇒ 登记：松手追加到该页第 {appendIndex} 位；并立刻切到该页");
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (ReferenceEquals(_dragOverTab, tab))
+            {
+                TabDraggedOver?.Invoke(this, tab);
+            }
+        });
     }
 
     /// <summary>这次拖放带了什么格式（内部拖动 = 什么都没有）。</summary>
@@ -791,20 +785,9 @@ public sealed partial class TabStripView : UserControl
     {
         _dragLeaveTimer?.Stop();
         _dragOverTab = null;
-        _dragAutoSwitchTimer?.Stop();
 
         // 指针已经离开标签栏（去抖确认）⇒ 两个拖动提示都收干净
         ClearDragFeedback();
-    }
-
-    private void OnDragAutoSwitchTick(DispatcherQueueTimer sender, object args)
-    {
-        _dragAutoSwitchTimer?.Stop();
-
-        if (_dragOverTab is { } tab)
-        {
-            TabDraggedOver?.Invoke(this, tab);
-        }
     }
 
     /// <summary>
@@ -836,7 +819,6 @@ public sealed partial class TabStripView : UserControl
 
     private void StopDragTimers()
     {
-        _dragAutoSwitchTimer?.Stop();
         _dragLeaveTimer?.Stop();
         _dragOverTab = null;
     }

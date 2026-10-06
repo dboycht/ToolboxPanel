@@ -725,8 +725,17 @@ public sealed class MainViewModel
 
             if (request.Payload.Kind == DragItemKind.Icon)
             {
-                FindTab(request.Payload.SourceTabId)?.SyncIconsFromModel();
-                FindTab(request.TargetTabId)?.SyncIconsFromModel();
+                var sourceTab = FindTab(request.Payload.SourceTabId);
+                var targetTab = FindTab(request.TargetTabId);
+                // ★ 2026-10-06：跨页移动时把**已经加载好位图的图块实例**从源页搬到目标页。
+                //   不搬的话，目标页会按 Core 补建一个新图块，而它的 `ImageSource` 是 null
+                //   ⇒ 图块空白，必须右键「刷新图标」重新提取才显示（用户实测反馈的那条）。
+                //   搬过去之后 `SyncIconsFromModel` 里的 `ToFirstById` 就能复用它（连已解码的位图）。
+                TransferIconView(sourceTab, targetTab, request.Payload.ItemId);
+
+                // 兜底：万一实例没搬成（源页刚被重建过之类），补建时也从**缓存文件**把图读出来
+                sourceTab?.SyncIconsFromModel(TryLoadCachedIconSource);
+                targetTab?.SyncIconsFromModel(TryLoadCachedIconSource);
             }
             else if (request.Payload.Kind == DragItemKind.ListItem)
             {
@@ -1230,6 +1239,54 @@ public sealed class MainViewModel
             App.WriteCrash("MainViewModel.LoadOrExtractIcon", ex);
             return (null, false);
         }
+    }
+
+    /// <summary>
+    /// 跨页移动时把**已经加载好位图的图块实例**从源页搬到目标页（2026-10-06）。
+    ///
+    /// <para>为什么必须搬：`SyncIconsFromModel` 只复用**本页**已有的图块实例，跨页搬过来的图标
+    /// 在目标页找不到实例 ⇒ 按 Core 补建一个新的，而新实例的 `ImageSource` 是 **null**
+    /// ⇒ **图块空白**，用户必须右键「刷新图标」重新提取才看得见（用户实测反馈）。
+    /// 搬过去之后它连同已解码的位图一起复用，既不空白、也不用重新读盘。</para>
+    ///
+    /// <para>⚠️ 只搬"目标页还没有同一个 id"的；同页拖动（源=目标）直接返回。
+    /// 插到哪个位置无所谓 —— 紧接着的 `SyncIconsFromModel` 会按 Core 的顺序重排。</para>
+    /// </summary>
+    private static void TransferIconView(TabItemViewModel? source, TabItemViewModel? target, string iconId)
+    {
+        if (source is null || target is null || ReferenceEquals(source, target))
+        {
+            return;
+        }
+
+        if (target.Icons.Any(tile => string.Equals(tile.Model.Id, iconId, StringComparison.Ordinal)))
+        {
+            return;   // 目标页已经有这个图块了（例如同 id 脏数据），不重复搬
+        }
+
+        var moving = source.Icons.FirstOrDefault(tile => string.Equals(tile.Model.Id, iconId, StringComparison.Ordinal));
+        if (moving is null)
+        {
+            return;   // 源页没有实例（页面刚重建过）：交给 `TryLoadCachedIconSource` 那条兜底
+        }
+
+        source.Icons.Remove(moving);
+        target.Icons.Insert(0, moving);
+    }
+
+    /// <summary>
+    /// 只在**缓存文件已经在**的前提下给出图片源（**不触发提取** —— 落库那一刻不该卡界面）。
+    /// 给 `SyncIconsFromModel` 兜底用：补建图块时至少能把已有的缓存图显示出来。
+    /// </summary>
+    private ImageSource? TryLoadCachedIconSource(IconModel icon)
+    {
+        if (_iconExtractor is null || string.IsNullOrEmpty(icon.IconCacheFile))
+        {
+            return null;
+        }
+
+        var path = _iconExtractor.CachePath(icon.IconCacheFile);
+        return File.Exists(path) ? CreateImageSource(path) : null;
     }
 
     private static ImageSource? CreateImageSource(string filePath)

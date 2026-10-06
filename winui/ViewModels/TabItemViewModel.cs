@@ -283,8 +283,14 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
     ///
     /// <para>⚠️ 复用已有的 <see cref="IconTileViewModel"/> 实例（连同已经提取好的图标位图），
     /// 而不是重新构造 —— 重新构造会丢掉图片源、并触发重复的图标提取。</para>
+    ///
+    /// <para>🆕 <paramref name="iconSourceProvider"/>（2026-10-06 用户实测反馈"移动后的图标无法显示，
+    /// 要右键「刷新图标」才行"）：**跨页搬过来的图标**，它那个"已经加载好位图的实例"在**另一个标签页**
+    /// 手里 ⇒ 这里按 Core 补建的新图块 `ImageSource` 是 **null** ⇒ 图块空白。
+    /// 传进来这个委托，就让它当场从**图标缓存文件**把图片读出来（只读文件、不触发提取）。
+    /// 主路径其实是 `MainViewModel` 把旧实例**直接搬到目标页**（保住已解码的位图），这里只是兜底。</para>
     /// </summary>
-    public void SyncIconsFromModel()
+    public void SyncIconsFromModel(Func<IconModel, ImageSource?>? iconSourceProvider = null)
     {
         // ⚠️ 用**按 id 去重**的映射，而不是 `ToDictionary(tile => tile.Model.Id, ...)`：
         //    tabs.json 里一旦出现两条同 id（手改 JSON / 并发写盘 / 旧版本写坏），
@@ -304,9 +310,10 @@ public sealed class TabItemViewModel : INotifyPropertyChanged
             // 复用已有的实例（连同已提取好的图标位图）；没有就补建，绝不静默丢项
             // ⚠️ 补建一律走 CreateTile：它会**立刻套上当前的图标大小档**（漏了它，
             //    "设置里选大图标、拖上去的图标却还是小号"—— 2026-10-03 用户实测反馈的那条）。
+            // ⚠️ 图片源也在这里一起给（见上面 `<paramref name="iconSourceProvider"/>` 那段）。
             ordered.Add(viewById.TryGetValue(icon.Id, out var tile)
                 ? tile
-                : CreateTile(icon, null));
+                : CreateTile(icon, iconSourceProvider?.Invoke(icon)));
         }
 
         // ⚠️ 2026-10-06 修：这里以前调的是 `ReorderObservable` —— 它**只 insert/move、从不移除**，
