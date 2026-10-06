@@ -96,6 +96,9 @@ public sealed partial class TabStripView : UserControl
     /// <summary>演示模式下关掉"拖起标签"（假数据不会落库，别让用户看着能拖、其实存不下来）。</summary>
     private bool _dragDropEnabled = true;
 
+    /// <summary>本次拖动是否已经打过"标签栏收到 DragOver（首次）"那条诊断（每次拖动复位一次）。</summary>
+    private bool _tracedStripDragEntry;
+
     public TabStripView()
     {
         InitializeComponent();
@@ -114,6 +117,15 @@ public sealed partial class TabStripView : UserControl
         _dragLeaveTimer.Interval = DragLeaveGrace;
         _dragLeaveTimer.IsRepeating = false;
         _dragLeaveTimer.Tick += OnDragLeaveGraceTick;
+
+        // ⚠️ 2026-10-06（ERROR.md E58）：拖放的两个事件在**外层容器**上再挂一遍，且 `handledEventsToo: true` ——
+        //    万一某个子元素（ListViewItem 的拖放视觉逻辑之类）把事件标记成 handled，
+        //    XAML 上挂的那个处理器就**再也收不到**了（"整条拖放链路静默不通"）。
+        //    这条链路的命脉，不能取决于"谁先处理了它"。
+        StripHost.AddHandler(UIElement.DragEnterEvent, new DragEventHandler(OnTabsDragOver), handledEventsToo: true);
+        StripHost.AddHandler(UIElement.DragOverEvent, new DragEventHandler(OnTabsDragOver), handledEventsToo: true);
+        StripHost.AddHandler(UIElement.DropEvent, new DragEventHandler(OnTabsDrop), handledEventsToo: true);
+        StripHost.AddHandler(UIElement.DragLeaveEvent, new DragEventHandler(OnTabsDragLeave), handledEventsToo: true);
     }
 
     /// <summary>选中项变化（主窗口据此切页）。</summary>
@@ -665,13 +677,25 @@ public sealed partial class TabStripView : UserControl
         _dragLeaveTimer?.Stop();
         _dragLeaveTimer?.Start();
 
-        var tab = FindTabFromArgs(e);
+        var tab = FindTabAtPointer(e);
 
         // 标签重排的落点（0..标签数）：指针越过第 i 个标签的中心 ⇒ 插到它后面；
         // 在标签栏空白处 ⇒ 标签数（放到最后）。算法在 Core（`TabReorder.ComputeInsertIndex`，有单测）。
         var tabInsertIndex = ComputeTabInsertIndex(e);
         var tabDrag = DragSession.LooksLikeTabDrag;
         int appendIndex = 0;
+
+        // ⚠️ 诊断（E25 的教训：先证明"事件到底有没有进来"）：**每次拖动的第一拍**无条件留一条，
+        //    含指针坐标与命中的标签。用户报"跨页拖动没反应"时，看这一行有没有出现就能立刻分清
+        //    "标签栏根本没收到拖放事件"（E58 那种）还是"收到了但判据不认"。
+        if (!_tracedStripDragEntry)
+        {
+            _tracedStripDragEntry = true;
+            var point = e.GetPosition(TabDropLayer);
+            DragTrace($"标签栏收到 DragOver（首次）：指针=({point.X:0.#},{point.Y:0.#}) "
+                      + $"命中标签={(tab is null ? "无" : "「" + tab.Name + "」")} "
+                      + $"按标签拖动={tabDrag} 事件源={e.OriginalSource?.GetType().Name ?? "null"}");
+        }
 
         if (tab is null)
         {
@@ -807,6 +831,7 @@ public sealed partial class TabStripView : UserControl
 
         StopDragTimers();
         ClearDragFeedback();
+        _tracedStripDragEntry = false;
     }
 
     private void StopDragTimers()
@@ -910,23 +935,106 @@ public sealed partial class TabStripView : UserControl
 
     // ────────────────────────────── 标签重排的落点与插入竖条 ──────────────────────────────
 
-    /// <summary>已实现标签的矩形（相对插入条所在的画布）—— 与页面共用同一套收集器。</summary>
-    private List<ItemBounds> CollectTabBounds()
-        => DragDropShared.CollectBounds(Tabs, Tabs.Items.Count, TabDropLayer, "TabStripView.CollectTabBounds");
+    /// <summary>
+    /// 已实现标签的矩形（相对插入条所在的画布）**与它对应的标签** —— 一起返回，避免"矩形下标"与
+    /// "标签下标"在虚拟化（有标签没被实现）时对不上。
+    /// </summary>
+    private List<(TabItemViewModel Tab, ItemBounds Bounds)> CollectTabRects()
+    {
+        var result = new List<(TabItemViewModel, ItemBounds)>();
 
-    /// <summary>本次 DragOver 的落点是"插到第几个标签之前"（0..标签数）。</summary>
+        foreach (var tab in Tabs.Items.OfType<TabItemViewModel>())
+        {
+            if (Tabs.ContainerFromItem(tab) is not FrameworkElement container || container.ActualWidth <= 0)
+            {
+                continue;   // 虚拟化后屏幕外的标签没有容器：跳过（别塞 0 尺寸假矩形）
+            }
+
+            try
+            {
+                var origin = container.TransformToVisual(TabDropLayer)
+                    .TransformPoint(new Windows.Foundation.Point(0, 0));
+                result.Add((tab, new ItemBounds(origin.X, origin.Y, container.ActualWidth, container.ActualHeight)));
+            }
+            catch (Exception ex)
+            {
+                App.WriteCrash("TabStripView.CollectTabRects", ex);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 这次 DragOver 的指针**压在哪一个标签上**（标签之间 / 标签栏空白处 ⇒ null）。
+    ///
+    /// <para>⚠️ 2026-10-06（`ERROR.md` **E58**）：判据**按指针坐标**来，**不看 `e.OriginalSource`**。
+    /// 实测：从页面里拖图标经过标签栏时标签栏一个拖放事件都收不到、而拖标签时却正常 ⇒
+    /// "拖放命中会把事件交给谁"是框架内部的事，不能拿它当业务判据。
+    /// （兜底：坐标判不出来时再走一次"往上找 `DataContext`"的老路。）</para>
+    /// </summary>
+    private TabItemViewModel? FindTabAtPointer(DragEventArgs e)
+    {
+        var rects = CollectTabRects();
+        var position = e.GetPosition(TabDropLayer);
+        int index = TabReorder.HitTestIndex(
+            rects.Select(pair => pair.Bounds).ToList(), position.X, position.Y);
+
+        if (index >= 0 && index < rects.Count)
+        {
+            return rects[index].Tab;
+        }
+
+        return FindTabFromElement(e.OriginalSource);
+    }
+
+    /// <summary>老判据（往上找带 `DataContext` 的元素）—— 只当兜底，不再当主判据。</summary>
+    private TabItemViewModel? FindTabFromElement(object? source)
+    {
+        var element = source as FrameworkElement;
+        while (element is not null)
+        {
+            if (element.DataContext is TabItemViewModel tab)
+            {
+                return tab;
+            }
+
+            element = element.Parent as FrameworkElement;
+        }
+
+        return null;
+    }
+
+    /// <summary>标签重排的落点（0..标签数）：指针越过那个位置之前；空白处 ⇒ 放到最后。</summary>
     private int ComputeTabInsertIndex(DragEventArgs e)
     {
-        var bounds = CollectTabBounds();
-        return bounds.Count == 0
-            ? 0
-            : TabReorder.ComputeInsertIndex(bounds, e.GetPosition(TabDropLayer).X);
+        var rects = CollectTabRects();
+        if (rects.Count == 0)
+        {
+            return 0;
+        }
+
+        var position = e.GetPosition(TabDropLayer);
+        int insert = TabReorder.ComputeInsertIndex(
+            rects.Select(pair => pair.Bounds).ToList(), position.X);
+
+        // ⚠️ 把"第几个**已实现**标签之前"换算成"第几个**标签**之前"：
+        //    标签栏横向滚动时，屏幕外的标签没有容器，两个下标不是一回事。
+        if (insert < rects.Count)
+        {
+            int real = Tabs.Items.IndexOf(rects[insert].Tab);
+            return real >= 0 ? real : insert;
+        }
+
+        int lastReal = Tabs.Items.IndexOf(rects[^1].Tab);
+        return lastReal >= 0 ? lastReal + 1 : rects.Count;
     }
 
     private void ShowTabDropIndicator(int insertIndex)
-        => DragDropShared.ShowVerticalIndicator(TabDropIndicator, CollectTabBounds(), insertIndex);
-
-    private void HideTabDropIndicator() => DragDropShared.HideIndicator(TabDropIndicator);
+        => DragDropShared.ShowVerticalIndicator(
+            TabDropIndicator,
+            CollectTabRects().Select(pair => pair.Bounds).ToList(),
+            insertIndex);
 
     /// <summary>
     /// 把"松手就落进这一页"的目标描边套在 <paramref name="tab"/> 上（拖**页面里的条目**经过标签时）。
@@ -962,6 +1070,8 @@ public sealed partial class TabStripView : UserControl
         }
     }
 
+    private void HideTabDropIndicator() => DragDropShared.HideIndicator(TabDropIndicator);
+
     private void HideTabDropTarget() => TabDropTarget.Visibility = Visibility.Collapsed;
 
     /// <summary>把两类拖动提示（标签插入竖条 / 目标标签描边）一起收干净。</summary>
@@ -973,24 +1083,6 @@ public sealed partial class TabStripView : UserControl
 
     /// <summary>拖动链路诊断（写 %TEMP%\toolboxpanel-probe.log）—— 与页面同一套。</summary>
     private static void DragTrace(string message) => DragDropShared.Trace(message);
-
-    /// <summary>
-    /// <summary>这次 DragOver 落在哪个标签项上（落在标签栏空白处 → null）。</summary>
-    private static TabItemViewModel? FindTabFromArgs(DragEventArgs e)
-    {
-        var element = e.OriginalSource as FrameworkElement;
-        while (element is not null)
-        {
-            if (element.DataContext is TabItemViewModel tab)
-            {
-                return tab;
-            }
-
-            element = element.Parent as FrameworkElement;
-        }
-
-        return null;
-    }
 
     private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
     {

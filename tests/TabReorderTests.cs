@@ -83,6 +83,36 @@ public class TabReorderTests
         Assert.Equal(2, TabReorder.ComputeInsertIndex(bounds, 133));    // 越过长标签中心 ⇒ 放到最后
     }
 
+    // ────────────────────────────── 命中（指针落在哪个标签上）──────────────────────────────
+
+    [Fact]
+    public void 命中_用坐标判断指针在哪个标签上()
+    {
+        // 三个 100 宽的标签：X = 0 / 103 / 206，高 28
+        var bounds = Row(3);
+
+        Assert.Equal(0, TabReorder.HitTestIndex(bounds, 10, 14));
+        Assert.Equal(1, TabReorder.HitTestIndex(bounds, 120, 5));
+        Assert.Equal(2, TabReorder.HitTestIndex(bounds, 250, 27));
+    }
+
+    [Fact]
+    public void 命中_标签之间的空隙与上下之外都不算命中()
+    {
+        var bounds = Row(3);
+
+        Assert.Equal(-1, TabReorder.HitTestIndex(bounds, 101.5, 14));   // 空隙
+        Assert.Equal(-1, TabReorder.HitTestIndex(bounds, 10, 29));      // 标签下方
+        Assert.Equal(-1, TabReorder.HitTestIndex(bounds, 10, -1));      // 标签上方
+        Assert.Equal(-1, TabReorder.HitTestIndex(bounds, 9999, 14));    // 标签栏右侧空白
+    }
+
+    [Fact]
+    public void 命中_空标签栏时返回负一()
+    {
+        Assert.Equal(-1, TabReorder.HitTestIndex(Array.Empty<ItemBounds>(), 42, 14));
+    }
+
     // ────────────────────────────── 下标换算 ──────────────────────────────
 
     [Fact]

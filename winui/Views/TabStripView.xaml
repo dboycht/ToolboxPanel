@@ -110,7 +110,15 @@
                       VerticalScrollBarVisibility="Disabled"
                       VerticalScrollMode="Disabled"
                       Padding="3,2">
-            <Grid>
+            <!--
+                ⚠️ 2026-10-06：**拖放的事件与 `AllowDrop` 挂在最外层这个 Grid 上**，不在 `Tabs` 上。
+                原因（`ERROR.md` E58）：从页面里拖图标经过标签栏时，`Tabs` **一个拖放事件都收不到**
+                （而拖标签时正常）—— 说明拖放的命中测试未必把事件交给我们以为的那个元素。
+                挂在外层容器上 ⇒ 不管命中测试最终命中栈里的哪一个元素（ListView / 它的项 / 覆盖层），
+                事件都会冒泡到这里；而"指针压在哪一个标签上"改用**指针坐标**判断（Core 的 `TabReorder`）。
+                所以这里的事件处理器用的是 `e.GetPosition(...)`，**不看 `OriginalSource`**。
+            -->
+            <Grid x:Name="StripHost" AllowDrop="True">
                 <ListView x:Name="Tabs"
                           ItemTemplate="{StaticResource TabItemTemplate}"
                           ItemContainerStyle="{StaticResource CompactTabItemStyle}"
@@ -122,9 +130,6 @@
                           CanDragItems="True"
                           DragItemsStarting="OnTabsDragItemsStarting"
                           DragItemsCompleted="OnTabsDragItemsCompleted"
-                          DragOver="OnTabsDragOver"
-                          DragLeave="OnTabsDragLeave"
-                          Drop="OnTabsDrop"
                           ScrollViewer.VerticalScrollMode="Disabled"
                           ScrollViewer.HorizontalScrollMode="Disabled"
                           Background="Transparent"

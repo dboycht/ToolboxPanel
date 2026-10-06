@@ -70,6 +70,29 @@ public static class TabReorder
     }
 
     /// <summary>
+    /// 指针**正落在哪一个标签上**（点在标签栏空白处 / 标签之间 ⇒ -1）。
+    ///
+    /// <para>🆕 2026-10-06（图标跨页面拖动那一轮）为什么需要它：拖放的"命中"不能依赖框架交给我们的
+    /// 那个元素（`DragEventArgs.OriginalSource`）—— 实测**从页面里拖图标经过标签栏时，
+    /// 标签栏一个拖放事件都没收到**（页面拖标签时却正常，见 `ERROR.md` E58）。
+    /// 改成"**用指针坐标去比已实现标签的矩形**"之后，判据与"命中测试把哪个元素报给我们"彻底解耦。</para>
+    /// </summary>
+    public static int HitTestIndex(IReadOnlyList<ItemBounds> tabBounds, double pointerX, double pointerY)
+    {
+        for (int i = 0; i < tabBounds.Count; i++)
+        {
+            var bound = tabBounds[i];
+            if (pointerX >= bound.X && pointerX <= bound.X + bound.Width
+                && pointerY >= bound.Y && pointerY <= bound.Y + bound.Height)
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    /// <summary>
     /// 把"从第 <paramref name="fromIndex"/> 个被拖起、落在第 <paramref name="insertIndex"/> 个之前"
     /// 换算成 <see cref="DataStore.ReorderTabs"/> 的 <c>to</c>。
     ///
